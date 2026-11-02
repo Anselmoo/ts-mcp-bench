@@ -1,0 +1,71 @@
+{#- The answer sheet of the dashboard page: the share correct of each condition, then the paired differences with their
+intervals drawn on one scale. Only dashboard.html.j2 imports this file, and only `answer_sheet`; full.html.j2 uses
+none of it. `c`: tsbench.report.dashboard.context(); `design`: dashboard.design(). An underlined count is a link that
+shows the runs it counts (dashboard.js, `data-drill`). The styles are answer.css. -#}
+{% from "dashboard_parts.html.j2" import dash_models %}
+{% from "_macros.html.j2" import status_chip %}
+
+{#- A count that opens its runs in the run table: `cond` and `tasks` are comma lists, `outcome` a status key. -#}
+{% macro drill(text, label, model="", cond="", tasks="", outcome="") -%}
+<a href="#run-list" class="dr" data-drill="1" data-label="{{ label }}"{% if model %} data-model="{{ model }}"{% endif %}{% if cond %} data-cond="{{ cond }}"{% endif %}{% if tasks %} data-tasks="{{ tasks }}"{% endif %}{% if outcome %} data-outcome="{{ outcome }}"{% endif %}>{{ text }}</a>
+{%- endmacro %}
+
+{#- The three tiles: the share correct of each condition with its interval; `tools`: the tools of the condition under its
+label; `tool_use`: the tool use of the model in the tile. -#}
+{% macro tiles(c, design, tools=true, tool_use=true) -%}
+{% set names = {} %}{% for r in design.rows %}{% set _ = names.update({r.cond: r.tools}) %}{% endfor %}
+<div class="slip">
+{% for h in c.verdict.hero %}
+<div class="cand c-{{ h.cond }}">
+<div class="k-label">{{ h.label }}</div>{% if tools %}<div class="k-tools">{{ names[h.cond] }}</div>{% endif %}
+<div class="k-num">{{ h.pct }}<span> % correct</span></div>
+<div class="k-side"><div class="ci" aria-hidden="true"><i style="left:{{ h.lo }}%;width:{{ h.hi - h.lo }}%;transform-origin:{{ ((h.p - h.lo) / (h.hi - h.lo) * 100) | round(1) if h.hi > h.lo else 50 }}% 50%"></i><b style="left:{{ h.p }}%"></b></div>
+<div class="ci-ax" aria-hidden="true"><span>0</span><span>50</span><span>100 %</span></div>
+<div class="k-cap">{{ drill(h.text, h.label ~ ": the runs counted as correct", cond=h.cond, outcome="correct") }} · {{ h.ci }}</div></div>
+{% if h.chips %}<div class="k-chips">{% for x in h.chips %}<span class="cd">{{ status_chip(x.key, x.text) }}</span>{% endfor %}</div>{% endif %}
+{% if tool_use %}{% for f in h.flags %}
+<p class="tooluse" data-flag="{{ f.flag }}"><span><b>{{ f.text }}</b><small>{{ f.detail }}.</small></span></p>
+{% endfor %}{% endif %}
+</div>
+{% endfor %}
+</div>
+{%- endmacro %}
+
+{#- The paired differences with their intervals drawn on one scale; `lv`: the heading level of the table's own heading,
+"" for none. -#}
+{% macro diffs(c, lv="h3") -%}
+{% set multi = c.verdict.models %}
+{% if c.verdict.contrasts %}
+{% if lv %}<{{ lv }} class="sub">Paired differences over tasks</{{ lv }}>{% endif %}
+<div class="scroll plate"><table class="contrasts diffs"><thead><tr>{% if multi %}<th>Model</th>{% endif %}<th>Contrast</th><th class="num">Difference</th><th class="rgh"><span>95 % interval, −100 to +100 pp</span><span class="ax" aria-hidden="true"><span>−100</span><span>0</span><span>+100</span></span></th><th class="num">95 % interval</th><th class="num">Tasks</th><th class="num">Correct under the first only</th><th class="num">under the second only</th></tr></thead><tbody>
+{% for x in c.verdict.contrasts %}
+{% set l = [(x.lo + 100) / 2, 0] | max %}{% set r = [(x.hi + 100) / 2, 100] | min %}
+<tr>{% if multi %}<td data-l="Model">{{ x.model }}</td>{% endif %}<th scope="row">{{ x.label }}<small>{{ x.name }}</small></th>
+<td class="num d" data-l="Difference"><b>{{ x.d }}</b></td>
+<td class="rgc" data-l="Interval, drawn"><span class="rg" aria-hidden="true" style="--l:{{ l | round(1) }}%;--w:{{ [r - l, 0.5] | max | round(1) }}%;--p:{{ (((x.pp + 100) / 2) | round(1)) }}%"><i></i><b></b></span><span class="rgax" aria-hidden="true"><span>−100</span><span>0</span><span>+100 pp</span></span></td>
+<td class="num" data-l="95 % interval">{{ x.ci }}</td><td class="num" data-l="Tasks">{{ x.n }}</td>
+<td class="num" data-l="Correct under {{ x.x }} only">{% if x.only_x %}{{ drill(x.only_x, x.label ~ ": " ~ x.only_x ~ " tasks correct under " ~ x.x ~ " only, runs under " ~ x.x ~ " and " ~ x.y, model=x.model if multi else "", cond=x.x ~ "," ~ x.y, tasks=x.x_only | join(",")) }}{% else %}{{ x.only_x }}{% endif %}</td>
+<td class="num" data-l="Correct under {{ x.y }} only">{% if x.only_y %}{{ drill(x.only_y, x.label ~ ": " ~ x.only_y ~ " tasks correct under " ~ x.y ~ " only, runs under " ~ x.x ~ " and " ~ x.y, model=x.model if multi else "", cond=x.x ~ "," ~ x.y, tasks=x.y_only | join(",")) }}{% else %}{{ x.only_y }}{% endif %}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% endif %}
+{%- endmacro %}
+
+{#- How the shares and differences are computed: said once, under the answer sheet. -#}
+{% macro how_computed() -%}
+<p class="muted">Share of the evaluable runs whose answer lies within the tolerance of the computed reference; the bar is the 95 % interval, resampled over tasks. Runs that are not evaluable (HTTP 429 / API error) are never in a rate. Tool use: the prompt is the same in every condition, and whether a B run runs code or a C run calls the TS-MCP server is the model's choice; every run counts in its rate, and the tile splits the share correct by tool use.</p>
+<p class="muted">Difference: mean over the tasks run under both conditions of the share correct under the first minus the share under the second, in percentage points (pp). Interval: percentile bootstrap with tasks resampled, 5000 draws. The last two columns count the tasks correct in most of their runs under one condition only. Descriptive figures of pilot runs; no hypothesis is tested.</p>
+{%- endmacro %}
+
+{% macro answer_sheet(c, design, title) -%}
+<section id="verdict" class="sheet" aria-labelledby="verdict-h"><h2 id="verdict-h">{{ title }}</h2>
+<p class="scope">{{ design.classes }} · three conditions that differ only in the tools available · the same prompt in every condition</p>
+{{ tiles(c, design) }}
+{{ diffs(c) }}
+<p class="limits"><b>Limits of the design.</b> {{ plural(design.n_models, "model") }}{% if design.k %}, k = {{ design.k }}{% endif %}, pilot split, not preregistered: the figures describe these runs; no hypothesis is tested. An underlined count shows the runs it counts.</p>
+<details class="more"><summary>How these numbers are computed</summary>
+{{ how_computed() }}
+</details>
+{{ dash_models(c, "h3", "Accuracy per model") }}
+</section>
+{%- endmacro %}

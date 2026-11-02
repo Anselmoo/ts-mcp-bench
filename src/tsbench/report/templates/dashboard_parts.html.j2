@@ -1,0 +1,138 @@
+{#- The sections of the dashboard, also sections of the full report. `c`: tsbench.report.dashboard.context(); the
+heading level `lv` of a section (h2 on the page, h3 inside the full report), its subsections take the next level. The
+styles are dashboard.css, the script (run table, drill-down from a bar segment) dashboard.js. -#}
+{% from "_macros.html.j2" import legend_html, status_chip %}
+{% from "dashboard_macros.html.j2" import st, rate_figure, pairs_figure, dots_chart, cond_legend, num %}
+{% from "views_macros.html.j2" import images as images_block %}
+
+{% macro dash_models(c, lv="h2", title="Accuracy per model") -%}
+{% set sub = "h3" if lv == "h2" else "h4" %}
+{% if c.verdict.cards %}
+<section id="models"><{{ lv }}>{{ title }}</{{ lv }}>
+<p class="muted">Same scales in every card: TS-MCP against each other condition task by task; (a) share correct among the evaluable runs, dot and 95 % interval (tasks resampled); (b) every run by outcome. Click a bar segment to see its runs.</p>
+{{ legend_html() }}
+<div class="mcards">
+{% for card in c.verdict.cards %}
+<article class="mcard" data-model="{{ card.model }}"><{{ sub }}>{{ card.model }}</{{ sub }}>
+{% for f in card.flags %}
+<p class="tooluse" data-flag="{{ f.flag }}"><span><b>{{ f.cond }} · {{ f.text }}</b><small>{{ f.detail }}.</small></span></p>
+{% endfor %}
+{% if card.pairs %}{{ pairs_figure(card.pairs) }}{% endif %}
+{{ rate_figure(card.rate) }}
+</article>
+{% endfor %}
+</div>
+</section>
+{% endif %}
+{%- endmacro %}
+
+{#- `pairs`: the figure "C against B and A, task by task" above the tables; the full report leaves it out, because the
+table of paired differences in its main result gives the same counts. -#}
+{% macro dash_by_task(c, lv="h2", title="Task-level comparison", pairs=true) -%}
+{% set sub = "h3" if lv == "h2" else "h4" %}
+{% if c.grid %}
+<section id="by-task"><{{ lv }}>{{ title }}</{{ lv }}>
+{% if pairs and c.verdict and c.verdict.pairs %}{{ pairs_figure(c.verdict.pairs) }}{% endif %}
+<{{ sub }} class="sub">Every task, by task class</{{ sub }}>
+<div class="legend">
+{% for l in c.grid.legend %}
+<span class="lg"><i class="sw sw-{{ l.swatch }}"></i>{{ icon(l.icon, "ink") }}{{ l.name }}</span>
+{% endfor %}
+{% if c.grid.flagged %}<span class="lg"><i class="sw sw-flag"></i>no tool use: B ran no code, C made no TS-MCP call</span>{% endif %}
+</div>
+<div class="classes" style="--min:{{ c.grid.min }}px">
+{% for cl in c.grid.classes %}
+<div class="cls"><h4>{{ cl.cls }}<small>{{ plural(cl.n, "task") }}</small></h4><div class="scroll"><table class="grid">
+<thead>{% if c.grid.models %}<tr><th></th>{% for m, items in c.grid.series | groupby("model") %}<th colspan="{{ items | length }}">{{ m }}</th>{% endfor %}</tr>{% endif %}
+<tr><th></th>{% for s in c.grid.series %}<th>{{ s.cond }}</th>{% endfor %}</tr></thead><tbody>
+{% for row in cl.rows %}
+<tr><th scope="row">{{ row.task }}</th>{% for x in row.cells %}<td class="g-{{ x.state }}{{ ' flagged' if x.flag }}" title="{{ x.title }}">{{ icon(x.icon, "ink") }}<span class="gl">{{ x.label }}</span>{% if x.flag %}<span class="sr">flagged</span>{% endif %}</td>{% endfor %}</tr>
+{% endfor %}
+</tbody><tfoot><tr><th scope="row">correct</th>{% for t in cl.total %}<td>{{ t }}</td>{% endfor %}</tr></tfoot></table></div></div>
+{% endfor %}
+</div>
+<p class="muted">The last row of each table counts correct of evaluable runs. With several runs per cell the label is correct/evaluable runs; a cell's tooltip names its outcome and flag.</p></section>
+{% endif %}
+{%- endmacro %}
+
+{% macro dash_cost(c, lv="h2", title="Output tokens and runtime", why="") -%}
+{% set sub = "h3" if lv == "h2" else "h4" %}
+{% if c.charts %}
+<section id="efficiency"><{{ lv }}>{{ title }}</{{ lv }}>{% if why %}<p class="secwhy"><b>Answers:</b> {{ why }}</p>{% endif %}
+{% if c.charts.plain %}
+<ul class="plain">{% for e in c.charts.plain %}<li>{{ icon("bolt", "warn") }}<span>{% if c.charts.plain | length > 1 %}<b>{{ e.model }}</b>: {% endif %}{{ e.text }} (medians of the evaluable runs)</span></li>{% endfor %}</ul>
+{% endif %}
+{{ cond_legend(c.charts.legend) }}
+<div class="effgrid">{{ dots_chart(c.charts.tokens) }}{{ dots_chart(c.charts.seconds) }}</div>
+</section>
+{% endif %}
+{%- endmacro %}
+
+{% macro dash_asked(c, lv="h2") -%}
+{% set sub = "h3" if lv == "h2" else "h4" %}
+<section><details class="asked"><summary>What was asked: {{ plural(c.tasks | length, "pilot task") }}, their prompts and references</summary>
+{% if c.tasks %}
+<div class="scroll"><table><thead><tr><th>Task</th><th>Class</th><th>Prompt</th><th>Answer schema</th><th>Reference</th></tr></thead><tbody>
+{% for t in c.tasks %}
+<tr><td>{{ t.id }}</td><td>{{ t.class }}</td><td><details><summary>{{ t.short }}</summary><p>{{ t.prompt }}</p></details></td><td>{{ t.schema }}</td><td>{{ t.reference }}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% else %}
+<p class="muted">No pilot tasks found.</p>
+{% endif %}
+</details></section>
+{%- endmacro %}
+
+{% macro dash_runs(c, lv="h2", title="Individual runs") -%}
+{% set sub = "h3" if lv == "h2" else "h4" %}
+<section id="run-list"><{{ lv }}>{{ title }}</{{ lv }}><div id="drill" class="drill" hidden role="status" tabindex="-1"><span></span> <button type="button">Show all runs</button></div><label class="flt" for="run-flt">Filter <input id="run-flt" type="search" placeholder="model, task, outcome, flag…"></label><div class="scroll"><table id="runtable"><thead><tr>
+<th data-n="0" tabindex="0" role="button">Model</th><th data-n="0" tabindex="0" role="button">Cond</th><th data-n="0" tabindex="0" role="button">Task</th><th data-n="0" tabindex="0" role="button">Answer</th><th data-n="0" tabindex="0" role="button">Correct</th><th data-n="0" tabindex="0" role="button">Outcome</th><th data-n="0" tabindex="0" role="button">Flag</th><th data-n="1" tabindex="0" role="button">Out tok</th><th data-n="1" tabindex="0" role="button">Sec</th><th data-n="1" tabindex="0" role="button">Cost $</th><th data-n="0" tabindex="0" role="button">View</th>
+</tr></thead><tbody>
+{% for r in c.runs %}
+<tr class="{{ r.class }}" data-model="{{ r.model }}" data-cond="{{ r.condition }}"><td>{{ r.model }}</td><td>{{ r.condition }}</td><td>{{ r.task }}</td><td>{{ r.answer }}</td><td>{{ st(r.correct) }}</td><td>{{ r.outcome }}</td><td class="fl">{{ r.flags }}</td>{{ num(r.tokens) }}{{ num(r.seconds) }}{{ num(r.cost) }}<td>{% if r.view %}<a href="{{ r.view }}">view</a>{% endif %}</td></tr>
+{% endfor %}
+</tbody></table></div></section>
+{%- endmacro %}
+
+{% macro dash_images(c, lv="h2") -%}
+{% set sub = "h3" if lv == "h2" else "h4" %}
+{% if c.images %}
+<section><{{ lv }}>Images saved by the models</{{ lv }}><div class="imgs">
+{% for im in c.images %}
+<div class="img"><div class="muted">{{ im.label }}</div>{{ images_block(im.files, im.match, 320) }}</div>
+{% endfor %}
+</div></section>
+{% endif %}
+{%- endmacro %}
+
+{% macro dash_provenance(c, lv="h2", title="Provenance", why="") -%}
+{% set sub = "h3" if lv == "h2" else "h4" %}
+<section id="provenance"><{{ lv }}>{{ title }}</{{ lv }}>{% if why %}<p class="secwhy"><b>Answers:</b> {{ why }}</p>{% endif %}
+<dl class="facts">
+{% for t in c.facts %}
+<div><dt>{{ t.label }}</dt><dd>{{ t.value }}</dd>{% if t.caption %}<dd class="cap">{{ t.caption }}</dd>{% endif %}</div>
+{% endfor %}
+</dl>
+<details class="sets"><summary>Run sets: {{ c.run_sets_head }}</summary>
+<div class="scroll"><table><thead><tr><th>Family</th><th>What</th><th>Sets</th></tr></thead><tbody>
+{% for f in c.run_sets %}
+<tr><th scope="row"><code>{{ f.family }}</code><small>{{ plural(f.sets | length, "set") }}</small></th><td>{{ f.about }}</td><td class="chips">{% for x in f.sets %}<code title="{{ x.title or x.name }}">{{ x.name }}</code> {% endfor %}{% if not f.about %}{% for x in f.sets if x.title %}<small>{{ x.title }}</small>{% endfor %}{% endif %}</td></tr>
+{% endfor %}
+</tbody></table></div></details>
+<details class="prov"><summary>Period, cost, git commits, plan ids and manifest facts</summary>
+<dl class="pv"><div><dt>Git commit(s)</dt><dd>{% for x in c.provenance.commits %}<code title="{{ x.full }}">{{ x.short }}</code>{% if x.dirty %}<small class="inl">+dirty</small>{% endif %} {% else %}none recorded{% endfor %}</dd></div>
+<div><dt>Period</dt><dd>{{ c.provenance.period }}</dd></div>
+<div><dt>Cost</dt><dd>{{ c.provenance.cost }}</dd></div>
+<div><dt>Plan id(s)</dt><dd>{% for pl in c.provenance.plans %}<code title="{{ pl.full }}">{{ pl.short }}</code> {% else %}none{% endfor %}</dd></div></dl>
+<{{ sub }}>Manifest facts</{{ sub }}><div class="scroll"><table><thead><tr><th>Run set</th><th>Sandbox</th><th>Probe markers</th><th>Flagged runs</th><th>Aborted cells</th><th>Metrics files</th></tr></thead><tbody>
+{% for m in c.provenance.manifests %}
+{% if m.missing %}
+<tr><td>{{ m.name }}</td><td colspan="5" class="muted">no MANIFEST.json</td></tr>
+{% else %}
+<tr><td>{{ m.name }}</td><td>{{ m.method }}{{ m.probe }}</td><td>{{ m.markers }}</td><td>{{ m.flagged }} run(s)<br><small>{{ m.flags }}</small></td><td>{{ m.aborted }}</td><td>{{ m.metrics }}</td></tr>
+{% endif %}
+{% endfor %}
+</tbody></table></div>
+<p class="muted">Short ids: the full value is in the tooltip; a click copies it.</p>
+</details></section>
+{%- endmacro %}

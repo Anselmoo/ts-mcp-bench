@@ -1,0 +1,277 @@
+{#- The sections of the comparison page, one macro each. Every macro takes a part of tsbench.report.comparison.context();
+a section without content is None there. Text of a data value is escaped by the environment. -#}
+{% from "_macros.html.j2" import status_chip, legend_html, fig %}
+
+{#- Like status_chip, in bold. -#}
+{% macro status_chip_bold(key, text) -%}
+<span class="st b st-{{ key }}">{{ icon(STATUS[key][1], "ink") }}{{ text }}</span>
+{%- endmacro %}
+
+{#- Yes, no or unknown, always with icon and text. -#}
+{% macro yes_no(ok, text) -%}
+<span class="st">{{ icon("check" if ok else "dash" if ok is none else "cross", "ink") }}{{ text }}</span>
+{%- endmacro %}
+
+{#- The share chart of one model (dots and stacked bars) with its text version below. -#}
+{% macro rate_figure(f) -%}
+{% set text -%}
+<ul class="cdlist">
+{%- for e in f.entries -%}
+<li><b>{{ e.label }}</b>: {{ e.core }}<br>
+{%- for c in e.chips -%}<span class="cd">{{ status_chip(c.key, c.text) }}</span>{%- endfor -%}
+</li>
+{%- endfor -%}
+</ul>
+{%- endset %}
+{{ fig("rate", f.spec, f.title, f.alt, text) }}{{ text }}
+{%- endmacro %}
+
+{#- A dot plot per model and condition, its table in the <noscript>, and a note. -#}
+{% macro dots_figure(f) -%}
+{% set table -%}
+<div class="scroll"><table class="small"><thead><tr><th>Model</th>
+{%- for h in f.heads -%}<th>{{ h }}</th>{%- endfor -%}
+</tr></thead><tbody>
+{%- for r in f.rows -%}
+<tr><td>{{ r.label }}</td>
+{%- for c in r.cells -%}<td class="num">{{ c }}</td>{%- endfor -%}
+</tr>
+{%- endfor -%}
+</tbody></table></div>
+{%- endset %}
+{{ fig("dots", f.spec, f.title, f.alt, table, "dotsfig") }}{% if f.note %}<p class="muted">{{ f.note }}</p>{% endif %}
+{%- endmacro %}
+
+{% macro section_header(h) -%}
+<header><h1>TS-MCP benchmark: comparison of the conditions</h1>
+<p class="stamp">Pilot runs, not preregistered</p>
+<p class="meta">Date: {{ h.date }} · {{ cost_line(h.cost) }}</p>
+<ul class="sets">
+{%- for s in h.sets -%}
+<li><b>{{ s.text }}</b> · {{ s.label }}</li>
+{%- endfor -%}
+</ul>
+{%- if h.notes -%}
+<ul class="warn">
+{%- for n in h.notes -%}<li>{{ n }}</li>{%- endfor -%}
+</ul>
+{%- endif -%}
+</header>
+{%- endmacro %}
+
+{#- The cost the manifests record; an estimate for models outside Anthropic, said as such. -#}
+{% macro cost_line(c) -%}
+{% if c is none %}Cost: none recorded{% else %}Cost recorded in the manifests: <b>{{ c.text }}</b>{% if c.estimate %} (for models outside Anthropic an estimate of the Claude CLI at Anthropic prices, not an invoice){% endif %}{% endif %}
+{%- endmacro %}
+
+{% macro section_summary(sentences) -%}
+<section><h2>Summary</h2><ol class="three">
+{%- for s in sentences -%}<li>{{ s }}</li>{%- endfor -%}
+</ol></section>
+{%- endmacro %}
+
+{#- One worked example: the model's answer, the reference and the recomputed errors. -#}
+{% macro example(e) -%}
+<div class="ex ex-{{ e.kind }}"><h4>Example {{ e.kind }}: {{ e.task_id }}, {{ e.model }}, condition {{ e.cond }}</h4>
+<pre>{{ e.answer }}</pre>
+<div class="scroll"><table class="small"><thead><tr><th>Quantity</th><th>Answer</th><th>Reference</th><th>rel. error</th><th>Tolerance</th><th>within?</th></tr></thead><tbody>
+{%- for r in e.rows -%}
+<tr><td>{{ r.param }}</td><td class="num">{{ r.got }}</td><td class="num">{{ r.ref }}</td><td class="num">{{ r.rel }} %</td><td class="num">{{ r.tol }}</td><td>{{ yes_no(r.ok, r.ok_text) }}</td></tr>
+{%- endfor -%}
+<tr><td>out_of_scope</td><td class="num">{{ e.oos.text }}</td><td class="num">false</td><td>–</td><td>–</td><td>{{ yes_no(e.oos.ok, e.oos.ok_text) }}</td></tr>
+</tbody></table></div>
+<p>{{ status_chip_bold(e.verdict, "Verdict: " ~ e.verdict) }} (relative error = |answer − reference| / |reference|)</p></div>
+{%- endmacro %}
+
+{% macro examples(x) -%}
+<h3 class="sub">Two real examples from the runs</h3>
+<p class="muted">From the transcripts of the runs: the model's structured answer, the reference from the task record and the recomputed errors. Task texts are not shown.</p>
+<div class="exs">{{ example(x.correct) }}{{ example(x.wrong) }}</div>
+{%- endmacro %}
+
+{% macro section_rules(r, lv="h2", title="Scoring: when is an answer correct?", why="") -%}
+<section id="scoring"><{{ lv }}>{{ title }}</{{ lv }}>{% if why %}<p class="secwhy"><b>Answers:</b> {{ why }}</p>{% endif %}
+<p>An answer is <b>correct</b> when it meets every rule of its task class; a single miss makes it <b>wrong</b>. It is compared with a reference value that a program computed, not with the opinion of a model. The tolerances are stored in the task records and read from there.</p>
+{% if r.rows %}
+<div class="scroll"><table><thead><tr><th>Class</th><th>Answer format</th><th>When is an answer correct?</th></tr></thead><tbody>
+{%- for x in r.rows -%}
+<tr><td>{{ x.cls }}</td><td>{{ x.schema }}</td><td>{{ x.rule }}</td></tr>
+{%- endfor -%}
+</tbody></table></div>
+{% else %}
+<p class="muted">No tasks loaded.</p>
+{% endif %}
+{% if r.examples %}{{ examples(r.examples) }}{% endif %}
+<h3 class="sub">Outcomes of a run</h3>
+<div class="scroll"><table class="small"><tbody>
+{%- for c in r.categories -%}
+<tr><td><code>{{ c.code }}</code></td><td>{{ c.text }}</td></tr>
+{%- endfor -%}
+</tbody></table></div></section>
+{%- endmacro %}
+
+{% macro model_card(c) -%}
+<div class="vcard"><h3>{{ c.model }}</h3>{{ rate_figure(c.figure) }}
+<div class="vline"><span><b>{{ c.differences }}</b></span></div>
+{% for f in c.flags %}
+<p class="tooluse" data-flag="{{ f.flag }}"><span><b>{{ f.cond }} · {{ f.text }}</b><small>{{ f.detail }}.</small></span></p>
+{% endfor %}
+{% if c.efficiency %}
+<div class="vline">{{ icon("bolt", "warn") }}<span>{{ c.efficiency }}</span></div>
+{% endif %}
+{% if c.cost_note %}
+<div class="muted cost">Cost: not shown (the cost fields of models outside Anthropic are estimates)</div>
+{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro section_verdict(v) -%}
+<section><h2>Accuracy per run set and model</h2>
+{{ legend_html() }}<p class="muted">Dot = share correct among the evaluable runs, line = 95 % interval (tasks resampled, the runs of a task kept together); bars = all runs by outcome (icon and text, never colour alone). A difference needs at least 3 evaluable runs per condition; it compares shares of runs, not tasks: the full report (<code>tsbench report full</code>) pairs the conditions by task and gives 95 % intervals.</p>
+{% for s in v.sets %}
+<h3 class="sub">Run set {{ s.title }}</h3><div class="vcards">
+{%- for c in s.cards -%}{{ model_card(c) }}{%- endfor -%}
+</div>
+{% else %}
+<p class="muted">No runs found.</p>
+{% endfor %}
+</section>
+{%- endmacro %}
+
+{% macro section_heatmap(h) -%}
+<section><h2>Where the difference lies</h2>
+{% if h is none %}
+<p class="muted">No runs.</p>
+{% else %}
+<p class="muted">Accuracy per task class, model and condition, all run sets together, evaluable runs only. Top: classes every condition solves (high accuracy without tools); bottom: classes that succeed only with the MCP server.</p>
+<div class="scale">
+{%- for s in h.scale %} <span class="hm{{ ' hd' if s.dark }}" style="--p:{{ s.p }}">{{ s.pct }} %</span>{% endfor %}</div>
+<div class="scroll plate"><table class="heat"><thead><tr><th>Class</th>
+{%- for col in h.cols -%}
+<th class="colh"><span>{{ col.model }} · <i class="c-{{ col.cond }}"></i>{{ col.cond }}</span></th>
+{%- endfor -%}
+</tr></thead><tbody>
+{%- for row in h.rows -%}
+<tr><th scope="row">{{ row.cls }}</th>
+{%- for cell in row.cells -%}
+{%- if cell is none -%}
+<td class="hm0">–</td>
+{%- else -%}
+<td class="hm{{ ' hd' if cell.dark }}" style="--p:{{ cell.p }}" title="{{ cell.title }}">{{ cell.pct }} %<small>n={{ cell.n }}</small></td>
+{%- endif -%}
+{%- endfor -%}
+</tr>
+{%- endfor -%}
+</tbody></table></div>
+{% endif %}
+</section>
+{%- endmacro %}
+
+{#- One box plot (Figura) with its table in the <noscript>. -#}
+{% macro boxplot(b) -%}
+{% set table -%}
+<table class="small"><thead><tr><th>Group</th><th>n</th><th>Median</th></tr></thead><tbody>
+{%- for r in b.rows -%}
+<tr><td>{{ r.label }}</td><td class="num">{{ r.n }}</td><td class="num">{{ r.median }}</td></tr>
+{%- endfor -%}
+</tbody></table>
+{%- endset %}
+{{ fig("box", b.spec, b.title, b.alt, table, "bp") }}
+{%- endmacro %}
+
+{% macro boxplots(b) -%}
+<h3 class="sub">Distribution per run: correct and wrong one below the other</h3>
+<p class="muted">Box = the middle half of the runs (Q1 to Q3), line in the box = median, lines = whiskers (the most extreme value within 1.5 IQR, without caps), circles = outliers. Every chart has only the horizontal value axis; “n” counts the runs. Not-evaluable runs (429 or another API error) are left out, only runs with a result.</p>
+<div class="legend">
+{%- for c in b.legend -%}
+<span class="lg"><i class="dot c-{{ c.cond }}"></i>{{ c.label }}</span>
+{%- endfor -%}
+<span class="lg"><i class="sw sw-ok"></i>filled box: correct runs</span><span class="lg"><i class="sw sw-bad"></i>hatched box: wrong runs (harness limits included)</span></div>
+{% for m in b.metrics %}
+<h3 class="sub">{{ m.label }}</h3><p class="muted">{{ m.note }} All charts of this measure share the same scale.</p><div class="bpgrid">
+{%- for f in m.figures -%}{{ boxplot(f) }}{%- endfor -%}
+</div>
+{% endfor %}
+{%- endmacro %}
+
+{% macro cost_split(s) -%}
+<h3 class="sub">Cost per correct answer</h3>
+<p class="muted">All run sets, without not-evaluable runs. <b>Per correct answer</b> = the sum over all runs of the cell (the wrong ones too) divided by the number of correct runs. Wrong includes harness limits. The cost of models outside Anthropic is only an estimate and is not shown.</p>
+<div class="scroll"><table class="wide"><thead><tr><th rowspan="2">Model</th><th rowspan="2">Cond.</th><th rowspan="2">correct / wrong</th><th colspan="3">Cost (USD)</th><th colspan="3">Output tokens</th><th colspan="3">API seconds</th></tr>
+<tr>
+{%- for _ in range(3) -%}
+<th>median correct</th><th>median wrong</th><th>per correct answer</th>
+{%- endfor -%}
+</tr></thead><tbody>
+{%- for r in s.rows -%}
+<tr><td>{{ r.model }}</td><td><i class="dot c-{{ r.cond }}"></i>{{ r.cond }}</td><td class="num">{{ r.n_ok }} / {{ r.n_bad }}</td>
+{%- for x in r.cells -%}
+<td class="num">{{ x.ok }}</td><td class="num">{{ x.bad }}</td><td class="num"><b>{{ x.per }}</b></td>
+{%- endfor -%}
+</tr>
+{%- endfor -%}
+</tbody></table></div>
+{%- for f in s.charts -%}{{ dots_figure(f) }}{%- endfor -%}
+{%- endmacro %}
+
+{% macro section_costs(c) -%}
+<section><h2>Cost and time</h2>
+{% if c is none %}
+<p class="muted">No runs.</p>
+{% else %}
+<p class="muted">All run sets, evaluable runs with a result.</p>
+{% if c.per_correct %}{{ cost_split(c.per_correct) }}{% endif %}
+{% if c.boxplots %}{{ boxplots(c.boxplots) }}{% endif %}
+{% if c.sets %}
+<h3 class="sub">Total cost per run set (Claude models; from MANIFEST.json)</h3>
+<div class="scroll"><table class="small"><thead><tr><th>Run set</th><th>Total cost</th></tr></thead><tbody>
+{%- for s in c.sets -%}
+<tr><td>{{ s.title }}</td><td class="num">{{ s.total }}</td></tr>
+{%- endfor -%}
+<tr class="tot"><td>Sum (Anthropic)</td><td class="num">{{ c.total }}</td></tr>
+</tbody></table></div>
+{% endif %}
+{% endif %}
+</section>
+{%- endmacro %}
+
+{% macro section_reasons(r, lv="h2") -%}
+<section><{{ lv }}>Why runs gave no answer</{{ lv }}>
+<p class="muted">From the result events of the transcripts (<code>api_error_status</code>, <code>subtype</code>, <code>is_error</code>, text, <code>structured_output</code>). A 429 and another API error are “not evaluable” and left out of the accuracy; the other reasons, a context overflow among them, count as not correct.</p>
+<div class="scroll"><table><thead><tr><th>Run set</th><th>Model</th><th>Cond.</th><th>Runs</th>
+{%- for label in r.columns -%}<th>{{ label }}</th>{%- endfor -%}
+<th>correct</th></tr></thead><tbody>
+{%- for x in r.rows -%}
+<tr><td>{{ x.title }}</td><td>{{ x.model }}</td><td>{{ x.cond }}</td><td class="num">{{ x.n }}</td>
+{%- for n in x.counts -%}<td class="num">{{ n }}</td>{%- endfor -%}
+<td class="num">{{ x.correct }}</td></tr>
+{%- endfor -%}
+</tbody></table></div></section>
+{%- endmacro %}
+
+{% macro section_not_evaluable(n, lv="h2") -%}
+<section><{{ lv }}>Runs that are not evaluable</{{ lv }}>
+{% if n is none %}
+<p class="muted">No runs with HTTP 429 or another API error in the data.</p>
+{% else %}
+<p>{{ status_chip("na429") }}: HTTP 429 or another API error, a failure of the infrastructure. These runs are left out of every share, median and cost per correct answer.</p>
+<div class="scroll"><table><thead><tr><th>Run set</th><th>Model</th><th>Cond.</th><th>Runs</th><th>evaluable</th><th>not evaluable (429 or API error)</th></tr></thead><tbody>
+{%- for x in n.rows -%}
+<tr><td>{{ x.title }}</td><td>{{ x.model }}</td><td>{{ x.cond }}</td><td class="num">{{ x.n }}</td><td class="num">{{ x.n_eval }}</td><td class="num">{{ x.n429 }}</td></tr>
+{%- endfor -%}
+</tbody></table></div>
+{% endif %}
+</section>
+{%- endmacro %}
+
+{% macro section_method(lv="h2") -%}
+<section><{{ lv }}>Method in brief</{{ lv }}><ul>
+<li><b>Correct</b> means: every required parameter (Dq, B, maybe C) lies within the relative tolerance of the computed reference value; for a task outside the model's scope the model has to say so.</li>
+<li><b>Tolerances</b> per class (Dq 2 to 5 %, B 5 to 10 %, C 10 to 15 %); curves with an absolute and a relative bound, batch and pairing tasks with an accuracy per item. The table above reads them from the task records.</li>
+<li><b>k</b>: how many times each task ran per model and condition (see the MANIFEST.json of the run set).</li>
+<li><b>Harness limit</b>: the harness stopped the run (max_turns, budget, API error, no result); the model did not answer wrongly. It counts as not correct in the accuracy and is drawn hatched, with an exclamation mark and text, in the stacked bars.</li>
+<li><b>429</b>: rate-limit errors of the infrastructure are left out of the accuracy and counted as “not evaluable”.</li>
+<li><b>Rescued</b>: answers taken from the last valid call of the answer tool before a turn or budget limit count by their content and are listed in the header.</li>
+<li><b>Figures</b>: shares are dots with a 95 % task-clustered bootstrap interval and stacked bars, no pie charts; Figura design system.</li>
+<li>All data come from the pilot split; the page shows no task texts.</li></ul></section>
+{%- endmacro %}

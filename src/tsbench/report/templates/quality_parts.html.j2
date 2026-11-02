@@ -1,0 +1,85 @@
+{#- The body of the quality page. `c`: tsbench.report.quality.context(); `lv`: the heading level of its sections. The
+dumbbell figures are drawn by runtime.js. -#}
+{% from "_macros.html.j2" import fig %}
+{% macro state(m) -%}
+<span class="st t-{{ m.tone }}">{{ icon(m.icon, m.tone) }}{{ m.text }}</span>
+{%- endmacro %}
+{#- The <noscript> stand-in of a dumbbell figure: one row per item, before and after as numbers. -#}
+{% macro fallback_table(rows, head) -%}
+<table class="small"><thead><tr><th>{{ head }}</th><th class="num">Before (%)</th><th class="num">After (%)</th><th class="num">Change (points)</th></tr></thead><tbody>
+{%- for r in rows %}<tr><td>{{ r.package if r.package is defined else r.lane }}</td><td class="num">{{ r.b }}</td><td class="num">{{ r.a }}</td><td class="num">{{ r.ch }}</td></tr>{% endfor -%}
+</tbody></table>
+{%- endmacro %}
+
+{% macro quality_body(c, lv="h2") -%}
+{% set sub = "h4" if lv == "h2" else "h5" %}
+<p class="stamp">Before: {{ c.before_file.file }} ({{ c.before_when }}) · after: {{ c.after_file.file }} ({{ c.after_when }}) · generated {{ c.stamp }}</p>
+<p class="verdict">{{ c.verdict }}</p>
+<dl class="facts">
+<div><dt>Line coverage, module code</dt><dd>{{ c.tb }} % → {{ c.ta }} % ({{ c.tch }} points)</dd></div>
+<div><dt>Modules improved / dropped / unchanged</dt><dd>{{ c.n_improved }} / {{ c.n_dropped }} / {{ c.n_same }}</dd></div>
+<div><dt>Modules only before / only after</dt><dd>{{ c.only_before | length }} / {{ c.only_after | length }}</dd></div>
+{% for ln in c.lanes %}
+<div><dt>Mutation score · {{ ln.lane }}</dt><dd>{{ ln.b }} % → {{ ln.a }} %</dd></div>
+{% endfor %}
+</dl>
+{% if c.dropped %}
+<p class="vline">{{ icon("warning", "bad") }}<span>Dropped: {% for m in c.dropped %}{% if not loop.first %}; {% endif %}<code>{{ m.module }}</code> {{ m.b }} % → {{ m.a }} % ({{ m.ch }}){% endfor %}.</span></p>
+{% endif %}
+<p class="muted">Module code only: files named <code>test_*.py</code> and <code>conftest.py</code> are left out ({{ c.before_file.test_files }} such files with {{ c.before_file.test_statements }} statements in the before report, {{ c.after_file.test_files }} in the after report). Over every measured file coverage.py itself reported {{ c.reported_before }} % before and {{ c.reported_after }} % after. {{ c.renames_used }} of {{ c.renames }} renames applied to the before report. {{ c.total.statements_before }} statements before, {{ c.total.statements_after }} after.</p>
+
+<{{ lv }}>Coverage per package</{{ lv }}>
+{{ fig("dumbbell", c.pk_spec, "Line coverage per package, before and after",
+       "Dumbbell chart of line coverage per package: hollow square before, filled circle after, joined by a line",
+       fallback=fallback_table(c.packages, "Package"), figure_class="jfs") }}
+<p class="muted">A package sums the statements of its modules, the ones found only before or only after included; a module directly in <code>src/tsbench/</code> counts as (top level).</p>
+
+<{{ lv }}>Mutation score per lane</{{ lv }}>
+{% if c.lanes %}
+{{ fig("dumbbell", c.ln_spec, "Mutation score per lane, before and after",
+       "Dumbbell chart of the mutation score per lane: hollow square before, filled circle after, joined by a line",
+       fallback=fallback_table(c.lanes, "Lane"), figure_class="jfs") }}
+<div class="scroll"><table class="wide">
+<thead><tr><th>Lane</th><th>Package</th><th class="num">Before (%)</th><th class="num">After (%)</th><th class="num">Change</th><th class="num">Killed before</th><th class="num">Survived before</th><th class="num">Re-run</th><th class="num">Killed now</th><th class="num">Survivors left</th><th class="num">Equivalent</th><th class="num">Recorded after (%)</th></tr></thead>
+<tbody>
+{% for ln in c.lanes %}
+<tr><td>{{ ln.lane }}</td><td><code>{{ ln.package }}</code></td><td class="num">{{ ln.b }}</td><td class="num">{{ ln.a }}</td><td class="num">{{ ln.ch }}</td><td class="num">{{ ln.killed_before }}</td><td class="num">{{ ln.survived_before }}</td><td class="num">{{ ln.rerun }}</td><td class="num">{{ ln.killed_now }}</td><td class="num">{{ ln.left }}</td><td class="num">{{ ln.equivalent }}</td><td class="num">{{ ln.rec }}</td></tr>
+{% endfor %}
+</tbody></table></div>
+<p class="muted">Score = killed / (killed + survived); timeouts and mutants without tests are left out. Before: the mutmut summary of the whole lane. After: the survivors of the before measurement were run again; the killed among them are added to the killed before, all others stay survivors. Equivalent: survivors that <code>kill.json</code> names as equivalent (they stay survivors). Recorded after: the score that <code>after.json</code> states itself.</p>
+{% else %}
+<p class="muted">No mutation lanes were given (<code>--mutation</code>).</p>
+{% endif %}
+
+<{{ lv }}>Coverage per module</{{ lv }}>
+<p class="legend"><span class="lg">{{ state({"tone": "ok", "icon": "check", "text": "improved"}) }}</span><span class="lg">{{ state({"tone": "bad", "icon": "warning", "text": "dropped"}) }}</span><span class="lg">{{ state({"tone": "muted", "icon": "equals", "text": "no change (within 0.05 points)"}) }}</span><span class="lg">{{ state({"tone": "muted", "icon": "dash", "text": "only before or only after"}) }}</span></p>
+<div class="scroll"><table>
+<thead><tr><th>Module</th><th class="num">Statements</th><th class="num">Before (%)</th><th class="num">After (%)</th><th class="num">Change (points)</th><th>State</th></tr></thead>
+<tbody>
+{% for m in c.modules %}
+<tr{% if m.state == "dropped" %} class="drop"{% endif %}>
+<td><code>{{ m.module }}</code></td><td class="num">{{ m.statements }}{% if m.was is not none %} <small>(was {{ m.was }})</small>{% endif %}</td><td class="num">{{ m.b }}</td><td class="num">{{ m.a }}</td><td class="num">{{ m.ch }}</td><td>{{ state(m) }}</td></tr>
+{% endfor %}
+<tr class="tot"><td>Total</td><td class="num">{{ c.total.statements_after }}</td><td class="num">{{ c.tb }}</td><td class="num">{{ c.ta }}</td><td class="num">{{ c.tch }}</td><td></td></tr>
+</tbody></table></div>
+
+<{{ lv }}>Modules only before or only after</{{ lv }}>
+<p><b>Only before</b> (removed, or renamed without a line in the renames file): {% for k in c.only_before %}{% if not loop.first %}, {% endif %}<code>{{ k }}</code>{% else %}none{% endfor %}.</p>
+<p><b>Only after</b> (new): {% for k in c.only_after %}{% if not loop.first %}, {% endif %}<code>{{ k }}</code>{% else %}none{% endfor %}.</p>
+
+{% if c.lanes %}
+<{{ lv }}>Survivors left after the re-run</{{ lv }}>
+{% for ln in c.lanes %}
+<details class="surv"><summary><b>{{ ln.lane }}</b>: {{ ln.left }} survivors left ({{ ln.survived_rerun }} of {{ ln.rerun }} re-run mutants survived again, {{ ln.not_rerun }} were not re-run){% if ln.survivors_found %}; {{ ln.survivors_listed }} listed{% endif %}</summary>
+{% if ln.survivors_found %}
+{% for g in ln.survivors %}
+<{{ sub }}>{{ g.module or "(no module)" }} ({{ g.mutants | length }})</{{ sub }}>
+<ul>{% for name in g.mutants %}<li><code>{{ name }}</code></li>{% endfor %}</ul>
+{% endfor %}
+{% else %}
+<p class="muted">The list of survivors was not found (neither in the lane folder nor at the path after.json names).</p>
+{% endif %}
+</details>
+{% endfor %}
+{% endif %}
+{%- endmacro %}

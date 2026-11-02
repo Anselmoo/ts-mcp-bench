@@ -1,0 +1,114 @@
+{#- The overview page of a functional test. Context: see tsbench.report.functional.context(). The two figures are kinds
+of the shared runtime (window.TSFIG) that this page adds; figure class "ftd" keeps them apart from figure.jfs. -#}
+{% extends "base.html.j2" %}
+{% set dark = true %}
+{% from "_macros.html.j2" import status_chip, link, fig %}
+{% block css %}
+.facts dd{font-size:1.6rem;font-weight:700;letter-spacing:-.02em;line-height:1.2;font-variant-numeric:tabular-nums}
+.facts dd small{font-size:.8rem;font-weight:400;letter-spacing:0;margin-top:4px}
+.facts div.bad{--accent:var(--bad)}.facts div.good{--accent:var(--ok)}
+table.grid td{white-space:nowrap}
+code{word-break:break-all}
+{% endblock %}
+{% macro tile(label, value, note="", cls="") %}<div class="{{ cls }}"><dt>{{ label }}</dt><dd>{{ value }}{% if note %} <small>{{ note }}</small>{% endif %}</dd></div>{% endmacro %}
+{% block content %}
+<h1>Functional test overview</h1>
+<p class="stamp">{% if mode %}{{ mode }} · {% endif %}{{ when }}</p>
+<p class="verdict {{ verdict.cls }}">{{ verdict.text }}</p>
+<p class="links">Details: {% for d in details %}{% if not loop.first %} · {% endif %}{{ link(d) }}{% endfor %}</p>
+
+<dl class="facts">
+{{ tile("Steps passed", facts.steps_ok ~ " / " ~ facts.steps, cls="good" if facts.steps_ok == facts.steps else "bad") }}
+{{ tile("Hash chain", "intact" if facts.chain_intact else "broken", "" if facts.chain_intact else facts.breaks ~ " file versions", cls="good" if facts.chain_intact else "bad") }}
+{{ tile("Traced processes", facts.processes, facts.functions ~ " functions") }}
+{{ tile("Files read / written", facts.files_read ~ " / " ~ facts.files_written, "distinct paths") }}
+{{ tile("Wall time", (facts.wall_seconds | fixed(1)) ~ " s", "first start to last end") }}
+{{ tile("Runs correct", facts.runs_correct ~ " / " ~ facts.runs_evaluable, facts.runs ~ " runs, evaluable ones counted") }}
+{% if facts.probe %}{{ tile("Sandbox probe", facts.probe) }}{% endif %}
+</dl>
+
+<h2>Steps on a time line</h2>
+{% set tl_fallback %}<table class="small"><thead><tr><th>Step</th><th>Start (s)</th><th>End (s)</th><th>Processes</th></tr></thead><tbody>
+{% for r in timeline %}<tr><td>{{ r.name }}</td><td class="num">{{ r.start }}</td><td class="num">{{ r.end }}</td><td class="num">{{ r.processes }}</td></tr>
+{% endfor %}</tbody></table>{% endset %}
+{{ fig("timeline", {"rows": timeline}, "Time per step", "Each traced step as a bar from its first process start to its last process end, in seconds", tl_fallback, figure_class="ftd") }}
+{% set fl_fallback %}<table class="small"><thead><tr><th>Step</th><th>Read from a step</th><th>Read from outside</th><th>Written</th></tr></thead><tbody>
+{% for r in flow %}<tr><td>{{ r.name }}</td><td class="num">{{ r.from_steps.values() | sum }}</td><td class="num">{{ r.outside }}</td><td class="num">{{ r.written }}</td></tr>
+{% endfor %}</tbody></table>{% endset %}
+<h2>What each step read and wrote</h2>
+{{ fig("flow", {"rows": flow}, "Files per step", "Per step the files it read from an earlier step, the files it read from outside the test, and the files it wrote", fl_fallback, figure_class="ftd") }}
+<p class="muted">A step without a trace folder has no bar. A read counts once per process that read the file.</p>
+
+<h2>Which step read what another wrote</h2>
+{% if edges %}
+<div class="scroll"><table class="small">
+<thead><tr><th>Written by</th><th>Read by</th><th class="num">Files</th></tr></thead>
+<tbody>
+{% for e in edges %}<tr><td>{{ e.source }}</td><td>{{ e.target }}</td><td class="num">{{ e.files }}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% else %}<p class="muted">No step read a file that another traced step wrote.</p>{% endif %}
+{% if breaks %}
+<p class="warn">The hash chain is broken: {% for b in breaks %}{% if not loop.first %}; {% endif %}<code>{{ b.path }}</code> written by {{ b.producer or "?" }}, read by {{ b.consumer or "?" }} as another version{% endfor %}.</p>
+{% endif %}
+
+<h2>Steps</h2>
+<div class="scroll"><table>
+<thead><tr><th>Step</th><th>Result</th><th>What it shows</th></tr></thead>
+<tbody>
+{% for s in steps %}<tr><td><b>{{ s.name }}</b></td><td>{{ status_chip(s.chip, s.chip_text) }}</td><td>{{ s.purpose }}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% if grid.rows %}
+
+<h2>Runs</h2>
+<p>From <code>runs/scores.csv</code>. The numbers test the machinery, not the model: they are not benchmark results.</p>
+<div class="scroll"><table class="grid">
+<thead><tr><th>Task</th>{% for c in grid.conds %}<th>{{ COND_LABEL.get(c, c) }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for r in grid.rows %}<tr><th scope="row">{{ r.task }}</th>{% for cell in r.cells %}<td>{{ status_chip(cell.key, cell.text) }}</td>{% endfor %}</tr>
+{% endfor %}
+</tbody></table></div>
+{% endif %}
+
+<h2>Pages and figures</h2>
+<p>{% for p in pages %}{% if not loop.first %} · {% endif %}{{ link(p) }}{% endfor %}</p>
+{% endblock %}
+{% block scripts %}
+<script id="ftd-draw">
+(function(){"use strict";
+var A=window.TSFIG,J=window.JFS,d3=window.d3;if(!A||!J||!d3)return;
+var COL={ok:"series-5",fail:"series-6",na:"series-2"},WORD={ok:"",fail:" · fail",na:" · not evaluable"};
+function num(v){return d3.format("~g")(v)}
+function frame(root,names,xDomain,xLabel,per){var T=22,B=26,L=78,R=58,h=T+B+names.length*per;
+ var f=J.figure(root,{width:"double",height:h/J.MM,displayScale:1.5});
+ f.ax=J.axes(f.svg,{rect:{x:L,y:T,w:f.W-L-R,h:h-T-B},xDomain:xDomain,yBand:names,grid:"major",xLabel:xLabel,xTicks:5});
+ return f}
+function legend(ax,items){var lx=0;items.forEach(function(it){var g=ax.g.append("g").attr("transform","translate("+lx+",-12)");
+ g.append("rect").attr("x",0).attr("y",-2.5).attr("width",6).attr("height",5).attr("fill",it.fill).attr("stroke",J.tok("ink")).attr("stroke-width",J.STROKE.axis);
+ g.append("text").attr("x",8).attr("dominant-baseline","middle").attr("font-size",J.SIZE.legend).attr("fill",J.tok("ink")).text(it.name);
+ lx+=14+it.name.length*3.1})}
+A.kinds.timeline=function(root,s){var rows=s.rows,hi=d3.max(rows,function(r){return r.end})||1;
+ var f=frame(root,rows.map(function(r){return r.name}),[0,hi*1.05],"Seconds from the first process start",11),ax=f.ax;
+ rows.forEach(function(r){var y=ax.y(r.name),x0=ax.x(r.start),w=Math.max(ax.x(r.end)-x0,0.8),col=J.tok(COL[r.state]||"series-1");
+  var bar=ax.plot.append("rect").attr("x",x0).attr("y",y-3).attr("width",w).attr("height",6).attr("fill",col);
+  bar.append("title").text(r.name+": "+num(r.end-r.start)+" s, "+r.processes+" process"+(r.processes===1?"":"es"));
+  var at=100+900*r.start/hi;A.mvA(bar.node(),{width:0},at,Math.max(240,600*(r.end-r.start)/hi));
+  var lb=ax.g.append("text").attr("x",Math.min(x0+w+3,ax.rect.w+2)).attr("y",y).attr("dominant-baseline","middle").attr("font-size",J.SIZE.tick)
+   .attr("fill",J.tok("ink")).text(num(Math.round((r.end-r.start)*10)/10)+" s"+WORD[r.state]);A.mvF(lb.node(),at+240)});
+ return f};
+A.kinds.flow=function(root,s){var rows=s.rows.map(function(r){var a=0;for(var k in r.from_steps)a+=r.from_steps[k];return {name:r.name,a:a,b:r.outside,w:r.written}});
+ var hi=d3.max(rows,function(r){return Math.max(r.a+r.b,r.w)})||1,f=frame(root,rows.map(function(r){return r.name}),[0,hi*1.1],"Files",16),ax=f.ax;
+ var cA=J.tok("series-1"),cB=J.tok("fill-soft"),cW=J.tok("series-2");
+ rows.forEach(function(r,i){var y=ax.y(r.name),d=100+i*80,b;
+  b=ax.plot.append("rect").attr("x",ax.x(0)).attr("y",y-4.5).attr("width",ax.x(r.a)-ax.x(0)).attr("height",4).attr("fill",cA);b.append("title").text(r.name+": "+r.a+" read from an earlier step");A.mvA(b.node(),{width:0},d,300);
+  b=ax.plot.append("rect").attr("x",ax.x(r.a)).attr("y",y-4.5).attr("width",ax.x(r.a+r.b)-ax.x(r.a)).attr("height",4).attr("fill",cB).attr("stroke",J.tok("ink")).attr("stroke-width",r.b?J.STROKE.axis:0);b.append("title").text(r.name+": "+r.b+" read from outside");A.mvA(b.node(),{width:0},d+300,300);
+  b=ax.plot.append("rect").attr("x",ax.x(0)).attr("y",y+0.5).attr("width",ax.x(r.w)-ax.x(0)).attr("height",4).attr("fill",cW);b.append("title").text(r.name+": "+r.w+" written");A.mvA(b.node(),{width:0},d,360);
+  A.mvF(ax.g.append("text").attr("x",ax.x(r.a+r.b)+3).attr("y",y-2.5).attr("dominant-baseline","middle").attr("font-size",J.SIZE.tick).attr("fill",J.tok("ink")).text(r.a+" + "+r.b).node(),d+600);
+  A.mvF(ax.g.append("text").attr("x",ax.x(r.w)+3).attr("y",y+2.5).attr("dominant-baseline","middle").attr("font-size",J.SIZE.tick).attr("fill",J.tok("ink")).text(String(r.w)).node(),d+600)});
+ legend(ax,[{name:"read from a step",fill:cA},{name:"read from outside",fill:cB},{name:"written",fill:cW}]);
+ return f};
+document.querySelectorAll("figure.ftd").forEach(A.render);
+})();
+</script>
+{% endblock %}

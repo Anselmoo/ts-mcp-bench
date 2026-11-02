@@ -1,0 +1,85 @@
+{#- The provenance page of a functional test. Context: see tsbench.report.provenance.context(). -#}
+{% extends "base.html.j2" %}
+{% block css %}
+table{border-collapse:collapse;width:100%;margin:4px 0 12px}th,td{border-bottom:1px solid var(--grid);padding:4px 8px;
+text-align:left;vertical-align:top}th{color:var(--ink-muted);font-weight:600;font-size:.8rem}
+code{font:12px/1.4 Consolas,'Liberation Mono',monospace;word-break:break-all}
+.verdict{font-size:1.15rem;font-weight:700;margin:8px 0}.verdict.ok{color:#006048}.verdict.fail{color:#8c2d19}
+.proc{margin:10px 0 18px;padding:8px 12px;border:1px solid var(--grid);border-left:4px solid var(--signal)}
+.proc h3{font-size:.95rem}ul.tree{list-style:none;margin:2px 0 2px 14px;padding:0}ul.tree li{margin:1px 0}
+details>summary{cursor:pointer}.again,.count{color:var(--ink-muted);font-size:.8rem}
+{% endblock %}
+{% macro sha(item) %}<code title="{{ item.full }}">{{ item.short }}</code>{% endmacro %}
+{#- A call tree: a function is listed under its caller; a function with callees folds. -#}
+{% macro tree(nodes) %}
+<ul class="tree">
+{% for n in nodes %}
+<li>{% if n.children %}<details><summary><code>{{ n.name }}</code>{% if n.count > 1 %} <span class="count">×{{ n.count }}</span>{% endif %}</summary>
+{{ tree(n.children) }}
+</details>{% else %}<code>{{ n.name }}</code>{% if n.count > 1 %} <span class="count">×{{ n.count }}</span>{% endif %}{% if n.again %} <span class="again">(listed above)</span>{% endif %}{% endif %}</li>
+{% endfor %}
+</ul>
+{% endmacro %}
+{% block content %}
+<h1>Provenance of the functional test</h1>
+<p>Which function each process ran, which file it read and which it wrote, with the sha256 of the version. A file that
+a step reads should be the version that an earlier process wrote. Hashes are shown as their first {{ sha_chars }} characters;
+the whole hash is in the tooltip. Paths are relative to this page.</p>
+<div id="verdict">
+{% if verdict.intact %}
+<p class="verdict ok">Hash chain intact</p>
+<p>{{ n_records }} traced processes in {{ n_steps_traced }} steps. Every file that a process read is the version that
+an earlier process wrote.</p>
+{% else %}
+<p class="verdict fail">Hash chain broken</p>
+<p>A process read another version of these files than the one an earlier process wrote:</p>
+<ul>
+{% for b in verdict.breaks %}
+<li><code>{{ b.path }}</code>: written by <b>{{ b.producer }}</b> as {{ sha(b.expected) }}, read by
+{% if b.consumer_anchor %}<a href="#step-{{ b.consumer_anchor }}">{{ b.consumer }}</a>{% else %}<b>{{ b.consumer }}</b>{% endif %} as {{ sha(b.found) }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+</div>
+{% for s in steps %}
+<section id="step-{{ s.anchor }}">
+<h2>{{ s.name }}</h2>
+<p><code>{{ s.command }}</code></p>
+{% if not s.records %}
+<p class="muted">no trace</p>
+{% endif %}
+{% for r in s.records %}
+<div class="proc">
+<h3><code>{{ r.command }}</code> <small>process {{ r.pid }}{% if r.exit_code is not none %}, exit {{ r.exit_code }}{% endif %}</small></h3>
+{% if r.tree %}
+<details><summary>Call tree ({{ r.n_functions }} functions)</summary>
+{{ tree(r.tree) }}
+</details>
+{% endif %}
+{% if r.inputs %}
+<div class="scroll"><table>
+<thead><tr><th>Read</th><th>sha256</th><th>Written by</th></tr></thead>
+<tbody>
+{% for f in r.inputs %}
+<tr><td><code>{{ f.path }}</code></td><td>{{ sha(f.sha) }}</td><td>{% if f.from %}<a href="#{{ f.from.href }}">{{ f.from.step }}</a>{% else %}<span class="muted">not in this run</span>{% endif %}</td></tr>
+{% endfor %}
+</tbody>
+</table></div>
+{% endif %}
+{% if r.outputs %}
+<div class="scroll"><table>
+<thead><tr><th>Written</th><th>sha256 at the end</th></tr></thead>
+<tbody>
+{% for f in r.outputs %}
+<tr><td id="{{ f.id }}"><code>{{ f.path }}</code></td><td>{{ sha(f.sha) }}</td></tr>
+{% endfor %}
+</tbody>
+</table></div>
+{% endif %}
+</div>
+{% endfor %}
+</section>
+{% endfor %}
+{% endblock %}
+{% block figura %}{% endblock %}
+{% block motion %}{% endblock %}

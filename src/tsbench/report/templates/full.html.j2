@@ -1,0 +1,324 @@
+{#- The full report: a fact page in six tabs. Context: tsbench.report.full.context(): `header`, `views`
+(per model {model, pfx, bench, figs, paths, task_ids, toc}), `multi`, `compare` (None with one model), `checks` (None
+without --coverage), `platform`, `method`, `gal` (None with --no-gallery), `figs` (the figures outside the views: key ->
+{tab, section, width, question, id, svg}), `toc` (tab -> [(level, id, title)] outside the views), `tabs`,
+`model_tabs`, `placement`, `section_id`, `task_href`, `ident`, `notes`, `solution_paths`, `survivors`, `run_classes`,
+`code_conds`. A tab is <section class="tab" id="tab-<id>"> with its table of contents on the left; without JavaScript
+every tab is shown one below the other. The tabs of `model_tabs` hold one view per model (<div class="mview">, ids
+prefixed by `pfx`) when there are several; the switch in the top bar picks one, and without JavaScript every view is
+shown, each opened by a line naming its model. Every figure has one caption: the question it answers. Nothing is
+computed here. -#}
+{% extends "base.html.j2" %}
+{% set dark = true %}
+{% set theme_switch = true %}
+{% from "gallery_macros.html.j2" import run_card, image_card, code_card %}
+{% block css %}{% include "svg.css" %}
+{% include "gallery.css" %}
+{% include "full.css" %}
+{% endblock %}
+{% block figura %}{% endblock %}
+{% macro h2(tab, title, pfx="") -%}<h2 id="{{ section_id(tab, title, pfx) }}">{{ title }}</h2>{%- endmacro %}
+{% macro fg(figs, key) -%}
+{% set f = figs.get(key) %}{% if f %}<figure class="fg {{ f.width }}" id="{{ f.id }}" data-key="{{ key }}"><div class="frame">{{ f.svg }}</div><figcaption>{{ f.question }}</figcaption></figure>{% endif %}
+{%- endmacro %}
+{% macro toc_items(entries) -%}
+{% for lv, i, t in entries %}<li class="l{{ lv }}"><a href="#{{ i }}">{{ t }}</a></li>
+{% endfor %}
+{%- endmacro %}
+{% macro toc_nav(tab, label) -%}
+<nav class="toc" aria-label="Contents: {{ label }}"><details class="tocd" open><summary>Contents</summary>
+{% if toc[tab] %}<ol>{{ toc_items(toc[tab]) }}</ol>{% endif %}
+{% if multi and tab in model_tabs %}{% for v in views %}<ol class="mtoc" data-model="{{ v.model }}"><li class="mname">Model: {{ v.model }}</li>
+{{ toc_items(v.toc[tab]) }}</ol>
+{% endfor %}{% endif %}</details></nav>
+{%- endmacro %}
+{% macro mview(v) -%}
+{% if multi %}<div class="mview" data-model="{{ v.model }}"><div class="mline">Model: <b>{{ v.model }}</b></div>{% endif %}{{ caller() }}{% if multi %}</div>{% endif %}
+{%- endmacro %}
+{% macro all_figures(tab, figs, pfx="") -%}
+{{ h2(tab, ALL, pfx) }}
+<ul class="figlist">{% for sec, placed in placement[tab] %}{% for k, w, q in placed if figs.get(k) %}<li><a href="#{{ figs[k].id }}">{{ q }}</a></li>{% endfor %}{% endfor %}</ul>
+{% set over = placement[tab][-1][1] if placement[tab][-1][0] == ALL else [] %}
+{% for k, w, q in over %}{{ fg(figs, k) }}
+{% endfor %}
+{%- endmacro %}
+{% macro ok(v) -%}{% if v %}{{ icon("check", "ok") }}<span class="sr">correct</span>{% else %}{{ icon("cross", "bad") }}<span class="sr">wrong</span>{% endif %}{%- endmacro %}
+{% macro sha(v) -%}{% if v %}<code title="{{ v }}">{{ v[:12] }}</code>{% else %}–{% endif %}{%- endmacro %}
+{% macro task_link(t, model=none) -%}{% set href = task_href(t, model) %}{% if href %}<a href="{{ href }}">{{ t }}</a>{% else %}{{ t }}{% endif %}{%- endmacro %}
+{% block content %}
+<script>(function(){document.documentElement.classList.add("js");try{var t=localStorage.getItem("tsb-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}})();</script>
+{% set h = header %}
+<header class="bar"><a class="brand" href="#models">TS-MCP benchmark</a>
+<nav class="tabs" aria-label="Tabs">{% for id, label in tabs %}<a href="#{{ id }}" data-tab="{{ id }}">{{ label }}</a>{% endfor %}</nav>
+{% if multi %}<label class="mswitch"><span>Model</span><select id="model-switch">{% for v in views %}<option value="{{ v.model }}">{{ v.model }}</option>{% endfor %}</select></label>
+{% endif %}<button type="button" id="theme-switch">Theme: system</button></header>
+<header class="h" id="top"><h1>{{ title }}</h1>
+<div class="ident">report v{{ ident.version }} · tasks {{ ident.tasks or "not recorded" }} · code {{ ident.commit or "not recorded" }}</div>
+<div class="chips"><span class="chip">{{ h.model }}</span><span class="chip">{{ h.endpoint }}</span><span class="chip">{{ h.split }} split · {{ h.n_tasks }} tasks · {{ h.n_classes }} classes</span><span class="chip">conditions {{ h.conds | join(", ") }}</span><span class="chip">effort {{ h.effort }}</span><span class="chip">k = {{ h.k }}{% if h.k_planned and h.k_planned != h.k %} of {{ h.k_planned }} planned{% endif %} · {{ h.n_runs }} runs · {{ h.n_evaluable }} evaluable</span><span class="chip">{{ h.start_text }} – {{ h.end_text }} UTC</span><span class="chip">oracle {{ h.oracle or "not recorded" }}</span><span class="chip">commit {{ h.commit or "not recorded" }}</span></div>
+</header>
+
+{#- ---------------------------------------------------------------- Models -#}
+<section class="tab" id="tab-models"><span class="anchor" id="models"></span>
+<div class="tabgrid">{{ toc_nav("models", "Models") }}<div class="tc">
+{% if compare %}
+{{ h2("models", COMPARE[0]) }}
+<div class="scroll"><table class="t" id="tbl-models"><thead><tr><th>Model</th><th>Endpoint</th><th class="num">runs</th><th class="num">k</th>{% for c in compare_conds %}<th class="num">{{ c }} correct · share · 95 % interval</th>{% endfor %}{% for p in compare_pairs %}<th class="num">{{ p }} · 95 % interval</th>{% endfor %}</tr></thead><tbody>
+{% for x in compare %}<tr><td class="nw">{{ x.model }}</td><td>{{ x.endpoint }}</td><td class="num">{{ x.n_runs }}{% if x.n_evaluable != x.n_runs %} · {{ x.n_evaluable }} evaluable{% endif %}</td><td class="num">{{ x.k }}{% if x.k_planned and x.k_planned != x.k %} of {{ x.k_planned }}{% endif %}</td>{% for c in compare_conds %}{% set t = x.cells_text.get(c) %}<td class="num">{% if t %}{{ t.kn }} · {{ t.share }} · {{ t.ci }}{% else %}–{% endif %}</td>{% endfor %}{% for p in compare_pairs %}{% set t = x.pairs_text.get(p) %}<td class="num">{% if t %}{{ t.diff }} · {{ t.ci }}{% else %}–{% endif %}</td>{% endfor %}</tr>
+{% endfor %}</tbody></table></div>
+{{ fg(figs, "model_shares") }}
+{{ fg(figs, "model_paired") }}
+{% endif %}
+{% for v in views %}{% call mview(v) %}{% set b = v.bench %}{% set P = v.pfx %}
+{{ h2("models", "Overview", P) }}
+<div class="row2"><div class="col">{{ fg(v.figs, "share") }}
+<div class="scroll"><table class="t" id="tbl-{{ P }}shares"><thead><tr><th></th><th class="num">correct</th><th class="num">share</th><th class="num">95 % interval</th><th class="num">tasks</th></tr></thead><tbody>
+{% for s in b.shares %}<tr><td>{{ s.cond }}</td><td class="num">{{ s.k }} of {{ s.n }}</td><td class="num">{{ s.share_text }}</td><td class="num">{{ s.ci_text }}</td><td class="num">{{ s.tasks }}</td></tr>
+{% endfor %}</tbody></table></div></div>
+<div class="col">{{ fg(v.figs, "paired") }}</div></div>
+<div class="scroll"><table class="t" id="tbl-{{ P }}paired"><thead><tr><th></th><th class="num">difference</th><th class="num">95 % interval</th><th class="num">only first</th><th class="num">only second</th><th class="num">McNemar p</th></tr></thead><tbody>
+{% for p in b.paired %}<tr><td class="nw">{{ p.pair }}</td><td class="num">{{ p.diff_text }}</td><td class="num">{{ p.ci_text }}</td><td class="num">{{ p.only_first }}</td><td class="num">{{ p.only_second }}</td><td class="num">{{ p.p_text }}</td></tr>
+{% endfor %}</tbody></table></div>
+
+{{ h2("models", "Outcomes", P) }}
+<div class="row2"><div class="col"><div class="scroll"><table class="t" id="tbl-{{ P }}outcome"><thead><tr><th>Category</th>{% for o in b.outcome %}<th class="num">{{ o.cond }}</th>{% endfor %}</tr></thead><tbody>
+{% for key, label in b.categories %}<tr><td>{{ label }}</td>{% for o in b.outcome %}<td class="num">{{ o.counts.get(key, 0) }}</td>{% endfor %}</tr>
+{% endfor %}</tbody></table></div></div>
+<div class="col">{{ fg(v.figs, "outcome") }}</div></div>
+
+{{ h2("models", "Error size", P) }}
+{{ fg(v.figs, "swarm") }}
+
+{{ h2("models", "Tool use", P) }}
+<div class="scroll"><table class="t" id="tbl-{{ P }}tools"><thead><tr><th></th><th>tool</th><th class="num">with call</th><th class="num">correct</th><th class="num">without call</th><th class="num">correct</th></tr></thead><tbody>
+{% for t in b.tool_use %}<tr><td>{{ t.cond }}</td><td>{{ t.tool }}</td><td class="num">{{ t["with"] }}</td><td class="num">{{ t.with_correct }}</td><td class="num">{{ t.without }}</td><td class="num">{{ t.without_correct }}</td></tr>
+{% else %}<tr><td colspan="6">none</td></tr>{% endfor %}</tbody></table></div>
+<div class="row2"><div class="col">{{ fg(v.figs, "sunburst") }}</div>
+<div class="col"><div class="scroll"><table class="t" id="tbl-{{ P }}paths"><thead><tr><th></th><th>Call path</th><th class="num">runs</th><th class="num">correct</th></tr></thead><tbody>
+{% for p in v.paths %}<tr{% if p.get("other") %} class="na"{% endif %}><td>{{ p.cond }}</td><td class="path">{{ p.path }}</td><td class="num">{{ p.runs }}</td><td class="num">{{ p.correct }}</td></tr>
+{% else %}<tr><td colspan="4">none</td></tr>{% endfor %}</tbody></table></div></div></div>
+{{ fg(v.figs, "tool_output") }}
+
+{{ h2("models", "Cost", P) }}
+<div class="row2"><div class="col"><div class="scroll"><table class="t" id="tbl-{{ P }}medians"><thead><tr><th>median</th>{% for key, label in b.cost.axes if key in b.cost.median_keys %}<th class="num">{{ label }}</th>{% endfor %}</tr></thead><tbody>
+{% for m in b.cost.medians_text %}<tr><td>{{ m.cond }}</td>{% for key, label in b.cost.axes if key in b.cost.median_keys %}<td class="num">{{ m[key] }}</td>{% endfor %}</tr>
+{% endfor %}</tbody></table></div></div>
+<div class="col"><div class="scroll"><table class="t" id="tbl-{{ P }}usd"><thead><tr><th>USD</th><th class="num">all runs</th><th class="num">correct runs</th><th class="num">n correct</th><th class="num">per correct run</th><th class="num">no cost</th></tr></thead><tbody>
+{% for r in b.cost.table %}<tr><td>{{ r.cond }}</td><td class="num">{{ r.total }}</td><td class="num">{{ r.correct_cost }}</td><td class="num">{{ r.correct }}</td><td class="num">{{ r.per_correct }}</td><td class="num">{{ r.missing }}</td></tr>
+{% endfor %}</tbody></table></div></div></div>
+{{ fg(v.figs, "cost") }}
+
+{{ all_figures("models", v.figs, P) }}
+{% endcall %}{% endfor %}
+</div></div></section>
+
+{#- ---------------------------------------------------------------- Tasks -#}
+<section class="tab" id="tab-tasks"><span class="anchor" id="tasks"></span>
+<div class="tabgrid">{{ toc_nav("tasks", "Tasks") }}<div class="tc">
+{% for v in views %}{% call mview(v) %}{% set b = v.bench %}{% set P = v.pfx %}
+{{ h2("tasks", "Classes", P) }}
+<div class="scroll"><table class="t" id="tbl-{{ P }}classes"><thead><tr><th>Class</th><th>Definition</th><th class="num">n</th><th>Oracle</th><th>Tolerance</th>{% for c in b.header.conds %}<th class="num">{{ c }} solved</th>{% endfor %}</tr></thead><tbody>
+{% for blk in b.tasks_view %}<tr><td><a href="#{{ blk.anchor }}"><code>{{ blk["class"] }}</code></a></td><td>{{ blk.definition }}</td><td class="num">{{ blk.n }}</td><td>{{ blk.oracle }}</td><td>{{ blk.tolerance }}</td>{% for c in b.header.conds %}{% set nn = blk.n_by.get(c, blk.n) %}<td class="num">{{ "no run" if nn == 0 else blk.k.get(c, 0) ~ " of " ~ nn }}</td>{% endfor %}</tr>
+{% endfor %}</tbody></table></div>
+{{ fg(v.figs, "classes") }}
+
+{{ h2("tasks", "Task ledger", P) }}
+{{ fg(v.figs, "ledger") }}
+
+{{ h2("tasks", "Tasks", P) }}
+{% for blk in b.tasks_view %}
+<h3 id="{{ blk.anchor }}">{{ blk["class"] }}</h3>
+<div class="def">{{ blk.definition }}</div>
+<div class="scroll"><table class="t tasks"><thead><tr><th>ID</th><th>Given</th><th>Asked</th><th>Reference</th><th>Source</th><th>Tolerance</th>{% for c in b.header.conds %}<th>{{ c }}</th>{% endfor %}</tr></thead><tbody>
+{% for r in blk.tasks %}<tr id="{{ r.anchor }}"><td class="id"><b>{{ r.id }}</b><details class="sub"><summary>prompt</summary><pre class="prompt">{{ r.prompt }}</pre></details></td>
+<td>{% for l, t in r.given %}<div><span class="mut">{{ l }}</span> {{ t }}</div>{% endfor %}</td>
+<td>{{ r.asked }}</td>
+<td>{% for l, t in r.reference %}<div><span class="mut">{{ l }}</span> {{ t }}</div>{% endfor %}{% if r.reference_more %}<details class="sub"><summary>{{ r.reference_more | length }} more</summary>{% for x in r.reference_more %}<div>{{ x }}</div>{% endfor %}</details>{% endif %}</td>
+<td class="src">{{ r.source["text"] }}{% if r.source.doi %} · <a href="{{ doi_href(r.source.doi) }}">doi:{{ r.source.doi }}</a>{% endif %}{% if r.source.locator %} · {{ r.source.locator }}{% endif %}</td>
+<td>{{ r.tolerance }}</td>
+{% for c in b.header.conds %}{% set a = r.answers.get(c) %}<td class="ans">{% if a %}{{ ok(a.ok) }} {{ a["text"] }}<div class="mut">{{ a.category }}{% if a.n_runs > 1 %} · {{ a.n_correct }} of {{ a.n_runs }} · run k{{ a.shown_k }}{% endif %}{% if a.href %} · <a href="{{ a.href }}">run</a>{% endif %}</div>{% else %}–{% endif %}</td>{% endfor %}</tr>
+{% endfor %}</tbody></table></div>
+{% endfor %}
+
+{{ all_figures("tasks", v.figs, P) }}
+{% endcall %}{% endfor %}
+</div></div></section>
+
+{#- ---------------------------------------------------------------- Published spectra -#}
+<section class="tab" id="tab-spectra"><span class="anchor" id="spectra"></span>
+<div class="tabgrid">{{ toc_nav("spectra", "Published spectra") }}<div class="tc">
+{% for v in views %}{% call mview(v) %}{% set b = v.bench %}{% set P = v.pfx %}
+{{ h2("spectra", "Systems", P) }}
+<div class="scroll"><table class="t lit" id="tbl-{{ P }}systems"><thead><tr><th>System</th><th>d<sup>n</sup></th><th>Bands (cm⁻¹)</th><th>Source</th><th class="num">Paper Dq / B (/ C)</th><th class="num">Oracle Dq / B (/ C)</th><th class="num">Tolerance</th>{% for c in b.header.conds %}<th class="num">{{ c }}</th>{% endfor %}</tr></thead><tbody>
+{% for s in b.literature %}<tr><td>{{ task_link(s.task, v.model) }}<div>{{ s.system }}</div></td><td class="nw">{{ s.dn_text }}</td><td class="nw">{{ s.bands_text }}</td><td class="src">{{ s.source }}{% if s.doi %}<div><a href="{{ doi_href(s.doi) }}">doi:{{ s.doi }}</a></div>{% endif %}{% if s.locator %}<div>{{ s.locator }}</div>{% endif %}</td><td class="num">{{ s.paper_text }}</td><td class="num">{{ s.oracle_text }}</td><td class="num">{{ s.tol_text }}</td>{% for c in b.header.conds %}{% set r = s.reported.get(c) %}<td class="num">{% if r %}{{ s.reported_text[c] }} {{ ok(r.ok) }}{% else %}–{% endif %}</td>{% endfor %}</tr>
+{% else %}<tr><td colspan="{{ 7 + b.header.conds | length }}">none</td></tr>{% endfor %}</tbody></table></div>
+
+{{ h2("spectra", "Agreement", P) }}
+{{ fg(v.figs, "literature") }}
+
+{{ all_figures("spectra", v.figs, P) }}
+{% endcall %}{% endfor %}
+</div></div></section>
+
+{#- ---------------------------------------------------------------- Code checks -#}
+<section class="tab" id="tab-checks"><span class="anchor" id="checks"></span>
+<div class="tabgrid">{{ toc_nav("checks", "Code checks") }}<div class="tc">
+{{ h2("checks", "Overview") }}
+{% if checks %}{% set c = checks %}{% set cov = c.coverage.total %}
+<dl class="nums">
+<div><dt>Tests</dt>{% if c.tests %}<dd><b>{{ c.tests.passed }}</b> passed · {{ c.tests.failed }} failed · {{ c.tests.skipped }} skipped{% if c.tests.seconds %} · {{ c.tests.seconds | round | int }} s{% endif %}</dd>{% else %}<dd>no pytest.log beside the coverage file</dd>{% endif %}</div>
+<div><dt>Line coverage</dt><dd><b>{{ cov.pct_text }}</b> · {{ cov.covered }} of {{ cov.statements }} statements · coverage.py total {{ cov.reported_text or "not recorded" }}</dd></div>
+<div><dt>Mutation score</dt>{% if c.mutation.score is not none %}<dd><b>{{ c.mutation.score_text }} %</b> · {{ c.mutation.killed }} killed · {{ c.mutation.survived }} survived · {{ plural(c.mutation.shards | length, "shard") }}</dd>{% else %}<dd>no mutation result: --mutation</dd>{% endif %}</div>
+<div><dt>Packages not mutated</dt><dd>{% if c.not_mutated %}not mutated: {{ c.not_mutated | join(", ") }}{% else %}none{% endif %}</dd></div>
+{% if c.coverage.timestamp %}<div><dt>Measured</dt><dd>{{ c.coverage.timestamp }}</dd></div>{% endif %}
+</dl>
+
+{{ h2("checks", "Tests") }}
+<div class="row2"><div class="col"><div class="scroll"><table class="t" id="tbl-folders"><thead><tr><th>Folder</th><th class="num">test functions</th></tr></thead><tbody>
+{% for r in c.tests_per_folder %}<tr><td>{{ r.label }}</td><td class="num">{{ r.value }}</td></tr>
+{% else %}<tr><td colspan="2">none</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="col">{{ fg(figs, "per_folder") }}</div></div>
+
+{{ h2("checks", "Coverage") }}
+<div class="row2"><div class="col"><div class="scroll"><table class="t" id="tbl-packages"><thead><tr><th>Package</th><th class="num">modules</th><th class="num">statements</th><th class="num">covered</th><th class="num">%</th></tr></thead><tbody>
+{% for p in c.coverage.packages %}<tr><td>{{ p.package }}</td><td class="num">{{ p.modules }}</td><td class="num">{{ p.statements }}</td><td class="num">{{ p.covered }}</td><td class="num">{{ p.pct_text }}</td></tr>
+{% endfor %}</tbody></table></div></div>
+<div class="col">{{ fg(figs, "packages") }}</div></div>
+{{ fg(figs, "treemap") }}
+<h3 id="checks-per-function">Per function</h3>
+<details class="sub"><summary>{{ plural(c.coverage.files | length, "module") }}</summary>
+<div class="scroll"><table class="t"><thead><tr><th>Module</th><th class="num">statements</th><th class="num">%</th></tr></thead><tbody>
+{% for f in c.coverage.files %}<tr><td>{% if f.functions %}<details class="sub"><summary><code>{{ f.module }}</code> · {{ plural(f.functions | length, "function") }}</summary><ul class="fns">{% for fn in f.functions %}<li><code>{{ fn.name }}</code> {{ fn.statements }} · {{ fn.pct | fixed(0) }} %</li>{% endfor %}</ul></details>{% else %}<code>{{ f.module }}</code>{% endif %}</td><td class="num">{{ f.statements }}</td><td class="num">{{ f.pct | fixed(1) }}</td></tr>
+{% endfor %}</tbody></table></div></details>
+
+{{ h2("checks", "Mutation") }}
+<div class="row2"><div class="col"><div class="scroll"><table class="t" id="tbl-shards"><thead><tr><th>Shard</th><th class="num">mutants</th><th class="num">killed</th><th class="num">survived</th><th class="num">timeout</th><th class="num">score</th></tr></thead><tbody>
+{% for s in c.mutation.shards %}<tr><td>{{ s.name }}</td><td class="num">{{ s.total }}</td><td class="num">{{ s.killed }}</td><td class="num">{{ s.survived }}</td><td class="num">{{ s.timeout }}</td><td class="num">{{ s.score_text }}</td></tr>
+{% endfor %}{% for p in c.not_mutated %}<tr class="na"><td>{{ p }}</td><td class="num" colspan="5">not mutated</td></tr>
+{% endfor %}</tbody></table></div></div>
+<div class="col">{{ fg(figs, "shards") }}</div></div>
+{{ fg(figs, "mutants") }}
+<div class="row2"><div class="col">{{ fg(figs, "scatter") }}</div>
+<div class="col"><div class="scroll"><table class="t"><thead><tr><th>Module</th><th class="num">mutants</th><th class="num">score</th><th class="num">coverage</th></tr></thead><tbody>
+{% for p in c.points_top %}<tr><td><code>{{ p.module }}</code></td><td class="num">{{ p.mutants }}</td><td class="num">{{ p.score_text }}</td><td class="num">{{ p.coverage_text }}</td></tr>
+{% endfor %}{% if c.points_other %}<tr class="na"><td>{{ plural(c.points_other.modules, "other module") }}</td><td class="num">{{ c.points_other.mutants }}</td><td class="num">{{ c.points_other.score_text }}</td><td class="num">–</td></tr>
+{% elif not c.points_top %}<tr><td colspan="4">none</td></tr>{% endif %}</tbody></table></div></div></div>
+<h3 id="checks-survivors">Surviving mutants</h3>
+<div class="scroll"><table class="t"><thead><tr><th>Module</th><th>Function</th><th class="num">survived</th></tr></thead><tbody>
+{% for r in survivor_rows %}{% if r.other %}<tr class="na"><td>{% if r.function %}<code>{{ r.module }}</code>{% else %}{{ r.module }}{% endif %}</td><td>{{ r.function }}</td><td class="num">{{ r.survived }}</td></tr>
+{% else %}<tr><td><code>{{ r.module }}</code></td><td><code>{{ r.function }}</code></td><td class="num">{{ r.survived }}</td></tr>
+{% endif %}{% else %}<tr><td colspan="3">none</td></tr>{% endfor %}</tbody></table></div>
+{% for m in survivors %}<details class="sub"><summary><code>{{ m.module }}</code> · {{ m.n }} survived</summary>
+{% for fn in m.functions %}<p class="nw"><code>{{ fn.function }}</code> · {{ fn.mutants | length }}</p>{% for x in fn.mutants %}<pre class="diffx">{{ x.diff }}</pre>{% endfor %}{% endfor %}</details>
+{% endfor %}
+
+{{ all_figures("checks", figs) }}
+{% else %}
+<p class="muted">Not measured: pass --coverage COVERAGE.json and --mutation DIR.</p>
+{% endif %}
+</div></div></section>
+
+{#- ---------------------------------------------------------------- Gallery and code -#}
+<section class="tab" id="tab-gallery"><span class="anchor" id="gallery"></span>
+<div class="tabgrid">{{ toc_nav("gallery", "Gallery and code") }}<div class="tc">
+{{ h2("gallery", "Diagrams") }}
+{% if gal %}
+<div class="gallery"><div class="grid">{% for t in gal.image_tasks %}{% for x in t.cards %}{{ image_card(x) }}{% endfor %}{% else %}<p class="empty">No images in the runs.</p>{% endfor %}</div></div>
+{% else %}<p class="muted">Not built: --no-gallery.</p>{% endif %}
+
+{{ h2("gallery", "Run gallery") }}
+{% if gal %}
+{% for blk in run_classes %}<details class="blk" id="{{ blk.id }}"><summary><h3>{{ blk["class"] }}</h3><span class="k">{{ plural(blk.n, "run") }} · {{ plural(blk.tasks | length, "task") }}</span></summary>
+<div class="gallery">{% for t in blk.tasks %}<section class="task"><h4>{{ task_link(t.task, t.cards[0].head.model if t.cards else none) }}</h4><div class="grid">{% for x in t.cards %}<div class="ra" id="{{ x.anchor }}">{{ run_card(x) }}</div>{% endfor %}</div></section>
+{% endfor %}</div></details>
+{% endfor %}
+{% else %}<p class="muted">Not built: --no-gallery.</p>{% endif %}
+
+{{ h2("gallery", "Code") }}
+{% if gal %}
+{% for cond in code_conds %}<h3 id="code-{{ cond }}">Condition {{ cond }}</h3>
+<div class="gallery">{% for x in gal.code_cards if x.head.cond == cond %}<details class="sub run"><summary>{{ x.head.label_text }} · {{ x.head.task }} · k{{ x.head.k }} · {{ x.n_files }} files · {{ x.n_mcp }} server calls</summary>{{ code_card(x) }}</details>
+{% endfor %}</div>
+{% else %}<p class="empty">No code in the runs.</p>{% endfor %}
+{% else %}<p class="muted">Not built: --no-gallery.</p>{% endif %}
+
+{{ h2("gallery", "Solution path B") }}
+{% for sp in solution_paths %}
+<details class="sp" id="path-{{ sp.hid }}"><summary>{{ ok(sp.correct) }} {{ task_link(sp.task, sp.model) }} <span class="mut">{% if multi %}· {{ sp.model }} {% endif %}· k{{ sp.k }} · {{ plural(sp.path.summary.n_steps, "step") }} · {{ sp.path.summary.n_linked }} of {{ sp.path.summary.n_values }} values linked</span></summary>
+<div class="scroll"><table class="t"><thead><tr><th>Answer field</th><th class="num">Value</th><th>Source step</th><th>Also printed in</th></tr></thead><tbody>
+{% for v in sp.path["values"] %}<tr><td><code>{{ v.path }}</code></td><td class="num">{{ v.value }}</td><td>{% if v.source_step is not none %}<a href="#sp-{{ sp.hid }}-{{ v.source_step }}">step {{ v.source_step }}</a>{% elif v.typed_in_steps %}typed in step {{ v.typed_in_steps | join(", ") }}{% elif v.weak %}small integer{% else %}not printed{% endif %}</td><td>{{ v.steps | join(", ") or "–" }}</td></tr>
+{% endfor %}</tbody></table></div>
+<ol class="steps">{% for s in sp.path.steps %}
+<li id="sp-{{ sp.hid }}-{{ s.index }}" class="{{ 'err' if s.is_error or (s.exit or 0) != 0 else '' }}"><div class="sh"><b>step {{ s.index }}</b> · {{ s.tool }} · exit {{ s.exit if s.exit is not none else "–" }}{% if s.produces %} · prints <code>{{ s.produces | join(", ") }}</code>{% endif %}{% if s.methods %} · {{ s.methods | join(", ") }}{% endif %}</div>
+{% if s.description %}<div class="mut">{{ s.description }}</div>{% endif %}
+{% if s.key_lines %}<pre class="key">{% for k in s.key_lines %}{{ k.script }}:{{ k.line }}  [{{ k.method }}]  {{ k.text }}
+{% endfor %}</pre>{% endif %}
+{% for sc in s.scripts %}<details><summary><code>{{ sc.name }}</code> · {{ sc.lines }} lines</summary><pre>{{ sc.code }}</pre></details>{% endfor %}
+{% if not s.scripts %}<details><summary>command</summary><pre>{{ s.command }}</pre></details>{% endif %}
+<details><summary>output{% if s.stdout_truncated %} (shortened){% endif %}</summary><pre class="res">{{ s.stdout }}</pre></details></li>
+{% endfor %}</ol></details>
+{% else %}<p class="muted">No B run called Bash.</p>{% endfor %}
+</div></div></section>
+
+{#- ---------------------------------------------------------------- Method and platform -#}
+<section class="tab" id="tab-platform"><span class="anchor" id="platform"></span>
+<div class="tabgrid">{{ toc_nav("platform", "Method and platform") }}<div class="tc">
+{% set m = method %}{% set p = platform %}
+{{ h2("platform", "Identity") }}
+<div class="scroll"><table class="t"><thead><tr><th>Item</th><th>Value</th><th>Source</th></tr></thead><tbody>
+{% for r in m.identity %}<tr><td>{{ r.item }}</td><td class="nw">{{ r.value }}</td><td class="src">{{ r.source }}</td></tr>
+{% endfor %}</tbody></table></div>
+
+{{ h2("platform", "Protocol") }}
+<div class="scroll"><table class="t" id="tbl-conditions"><thead><tr><th>Condition</th><th>Tools</th><th>Prompt file</th><th>sha256</th><th class="num">Runs</th><th>Source</th></tr></thead><tbody>
+{% for r in m.protocol.conditions %}<tr><td>{{ r.cond }}</td><td>{{ r.tools }}</td><td><code>{{ r.prompt }}</code></td><td>{{ sha(r.sha256) }}</td><td class="num">{{ r.runs if r.runs is not none else "–" }}</td><td class="src">{{ r.source }}</td></tr>
+{% endfor %}</tbody></table></div>
+<div class="scroll"><table class="t" id="tbl-settings"><thead><tr><th>Setting</th><th>Value</th><th>Source</th></tr></thead><tbody>
+{% for r in m.protocol.settings %}<tr><td>{{ r.item }}</td><td>{{ r.value }}</td><td class="src">{{ r.source }}</td></tr>
+{% endfor %}</tbody></table></div>
+
+{{ h2("platform", "Statistics") }}
+<div class="scroll"><table class="t" id="tbl-methods"><thead><tr><th>Quantity</th><th>Definition</th><th>Parameters</th></tr></thead><tbody>
+{% for r in m.statistics %}<tr><td>{{ r.quantity }}</td><td>{{ r.definition }}</td><td>{{ r.parameters }}</td></tr>
+{% endfor %}</tbody></table></div>
+<div class="scroll"><table class="t" id="tbl-intervals"><thead><tr>{% if multi %}<th>Model</th>{% endif %}<th>Class</th><th class="num">n</th>{% for c in h.conds %}<th class="num">{{ c }} solved · 95 % interval</th>{% endfor %}</tr></thead><tbody>
+{% for r in m.class_intervals %}<tr>{% if multi %}<td class="nw">{{ r.model }}</td>{% endif %}<td><code>{{ r["class"] }}</code></td><td class="num">{{ r.n }}</td>{% for c in h.conds %}{% set x = r.cells.get(c) %}<td class="num">{% if x %}{{ x.k }} of {{ x.n }} · {% if x.lo is not none and x.hi is not none %}{{ (100 * x.lo) | fixed(0) }}–{{ (100 * x.hi) | fixed(0) }} %{% else %}–{% endif %}{% else %}–{% endif %}</td>{% endfor %}</tr>
+{% endfor %}</tbody></table></div>
+
+{{ h2("platform", "Provenance") }}
+<div class="scroll"><table class="t" id="tbl-provenance"><thead><tr><th>Page key</th><th>Files</th><th>Fields</th><th>sha256</th><th>Check</th></tr></thead><tbody>
+{% for r in m.provenance %}<tr><td><code>{{ r.key }}</code></td><td class="path">{% for f in r.files %}<div>{{ f.path }}{% if f.count is defined %} · {{ f.count }} files{% endif %}</div>{% endfor %}</td><td>{{ r.fields | join(", ") }}</td><td>{% for f in r.files %}<div>{{ sha(f.sha256) }}</div>{% endfor %}</td><td>{% for f in r.files %}<div>{{ f.verified or "–" }}</div>{% endfor %}</td></tr>
+{% endfor %}</tbody></table></div>
+
+{{ h2("platform", "Exclusions and limits") }}
+<div class="row2"><div class="col"><div class="scroll"><table class="t" id="tbl-exclusions"><thead><tr>{% if multi %}<th>Model</th>{% endif %}<th>Left out</th><th class="num">count</th></tr></thead><tbody>
+{% for r in m.exclusions %}<tr>{% if multi %}<td class="nw">{{ r.model }}</td>{% endif %}<td>{{ r.reason }}</td><td class="num">{{ r.count }}</td></tr>
+{% else %}<tr><td colspan="{{ 3 if multi else 2 }}">none</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="col"><div class="scroll"><table class="t" id="tbl-limits"><thead><tr><th>Scope</th><th>Value</th></tr></thead><tbody>
+{% for r in m.limits %}<tr><td>{{ r.item }}</td><td>{{ r.value }}</td></tr>
+{% endfor %}</tbody></table></div></div></div>
+
+{{ h2("platform", "Where the runs ran") }}
+<div class="scroll"><table class="t"><thead><tr><th>Item</th><th>Value</th><th>Source</th></tr></thead><tbody>
+{% for r in p.rows %}<tr{% if r.value == "not recorded" %} class="na"{% endif %}><td>{{ r.item }}</td><td>{{ r.value }}</td><td class="src">{{ r.source }}</td></tr>
+{% endfor %}</tbody></table></div>
+
+{{ h2("platform", "Schedule") }}
+{{ fg(figs, "schedule") }}
+
+{{ h2("platform", "Files and hashes") }}
+{{ fg(figs, "tree") }}
+{% if p.chains %}<div class="scroll"><table class="t" id="tbl-chains"><thead><tr><th>Run set</th><th class="num">links</th><th class="num">not matching</th><th>Not matching: file, recorded in, field</th></tr></thead><tbody>
+{% for c in p.chains %}<tr><td class="nw">{{ c.set }}</td><td class="num">{{ c.links }}</td><td class="num">{{ c.broken | length }}</td><td class="path">{% for x in c.broken %}<div>{{ x["from"] }} → {{ x.to }} · {{ x.field }}</div>{% else %}–{% endfor %}</td></tr>
+{% endfor %}</tbody></table></div>{% endif %}
+
+{{ h2("platform", "Data notes") }}
+{% if notes %}<div class="scroll"><table class="t"><thead><tr><th>Source</th><th>Kind</th><th>Note</th><th class="num">count</th></tr></thead><tbody>
+{% for n in notes %}<tr><td>{{ n.source }}</td><td>{{ n.kind }}</td><td>{{ n["text"] }}</td><td class="num">{{ n.count }}</td></tr>
+{% endfor %}</tbody></table></div>
+{% else %}<p class="muted">none</p>{% endif %}
+
+{{ all_figures("platform", figs) }}
+</div></div></section>
+{% endblock %}
+{% block motion %}{% endblock %}
+{% block scripts %}<script>{% include "full.js" %}</script>{% endblock %}

@@ -1,0 +1,159 @@
+# The same jobs as .gitlab-ci.yml. Every command lives in tools/ci/*.sh; this file only calls them.
+# No job holds a model credential: tools/ci/guard_no_keys.sh runs first and fails when one is set.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  UV_LINK_MODE: copy
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true  # report-only, as allow_failure in GitLab
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: bash tools/ci/guard_no_keys.sh
+      - run: bash tools/ci/lint.sh
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: bash tools/ci/guard_no_keys.sh
+      - run: bash tools/ci/setup.sh
+      - run: bash tools/ci/test.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-reports
+          path: build/ci/reports/
+          retention-days: 7
+
+  browser:
+    runs-on: ubuntu-latest  # has google-chrome
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: bash tools/ci/guard_no_keys.sh
+      - run: bash tools/ci/setup.sh
+      - run: bash tools/ci/browser.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: browser-reports
+          path: build/ci/reports/
+          retention-days: 7
+
+  e2e-dry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: bash tools/ci/guard_no_keys.sh
+      - run: bash tools/ci/setup.sh
+      - run: bash tools/ci/e2e_dry.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-dry
+          path: |
+            build/ci/e2e/runs/report.html
+            build/ci/e2e/runs/views/
+            build/ci/e2e/runs/MANIFEST.json
+            build/ci/e2e/runs/hypotheses.json
+            build/ci/e2e/runs/rates.csv
+            build/ci/e2e/runs/scores.csv
+            build/ci/e2e/plan/
+          retention-days: 7
+
+  readme-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: bash tools/ci/guard_no_keys.sh
+      - run: bash tools/ci/setup.sh
+      - run: bash tools/ci/readme_smoke.sh
+
+  no-pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: bash tools/ci/guard_no_keys.sh
+      - run: bash tools/ci/setup.sh
+      - run: bash tools/ci/gate_no_pilot.sh
+        env:
+          TSBENCH_GATE_DENY: ${{ secrets.TSBENCH_GATE_DENY }}
+
+  confirmatory-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: bash tools/ci/guard_no_keys.sh
+      - run: bash tools/ci/setup.sh
+      - run: bash tools/ci/gate_confirmatory.sh
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the whole history is scanned
+      - run: bash tools/ci/guard_no_keys.sh
+      - name: install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
+            | tar -xz -C /usr/local/bin gitleaks
+      - run: bash tools/ci/gitleaks.sh

@@ -1,0 +1,89 @@
+# Mutation testing (tools/ci/mutation.sh), report-only. Runs once a week and on request, never on push or pull request: a full
+# run takes hours. The shards in tools/ci/mutation_shards.json become one matrix job each, so no job reaches the
+# 6-hour limit of GitHub-hosted runners; a shard that comes close is split further in that file.
+#
+# Repository variables (optional): MUTATION_RUNNER, a runner label (e.g. a self-hosted machine without the 6-hour
+# limit; the job token still expires after 24 hours), and MUTATION_TIMEOUT_MINUTES (default 350).
+name: mutation
+
+on:
+  schedule:
+    - cron: "17 2 * * 0"  # Sunday 02:17 UTC
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "comma-separated shard names (empty: all shards)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash tools/ci/guard_no_keys.sh
+      - id: matrix
+        env:
+          ONLY: ${{ inputs.only }}
+        run: echo "matrix=$(python3 tools/ci/mutation_report.py matrix --only "$ONLY")" >> "$GITHUB_OUTPUT"
+
+  shard:
+    needs: plan
+    runs-on: ${{ vars.MUTATION_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: ${{ fromJSON(vars.MUTATION_TIMEOUT_MINUTES || '350') }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    name: shard ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: bash tools/ci/guard_no_keys.sh
+      - run: bash tools/ci/setup.sh
+      - run: bash tools/ci/mutation.sh "${{ matrix.name }}" "${{ matrix.source_paths }}" "${{ matrix.test_paths }}"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutation-${{ matrix.name }}
+          path: |
+            build/ci/mutation/${{ matrix.name }}/${{ matrix.name }}.json
+            build/ci/mutation/${{ matrix.name }}/results.txt
+            build/ci/mutation/${{ matrix.name }}/run.log
+          retention-days: 30
+
+  report:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash tools/ci/guard_no_keys.sh
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: mutation-*
+          path: build/ci/mutation
+          merge-multiple: true
+      - run: |
+          python3 tools/ci/mutation_report.py merge build/ci/mutation/summary.md build/ci/mutation/*.json
+          cat build/ci/mutation/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mutation-summary
+          path: build/ci/mutation/summary.md
+          retention-days: 30
