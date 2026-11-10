@@ -1,0 +1,1 @@
+echo $HOME; cd $HOME && pwd && touch x && echo ok; python3 -c "import sympy, numpy; print('ok')"

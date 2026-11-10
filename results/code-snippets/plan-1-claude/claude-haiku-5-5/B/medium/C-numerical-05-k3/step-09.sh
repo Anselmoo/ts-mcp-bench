@@ -1,0 +1,1 @@
+pwd; ls -ld /tmp /tmp/tsbench-run-io23z90g 2>&1; touch /tmp/testfile && echo tmp_ok

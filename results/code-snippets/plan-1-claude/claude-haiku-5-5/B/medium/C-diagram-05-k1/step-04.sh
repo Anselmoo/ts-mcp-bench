@@ -1,0 +1,1 @@
+echo $HOME; pwd; ls -ld . /tmp 2>&1; touch ./test_w 2>&1 && echo ok_cwd && rm ./test_w

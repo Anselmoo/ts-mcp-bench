@@ -1,0 +1,1 @@
+cd /dev/shm 2>/dev/null && pwd; ls -ld /dev/shm /var/tmp 2>/dev/null; touch /dev/shm/x && echo writable_shm; echo $HOME; touch $HOME/x 2>&1

@@ -1,0 +1,640 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-literature_all-09-k3.jsonl",
+ "transcript_sha256": "ef542efe1428adc472271c995f5a6a4f7b1868d6db12bc77f402968189679e4d",
+ "answer": {
+  "Dq": 750.0,
+  "B": 824.0,
+  "C": 3348.0,
+  "out_of_scope": false,
+  "reason": "Exact d5 Hamiltonian diagonalisation fitted to the three quartet band energies (4T1, 4T2, 4E/4A1 assigned as the lowest T1, lowest T2 and degenerate E/A1 levels) gives Dq≈750, B≈824, C≈3348 cm^-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numerical Python packages are available",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy|sympy\" || pip install -q numpy scipy sympy 2>&1 | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 1: pip: command not found",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Verify or install numpy, scipy, sympy",
+   "command": "python3 -c \"import numpy, scipy, sympy; print('ok')\" 2>&1 || (python3 -m pip install -q numpy scipy sympy 2>&1 | tail -2; python3 -c \"import numpy, scipy, sympy; print('ok2')\")",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d5 Hamiltonian and check free-ion term energies",
+   "command": "mkdir -p /w && cat > /w/ligf.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nfrom functools import lru_cache\n\n# spin-orbitals: (m, s), m=-2..2, s=+1/2,-1/2 ; index 0..9\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nn=len(orbs)\n@lru_cache(None)\ndef G(k,q,m,mp):\n    # <2 m| C^k_q |2 mp>  with C^k_q = sqrt(4pi/(2k+1)) Y_kq\n    if abs(q)>k or abs(m)>2 or abs(mp)>2: return 0.0\n    val=gaunt(2,k,2,-m,q,mp)\n    return float(np.sqrt(4*np.pi/(2*k+1))*(-1)**m*val)\ndef Vsp(m1,m2,m3,m4,F):\n    tot=0.0\n    for k,Fk in zip((0,2,4),F):\n        if Fk==0: continue\n        s=0.0\n        for q in range(-k,k+1):\n            s+=(-1)**q*G(k,-q,m1,m3)*G(k,q,m2,m4)\n        tot+=Fk*s\n    return tot\n# Build Fock-space operators (Jordan-Wigner), restrict to N=5\ndim=2**n\ndef cdag_c(i,j):\n    # c_i^dag c_j\n    pass\nann=[]\nfor i in range(n):\n    M=np.zeros((dim,dim))\n    for st in range(dim):\n        if (st>>i)&1:\n            sign=(-1)**bin(st & ((1<<i)-1)).count('1')\n            M[st ^ (1<<i), st]=sign\n    ann.append(M)\ncre=[a.T for a in ann]\nNop=sum(cre[i]@ann[i] for i in range(n))\nidx=[st for st in range(dim) if bin(st).count('1')==5]\ndef build(Dq,B,C):\n    F2=49*B+7*C; F4=63*C/5.0; F0=0.0\n    F=(F0,F2,F4)\n    h=np.zeros((n,n))\n    # one-electron: V = -4Dq I + 10Dq P_eg ; P_eg = |0><0| + |2'><2'|, |2'>=(|2>+|-2>)/sqrt2\n    Peg=np.zeros((5,5))  # index m+2\n    Peg[2,2]=1\n    v=np.zeros(5); v[0]=1/np.sqrt(2); v[4]=1/np.sqrt(2)\n    Peg+=np.outer(v,v)\n    Vmat=-4*Dq*np.eye(5)+10*Dq*Peg\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2: h[i,j]=Vmat[m1+2,m2+2]\n    H1=sum(h[i,j]*cre[i]@ann[j] for i in range(n) for j in range(n) if abs(h[i,j])>1e-14)\n    H2=np.zeros((dim,dim))\n    # H2 = 1/2 sum <ij|V|kl> c_i^+ c_j^+ c_l c_k\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            for k,(m3,s3) in enumerate(orbs):\n                for l,(m4,s4) in enumerate(orbs):\n                    if s1!=s3 or s2!=s4: continue\n                    val=Vsp(m1,m2,m3,m4,F)\n                    if abs(val)<1e-12 or i==j or k==l: continue\n                    H2+=0.5*val*(cre[i]@cre[j]@ann[l]@ann[k])\n    H=H1+H2\n    Hs=H[np.ix_(idx,idx)]\n    # total spin S^2 in N=5 subspace\n    Sz=np.zeros((dim,dim))\n    for i,(m,s) in enumerate(orbs):\n        Sz+=s*cre[i]@ann[i]\n    # S+ S- for S^2\n    Sp=np.zeros((dim,dim)); Sm=np.zeros((dim,dim))\n    for a in range(5):\n        # spin-up index 2*(m+2), down 2*(m+2)+1\n        up=2*a; dn=2*a+1\n        Sp+=cre[up]@ann[dn]; Sm+=cre[dn]@ann[up]\n    S2=Sm@Sp+Sz@Sz+Sz\n    S2s=S2[np.ix_(idx,idx)]\n    w,U=np.linalg.eigh(Hs)\n    # spin of each eigenvector\n    ss=np.real(np.einsum('ia,ij,ja->a',U,S2s,U))\n    return w,ss\nEOF\ncd /w && python3 -c \"\nfrom ligf import *\nimport numpy as np\nw,ss=build(0,1.0,0.0)\nprint(np.round(w,4)); print(np.round(ss,3))\n\"",
+   "scripts": [
+    {
+     "name": "ligf.py",
+     "sha256": "291b24c2db0190a37b361b92d9ad4e710a8a55d547109519ed1793d0726fff95",
+     "lines": 81,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nfrom functools import lru_cache\n\n# spin-orbitals: (m, s), m=-2..2, s=+1/2,-1/2 ; index 0..9\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nn=len(orbs)\n@lru_cache(None)\ndef G(k,q,m,mp):\n    # <2 m| C^k_q |2 mp>  with C^k_q = sqrt(4pi/(2k+1)) Y_kq\n    if abs(q)>k or abs(m)>2 or abs(mp)>2: return 0.0\n    val=gaunt(2,k,2,-m,q,mp)\n    return float(np.sqrt(4*np.pi/(2*k+1))*(-1)**m*val)\ndef Vsp(m1,m2,m3,m4,F):\n    tot=0.0\n    for k,Fk in zip((0,2,4),F):\n        if Fk==0: continue\n        s=0.0\n        for q in range(-k,k+1):\n            s+=(-1)**q*G(k,-q,m1,m3)*G(k,q,m2,m4)\n        tot+=Fk*s\n    return tot\n# Build Fock-space operators (Jordan-Wigner), restrict to N=5\ndim=2**n\ndef cdag_c(i,j):\n    # c_i^dag c_j\n    pass\nann=[]\nfor i in range(n):\n    M=np.zeros((dim,dim))\n    for st in range(dim):\n        if (st>>i)&1:\n            sign=(-1)**bin(st & ((1<<i)-1)).count('1')\n            M[st ^ (1<<i), st]=sign\n    ann.append(M)\ncre=[a.T for a in ann]\nNop=sum(cre[i]@ann[i] for i in range(n))\nidx=[st for st in range(dim) if bin(st).count('1')==5]\ndef build(Dq,B,C):\n    F2=49*B+7*C; F4=63*C/5.0; F0=0.0\n    F=(F0,F2,F4)\n    h=np.zeros((n,n))\n    # one-electron: V = -4Dq I + 10Dq P_eg ; P_eg = |0><0| + |2'><2'|, |2'>=(|2>+|-2>)/sqrt2\n    Peg=np.zeros((5,5))  # index m+2\n    Peg[2,2]=1\n    v=np.zeros(5); v[0]=1/np.sqrt(2); v[4]=1/np.sqrt(2)\n    Peg+=np.outer(v,v)\n    Vmat=-4*Dq*np.eye(5)+10*Dq*Peg\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2: h[i,j]=Vmat[m1+2,m2+2]\n    H1=sum(h[i,j]*cre[i]@ann[j] for i in range(n) for j in range(n) if abs(h[i,j])>1e-14)\n    H2=np.zeros((dim,dim))\n    # H2 = 1/2 sum <ij|V|kl> c_i^+ c_j^+ c_l c_k\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            for k,(m3,s3) in enumerate(orbs):\n                for l,(m4,s4) in enumerate(orbs):\n                    if s1!=s3 or s2!=s4: continue\n                    val=Vsp(m1,m2,m3,m4,F)\n                    if abs(val)<1e-12 or i==j or k==l: continue\n                    H2+=0.5*val*(cre[i]@cre[j]@ann[l]@ann[k])\n    H=H1+H2\n    Hs=H[np.ix_(idx,idx)]\n    # total spin S^2 in N=5 subspace\n    Sz=np.zeros((dim,dim))\n    for i,(m,s) in enumerate(orbs):\n        Sz+=s*cre[i]@ann[i]\n    # S+ S- for S^2\n    Sp=np.zeros((dim,dim)); Sm=np.zeros((dim,dim))\n    for a in range(5):\n        # spin-up index 2*(m+2), down 2*(m+2)+1\n        up=2*a; dn=2*a+1\n        Sp+=cre[up]@ann[dn]; Sm+=cre[dn]@ann[up]\n    S2=Sm@Sp+Sz@Sz+Sz\n    S2s=S2[np.ix_(idx,idx)]\n    w,U=np.linalg.eigh(Hs)\n    # spin of each eigenvector\n    ss=np.real(np.einsum('ia,ij,ja->a',U,S2s,U))\n    return w,ss\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 172: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "ligf.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "ligf.py",
+     "line": 31,
+     "method": "matrix",
+     "text": "M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "ligf.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "h=np.zeros((n,n))"
+    },
+    {
+     "script": "ligf.py",
+     "line": 45,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5))  # index m+2"
+    },
+    {
+     "script": "ligf.py",
+     "line": 46,
+     "method": "matrix",
+     "text": "Peg[2,2]=1"
+    },
+    {
+     "script": "ligf.py",
+     "line": 54,
+     "method": "matrix",
+     "text": "H2=np.zeros((dim,dim))"
+    },
+    {
+     "script": "ligf.py",
+     "line": 67,
+     "method": "matrix",
+     "text": "Sz=np.zeros((dim,dim))"
+    },
+    {
+     "script": "ligf.py",
+     "line": 71,
+     "method": "matrix",
+     "text": "Sp=np.zeros((dim,dim)); Sm=np.zeros((dim,dim))"
+    },
+    {
+     "script": "ligf.py",
+     "line": 78,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(Hs)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Build d5 Hamiltonian and check free-ion term energies",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > ligf.py << 'EOF'\nimport numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom functools import lru_cache\n\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nn=len(orbs)\n@lru_cache(None)\ndef G(k,q,m,mp):\n    if abs(q)>k or abs(m)>2 or abs(mp)>2: return 0.0\n    val=gaunt(2,k,2,-m,q,mp)\n    return float(np.sqrt(4*np.pi/(2*k+1))*(-1)**m*val)\ndef Vsp(m1,m2,m3,m4,F):\n    tot=0.0\n    for k,Fk in zip((0,2,4),F):\n        if Fk==0: continue\n        s=0.0\n        for q in range(-k,k+1):\n            s+=(-1)**q*G(k,-q,m1,m3)*G(k,q,m2,m4)\n        tot+=Fk*s\n    return tot\ndim=2**n\nann=[]\nfor i in range(n):\n    M=np.zeros((dim,dim))\n    for st in range(dim):\n        if (st>>i)&1:\n            sign=(-1)**bin(st & ((1<<i)-1)).count('1')\n            M[st ^ (1<<i), st]=sign\n    ann.append(M)\ncre=[a.T for a in ann]\nidx=[st for st in range(dim) if bin(st).count('1')==5]\nSz=sum(s*cre[i]@ann[i] for i,(m,s) in enumerate(orbs))\nSp=sum(cre[2*a]@ann[2*a+1] for a in range(5))\nSm=sum(cre[2*a+1]@ann[2*a] for a in range(5))\nS2=Sm@Sp+Sz@Sz+Sz\nS2s=S2[np.ix_(idx,idx)]\ndef build(Dq,B,C):\n    F=(0.0,49*B+7*C,63*C/5.0)\n    Peg=np.zeros((5,5)); Peg[2,2]=1\n    v=np.zeros(5); v[0]=v[4]=1/np.sqrt(2)\n    Peg+=np.outer(v,v)\n    Vmat=-4*Dq*np.eye(5)+10*Dq*Peg\n    H=np.zeros((dim,dim))\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2 and abs(Vmat[m1+2,m2+2])>1e-14:\n                H+=Vmat[m1+2,m2+2]*cre[i]@ann[j]\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            for k,(m3,s3) in enumerate(orbs):\n                if s1!=s3: continue\n                for l,(m4,s4) in enumerate(orbs):\n                    if s2!=s4 or i==j or k==l: continue\n                    val=Vsp(m1,m2,m3,m4,F)\n                    if abs(val)<1e-12: continue\n                    H+=0.5*val*(cre[i]@cre[j]@ann[l]@ann[k])\n    Hs=H[np.ix_(idx,idx)]\n    w,U=np.linalg.eigh(Hs)\n    ss=np.real(np.einsum('ia,ij,ja->a',U,S2s,U))\n    return w,ss\nEOF\npython3 -c \"\nfrom ligf import *\nw,ss=build(0,1.0,0.0)\nimport collections\nprint(collections.Counter([(round(a,3),round(b,3)) for a,b in zip(w-w.min(),ss)]))\n\"",
+   "scripts": [
+    {
+     "name": "ligf.py",
+     "sha256": "4273d13f0377be2a6974d2e71a857632c86730762ca431c28316930d6b83eddb",
+     "lines": 60,
+     "code": "import numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom functools import lru_cache\n\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nn=len(orbs)\n@lru_cache(None)\ndef G(k,q,m,mp):\n    if abs(q)>k or abs(m)>2 or abs(mp)>2: return 0.0\n    val=gaunt(2,k,2,-m,q,mp)\n    return float(np.sqrt(4*np.pi/(2*k+1))*(-1)**m*val)\ndef Vsp(m1,m2,m3,m4,F):\n    tot=0.0\n    for k,Fk in zip((0,2,4),F):\n        if Fk==0: continue\n        s=0.0\n        for q in range(-k,k+1):\n            s+=(-1)**q*G(k,-q,m1,m3)*G(k,q,m2,m4)\n        tot+=Fk*s\n    return tot\ndim=2**n\nann=[]\nfor i in range(n):\n    M=np.zeros((dim,dim))\n    for st in range(dim):\n        if (st>>i)&1:\n            sign=(-1)**bin(st & ((1<<i)-1)).count('1')\n            M[st ^ (1<<i), st]=sign\n    ann.append(M)\ncre=[a.T for a in ann]\nidx=[st for st in range(dim) if bin(st).count('1')==5]\nSz=sum(s*cre[i]@ann[i] for i,(m,s) in enumerate(orbs))\nSp=sum(cre[2*a]@ann[2*a+1] for a in range(5))\nSm=sum(cre[2*a+1]@ann[2*a] for a in range(5))\nS2=Sm@Sp+Sz@Sz+Sz\nS2s=S2[np.ix_(idx,idx)]\ndef build(Dq,B,C):\n    F=(0.0,49*B+7*C,63*C/5.0)\n    Peg=np.zeros((5,5)); Peg[2,2]=1\n    v=np.zeros(5); v[0]=v[4]=1/np.sqrt(2)\n    Peg+=np.outer(v,v)\n    Vmat=-4*Dq*np.eye(5)+10*Dq*Peg\n    H=np.zeros((dim,dim))\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2 and abs(Vmat[m1+2,m2+2])>1e-14:\n                H+=Vmat[m1+2,m2+2]*cre[i]@ann[j]\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            for k,(m3,s3) in enumerate(orbs):\n                if s1!=s3: continue\n                for l,(m4,s4) in enumerate(orbs):\n                    if s2!=s4 or i==j or k==l: continue\n                    val=Vsp(m1,m2,m3,m4,F)\n                    if abs(val)<1e-12: continue\n                    H+=0.5*val*(cre[i]@cre[j]@ann[l]@ann[k])\n    Hs=H[np.ix_(idx,idx)]\n    w,U=np.linalg.eigh(Hs)\n    ss=np.real(np.einsum('ia,ij,ja->a',U,S2s,U))\n    return w,ss\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    from ligf import *\nModuleNotFoundError: No module named 'ligf'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "ligf.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "ligf.py",
+     "line": 39,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5)); Peg[2,2]=1"
+    },
+    {
+     "script": "ligf.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H=np.zeros((dim,dim))"
+    },
+    {
+     "script": "ligf.py",
+     "line": 58,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(Hs)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Find a writable directory",
+   "command": "cd ~ 2>/dev/null && pwd; echo $HOME; touch $HOME/x 2>&1 && echo writable_home; df -h /tmp | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\n/tmp/tsbench-home-xehwqch9\ntouch: cannot touch '/tmp/tsbench-home-xehwqch9/x': Read-only file system\n/dev/vda1       158G   89G   63G  59% /\nShell cwd was reset to /tmp/tsbench-run-amsbib04",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Test writing in the run directory",
+   "command": "cd /tmp/tsbench-run-amsbib04 2>/dev/null && touch t && echo ok; pwd",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok\n/tmp/tsbench-run-amsbib04",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Build d5 Hamiltonian and check free-ion term energies",
+   "command": "cat > ligf.py << 'EOF'\nimport numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom functools import lru_cache\n\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nn=len(orbs)\n@lru_cache(None)\ndef G(k,q,m,mp):\n    if abs(q)>k or abs(m)>2 or abs(mp)>2: return 0.0\n    val=gaunt(2,k,2,-m,q,mp)\n    return float(np.sqrt(4*np.pi/(2*k+1))*(-1)**m*val)\ndef Vsp(m1,m2,m3,m4,F):\n    tot=0.0\n    for k,Fk in zip((0,2,4),F):\n        if Fk==0: continue\n        s=0.0\n        for q in range(-k,k+1):\n            s+=(-1)**q*G(k,-q,m1,m3)*G(k,q,m2,m4)\n        tot+=Fk*s\n    return tot\ndim=2**n\nann=[]\nfor i in range(n):\n    M=np.zeros((dim,dim))\n    for st in range(dim):\n        if (st>>i)&1:\n            sign=(-1)**bin(st & ((1<<i)-1)).count('1')\n            M[st ^ (1<<i), st]=sign\n    ann.append(M)\ncre=[a.T for a in ann]\nidx=[st for st in range(dim) if bin(st).count('1')==5]\nSz=sum(s*cre[i]@ann[i] for i,(m,s) in enumerate(orbs))\nSp=sum(cre[2*a]@ann[2*a+1] for a in range(5))\nSm=sum(cre[2*a+1]@ann[2*a] for a in range(5))\nS2=Sm@Sp+Sz@Sz+Sz\nS2s=S2[np.ix_(idx,idx)]\ndef build(Dq,B,C):\n    F=(0.0,49*B+7*C,63*C/5.0)\n    Peg=np.zeros((5,5)); Peg[2,2]=1\n    v=np.zeros(5); v[0]=v[4]=1/np.sqrt(2)\n    Peg+=np.outer(v,v)\n    Vmat=-4*Dq*np.eye(5)+10*Dq*Peg\n    H=np.zeros((dim,dim))\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2 and abs(Vmat[m1+2,m2+2])>1e-14:\n                H+=Vmat[m1+2,m2+2]*cre[i]@ann[j]\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            for k,(m3,s3) in enumerate(orbs):\n                if s1!=s3: continue\n                for l,(m4,s4) in enumerate(orbs):\n                    if s2!=s4 or i==j or k==l: continue\n                    val=Vsp(m1,m2,m3,m4,F)\n                    if abs(val)<1e-12: continue\n                    H+=0.5*val*(cre[i]@cre[j]@ann[l]@ann[k])\n    Hs=H[np.ix_(idx,idx)]\n    w,U=np.linalg.eigh(Hs)\n    ss=np.real(np.einsum('ia,ij,ja->a',U,S2s,U))\n    return w,ss\nEOF\npython3 -c \"\nfrom ligf import *\nimport collections\nw,ss=build(0,1.0,0.0)\nprint(collections.Counter([(round(a,3),round(b*2)/2) for a,b in zip(w-w.min(),ss)]))\n\"",
+   "scripts": [
+    {
+     "name": "ligf.py",
+     "sha256": "4273d13f0377be2a6974d2e71a857632c86730762ca431c28316930d6b83eddb",
+     "lines": 60,
+     "code": "import numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom functools import lru_cache\n\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nn=len(orbs)\n@lru_cache(None)\ndef G(k,q,m,mp):\n    if abs(q)>k or abs(m)>2 or abs(mp)>2: return 0.0\n    val=gaunt(2,k,2,-m,q,mp)\n    return float(np.sqrt(4*np.pi/(2*k+1))*(-1)**m*val)\ndef Vsp(m1,m2,m3,m4,F):\n    tot=0.0\n    for k,Fk in zip((0,2,4),F):\n        if Fk==0: continue\n        s=0.0\n        for q in range(-k,k+1):\n            s+=(-1)**q*G(k,-q,m1,m3)*G(k,q,m2,m4)\n        tot+=Fk*s\n    return tot\ndim=2**n\nann=[]\nfor i in range(n):\n    M=np.zeros((dim,dim))\n    for st in range(dim):\n        if (st>>i)&1:\n            sign=(-1)**bin(st & ((1<<i)-1)).count('1')\n            M[st ^ (1<<i), st]=sign\n    ann.append(M)\ncre=[a.T for a in ann]\nidx=[st for st in range(dim) if bin(st).count('1')==5]\nSz=sum(s*cre[i]@ann[i] for i,(m,s) in enumerate(orbs))\nSp=sum(cre[2*a]@ann[2*a+1] for a in range(5))\nSm=sum(cre[2*a+1]@ann[2*a] for a in range(5))\nS2=Sm@Sp+Sz@Sz+Sz\nS2s=S2[np.ix_(idx,idx)]\ndef build(Dq,B,C):\n    F=(0.0,49*B+7*C,63*C/5.0)\n    Peg=np.zeros((5,5)); Peg[2,2]=1\n    v=np.zeros(5); v[0]=v[4]=1/np.sqrt(2)\n    Peg+=np.outer(v,v)\n    Vmat=-4*Dq*np.eye(5)+10*Dq*Peg\n    H=np.zeros((dim,dim))\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2 and abs(Vmat[m1+2,m2+2])>1e-14:\n                H+=Vmat[m1+2,m2+2]*cre[i]@ann[j]\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            for k,(m3,s3) in enumerate(orbs):\n                if s1!=s3: continue\n                for l,(m4,s4) in enumerate(orbs):\n                    if s2!=s4 or i==j or k==l: continue\n                    val=Vsp(m1,m2,m3,m4,F)\n                    if abs(val)<1e-12: continue\n                    H+=0.5*val*(cre[i]@cre[j]@ann[l]@ann[k])\n    Hs=H[np.ix_(idx,idx)]\n    w,U=np.linalg.eigh(Hs)\n    ss=np.real(np.einsum('ia,ij,ja->a',U,S2s,U))\n    return w,ss\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Counter({(np.float64(10.0), 3.0): 25, (np.float64(11.0), 1.0): 19, (np.float64(22.0), 2.5): 19, (np.float64(10.0), 2.5): 16, (np.float64(22.0), 3.0): 16, (np.float64(13.0), 1.0): 12, (np.float64(13.0), 0.5): 10, (np.float64(17.0), 4.0): 10, (np.float64(17.0), 3.5): 10, (np.float64(7.0), 3.5): 9, (np.float64(38.0), 0.5): 9, (np.float64(38.0), 1.0): 9, (np.float64(10.0), 3.5): 8, (np.float64(26.0), 1.0): 8, (np.float64(31.0), 1.0): 8, (np.float64(9.35), 1.0): 7, (np.float64(11.0), 0.5): 7, (np.float64(22.0), 2.0): 7, (np.float64(54.65), 1.0): 7, (np.float64(26.0), 0.5): 6, (np.float64(55.0), 1.0): 5, (np.float64(0.0), 9.0): 4, (np.float64(7.0), 4.0): 3, (np.float64(9.35), 0.5): 3, (np.float64(54.65), 0.5): 3, (np.float64(0.0), 8.5): 2, (np.float64(22.0), 1.0): 2, (np.float64(22.0), 3.5): 2, (np.float64(31.0), 0.5): 2, (np.float64(32.0), 0.5): 2, (np.float64(10.0), 1.5): 1, (np.float64(55.0), 0.5): 1})",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "ligf.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "ligf.py",
+     "line": 39,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5)); Peg[2,2]=1"
+    },
+    {
+     "script": "ligf.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H=np.zeros((dim,dim))"
+    },
+    {
+     "script": "ligf.py",
+     "line": 58,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(Hs)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Check free-ion term energies by spin multiplicity",
+   "command": "python3 -c \"\nfrom ligf import *\nimport numpy as np\nw,ss=build(0,1.0,0.0)\nS=np.round((-1+np.sqrt(1+4*ss))/2*2)/2\nfor s in sorted(set(S)):\n    sel=np.isclose(S,s)\n    vals=np.round(w[sel]-w.min(),3)\n    u,c=np.unique(vals,return_counts=True)\n    print('S=',s,'levels (B units, count):',list(zip(u,c)))\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "S= 0.5 levels (B units, count): [(np.float64(9.35), np.int64(10)), (np.float64(10.0), np.int64(1)), (np.float64(11.0), np.int64(26)), (np.float64(13.0), np.int64(22)), (np.float64(22.0), np.int64(2)), (np.float64(26.0), np.int64(14)), (np.float64(31.0), np.int64(10)), (np.float64(32.0), np.int64(2)), (np.float64(38.0), np.int64(18)), (np.float64(54.65), np.int64(10)), (np.float64(55.0), np.int64(6))]\nS= 1.0 levels (B units, count): [(np.float64(10.0), np.int64(19)), (np.float64(22.0), np.int64(29))]\nS= 1.5 levels (B units, count): [(np.float64(7.0), np.int64(12)), (np.float64(10.0), np.int64(30)), (np.float64(17.0), np.int64(20)), (np.float64(22.0), np.int64(15))]\nS= 2.5 levels (B units, count): [(np.float64(0.0), np.int64(6))]",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Separate spin states and recheck term energies",
+   "command": "python3 - << 'EOF'\nimport re\nsrc=open('ligf.py').read()\nsrc=src.replace(\"    Hs=H[np.ix_(idx,idx)]\\n    w,U=np.linalg.eigh(Hs)\\n    ss=np.real(np.einsum('ia,ij,ja->a',U,S2s,U))\\n    return w,ss\",\n\"    Hs=H[np.ix_(idx,idx)]\\n    w0,U0=np.linalg.eigh(Hs+1000.0*S2s)\\n    ss=np.real(np.einsum('ia,ij,ja->a',U0,S2s,U0))\\n    w=np.real(np.einsum('ia,ij,ja->a',U0,Hs,U0))\\n    return w,ss\")\nopen('ligf.py','w').write(src)\nEOF\npython3 -c \"\nfrom ligf import *\nimport numpy as np\nw,ss=build(0,1.0,0.0)\nS=np.round((-1+np.sqrt(1+4*ss))/2*2)/2\nfor s in sorted(set(S)):\n    sel=np.isclose(S,s)\n    vals=np.round(w[sel]-w.min(),3)\n    u,c=np.unique(vals,return_counts=True)\n    print('S=',s,'n=',sel.sum(),list(zip(u,c)))\n\"",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "416f4b9275181c80bbe14804fd8f4a92d15a7660e4811e756d80bc5981debd63",
+     "lines": 5,
+     "code": "import re\nsrc=open('ligf.py').read()\nsrc=src.replace(\"    Hs=H[np.ix_(idx,idx)]\\n    w,U=np.linalg.eigh(Hs)\\n    ss=np.real(np.einsum('ia,ij,ja->a',U,S2s,U))\\n    return w,ss\",\n\"    Hs=H[np.ix_(idx,idx)]\\n    w0,U0=np.linalg.eigh(Hs+1000.0*S2s)\\n    ss=np.real(np.einsum('ia,ij,ja->a',U0,S2s,U0))\\n    w=np.real(np.einsum('ia,ij,ja->a',U0,Hs,U0))\\n    return w,ss\")\nopen('ligf.py','w').write(src)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "S= 0.5 n= 150 [(np.float64(9.35), np.int64(10)), (np.float64(10.0), np.int64(14)), (np.float64(11.0), np.int64(26)), (np.float64(13.0), np.int64(22)), (np.float64(22.0), np.int64(18)), (np.float64(26.0), np.int64(14)), (np.float64(31.0), np.int64(10)), (np.float64(32.0), np.int64(2)), (np.float64(38.0), np.int64(18)), (np.float64(54.65), np.int64(10)), (np.float64(55.0), np.int64(6))]\nS= 1.5 n= 96 [(np.float64(7.0), np.int64(12)), (np.float64(10.0), np.int64(36)), (np.float64(17.0), np.int64(20)), (np.float64(22.0), np.int64(28))]\nS= 2.5 n= 6 [(np.float64(0.0), np.int64(6))]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "eigen_solver",
+     "text": "src=src.replace(\"    Hs=H[np.ix_(idx,idx)]\\n    w,U=np.linalg.eigh(Hs)\\n    ss=np.real(np.einsum('ia,ij,ja->a',U,S2s,U))\\n    return w,ss\","
+    },
+    {
+     "script": "inline_1.py",
+     "line": 4,
+     "method": "eigen_solver",
+     "text": "\"    Hs=H[np.ix_(idx,idx)]\\n    w0,U0=np.linalg.eigh(Hs+1000.0*S2s)\\n    ss=np.real(np.einsum('ia,ij,ja->a',U0,S2s,U0))\\n    w=np.real(np.einsum('ia,ij,ja->a',U0,Hs,U0))\\n    return w,ss\")"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Compute quartet level spectrum for trial parameters",
+   "command": "cat > spec.py << 'EOF'\nfrom ligf import *\nimport numpy as np\ndef quartet_levels(Dq,B,C):\n    w,ss=build(Dq,B,C)\n    S=np.round((-1+np.sqrt(1+4*ss))/2*2)/2\n    g0=w[np.isclose(S,2.5)].min()\n    q=w[np.isclose(S,1.5)]-g0\n    q=np.sort(q)\n    # cluster\n    lev=[]\n    for x in q:\n        if lev and abs(x-lev[-1][0])<0.05: lev[-1][1]+=1\n        else: lev.append([x,1])\n    return np.array(lev)\nEOF\npython3 -c \"\nfrom spec import *\nfor Dq in [0,500,740,1000]:\n    print('Dq',Dq)\n    print(np.round(quartet_levels(Dq,860,3500),2).tolist())\n\"",
+   "scripts": [
+    {
+     "name": "spec.py",
+     "sha256": "f6a82988447b9bcabb1d77551c29c91f994e4f20cfd44165d5f205a65885e882",
+     "lines": 14,
+     "code": "from ligf import *\nimport numpy as np\ndef quartet_levels(Dq,B,C):\n    w,ss=build(Dq,B,C)\n    S=np.round((-1+np.sqrt(1+4*ss))/2*2)/2\n    g0=w[np.isclose(S,2.5)].min()\n    q=w[np.isclose(S,1.5)]-g0\n    q=np.sort(q)\n    # cluster\n    lev=[]\n    for x in q:\n        if lev and abs(x-lev[-1][0])<0.05: lev[-1][1]+=1\n        else: lev.append([x,1])\n    return np.array(lev)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq 0\n[[26100.0, 36.0], [30520.0, 12.0], [32120.0, 20.0], [43420.0, 28.0]]\nDq 500\n[[23142.48, 12.0], [25424.52, 12.0], [26100.0, 12.0], [31129.38, 12.0], [32120.0, 8.0], [33167.27, 12.0], [43420.0, 4.0], [43730.25, 12.0], [45086.1, 12.0]]\nDq 740\n[[21006.53, 12.0], [24513.51, 12.0], [26100.0, 12.0], [30421.97, 12.0], [32120.0, 8.0], [34875.74, 12.0], [43420.0, 4.0], [44157.73, 12.0], [46704.52, 12.0]]\nDq 1000\n[[18589.21, 12.0], [23052.9, 12.0], [26100.0, 12.0], [29838.44, 12.0], [32120.0, 8.0], [36524.06, 12.0], [43420.0, 4.0], [44926.73, 12.0], [48748.67, 12.0]]",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "Add symmetry labelling via C4 character and list quartet levels",
+   "command": "cat >> ligf.py << 'EOF'\n\ndef build_full(Dq,B,C):\n    F=(0.0,49*B+7*C,63*C/5.0)\n    Peg=np.zeros((5,5)); Peg[2,2]=1\n    v=np.zeros(5); v[0]=v[4]=1/np.sqrt(2)\n    Peg+=np.outer(v,v)\n    Vmat=-4*Dq*np.eye(5)+10*Dq*Peg\n    H=np.zeros((dim,dim))\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2 and abs(Vmat[m1+2,m2+2])>1e-14:\n                H+=Vmat[m1+2,m2+2]*cre[i]@ann[j]\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            for k,(m3,s3) in enumerate(orbs):\n                if s1!=s3: continue\n                for l,(m4,s4) in enumerate(orbs):\n                    if s2!=s4 or i==j or k==l: continue\n                    val=Vsp(m1,m2,m3,m4,F)\n                    if abs(val)<1e-12: continue\n                    H+=0.5*val*(cre[i]@cre[j]@ann[l]@ann[k])\n    Hs=H[np.ix_(idx,idx)]\n    w0,U0=np.linalg.eigh(Hs+1000.0*S2s)\n    ss=np.real(np.einsum('ia,ij,ja->a',U0,S2s,U0))\n    S=np.round((-1+np.sqrt(1+4*ss))/2*2)/2\n    Mz=np.array([sum(orbs[i][0] for i in range(n) if (st>>i)&1) for st in idx],dtype=float)\n    C4=np.exp(-1j*np.pi/2*Mz)  # diagonal C4z rotation in Fock space (occupations of m)\n    return Hs,U0,S,C4\ndef quartet_irreps(Dq,B,C):\n    Hs,U0,S,C4=build_full(Dq,B,C)\n    w=np.real(np.einsum('ia,ij,ja->a',U0,Hs,U0))\n    E0=w[np.isclose(S,2.5)].min()\n    out=[]\n    sel=np.where(np.isclose(S,1.5))[0]\n    # group eigenvalues by clustering\n    order=sel[np.argsort(w[sel])]\n    groups=[]\n    for a in order:\n        if groups and abs(w[a]-groups[-1][0][0])<1e-3*max(1,abs(w[a])):\n            groups[-1].append(a)\n        else: groups.append([a])\n    for g in groups:\n        V=U0[:,g]\n        chi=np.real(np.trace(V.conj().T@(C4[:,None]*V)))/4.0\n        out.append((w[g[0]]-E0, len(g)//4, round(chi,3)))\n    return out\nEOF\npython3 -c \"\nfrom ligf import *\nfor r in quartet_irreps(740,860,3500): print([round(r[0],1),r[1],r[2]])\n\"",
+   "scripts": [
+    {
+     "name": "ligf.py",
+     "sha256": "7f1336f9dcacf29f15b7d978987dc8ed4e721142719310d2a1142ee59a2daad8",
+     "lines": 46,
+     "code": "\ndef build_full(Dq,B,C):\n    F=(0.0,49*B+7*C,63*C/5.0)\n    Peg=np.zeros((5,5)); Peg[2,2]=1\n    v=np.zeros(5); v[0]=v[4]=1/np.sqrt(2)\n    Peg+=np.outer(v,v)\n    Vmat=-4*Dq*np.eye(5)+10*Dq*Peg\n    H=np.zeros((dim,dim))\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2 and abs(Vmat[m1+2,m2+2])>1e-14:\n                H+=Vmat[m1+2,m2+2]*cre[i]@ann[j]\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            for k,(m3,s3) in enumerate(orbs):\n                if s1!=s3: continue\n                for l,(m4,s4) in enumerate(orbs):\n                    if s2!=s4 or i==j or k==l: continue\n                    val=Vsp(m1,m2,m3,m4,F)\n                    if abs(val)<1e-12: continue\n                    H+=0.5*val*(cre[i]@cre[j]@ann[l]@ann[k])\n    Hs=H[np.ix_(idx,idx)]\n    w0,U0=np.linalg.eigh(Hs+1000.0*S2s)\n    ss=np.real(np.einsum('ia,ij,ja->a',U0,S2s,U0))\n    S=np.round((-1+np.sqrt(1+4*ss))/2*2)/2\n    Mz=np.array([sum(orbs[i][0] for i in range(n) if (st>>i)&1) for st in idx],dtype=float)\n    C4=np.exp(-1j*np.pi/2*Mz)  # diagonal C4z rotation in Fock space (occupations of m)\n    return Hs,U0,S,C4\ndef quartet_irreps(Dq,B,C):\n    Hs,U0,S,C4=build_full(Dq,B,C)\n    w=np.real(np.einsum('ia,ij,ja->a',U0,Hs,U0))\n    E0=w[np.isclose(S,2.5)].min()\n    out=[]\n    sel=np.where(np.isclose(S,1.5))[0]\n    # group eigenvalues by clustering\n    order=sel[np.argsort(w[sel])]\n    groups=[]\n    for a in order:\n        if groups and abs(w[a]-groups[-1][0][0])<1e-3*max(1,abs(w[a])):\n            groups[-1].append(a)\n        else: groups.append([a])\n    for g in groups:\n        V=U0[:,g]\n        chi=np.real(np.trace(V.conj().T@(C4[:,None]*V)))/4.0\n        out.append((w[g[0]]-E0, len(g)//4, round(chi,3)))\n    return out\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": true,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"<string>\", line 3, in <module>\n    for r in quartet_irreps(740,860,3500): print([round(r[0],1),r[1],r[2]])\n             ~~~~~~~~~~~~~~^^^^^^^^^^^^^^\n  File \"/tmp/tsbench-run-amsbib04/ligf.py\", line 100, in quartet_irreps\n    if groups and abs(w[a]-groups[-1][0][0])<1e-3*max(1,abs(w[a])):\n                           ~~~~~~~~~~~~~^^^\nIndexError: invalid index to scalar variable.",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "ligf.py",
+     "line": 4,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5)); Peg[2,2]=1"
+    },
+    {
+     "script": "ligf.py",
+     "line": 8,
+     "method": "matrix",
+     "text": "H=np.zeros((dim,dim))"
+    },
+    {
+     "script": "ligf.py",
+     "line": 23,
+     "method": "eigen_solver",
+     "text": "w0,U0=np.linalg.eigh(Hs+1000.0*S2s)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 11,
+   "tool": "Bash",
+   "description": "Run quartet level listing with C4 labels",
+   "command": "sed -i 's/groups\\[-1\\]\\[0\\]\\[0\\]/w[groups[-1][0]]/' ligf.py && python3 -c \"\nfrom ligf import *\nfor r in quartet_irreps(740,860,3500): print([round(r[0],1),r[1],r[2]])\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[np.float64(21006.5), 3, np.float64(1.0)]\n[np.float64(24513.5), 3, np.float64(-1.0)]\n[np.float64(26100.0), 3, np.float64(1.0)]\n[np.float64(30422.0), 3, np.float64(-1.0)]\n[np.float64(32120.0), 2, np.float64(-0.0)]\n[np.float64(34875.7), 3, np.float64(1.0)]\n[np.float64(43420.0), 1, np.float64(-1.0)]\n[np.float64(44157.7), 3, np.float64(1.0)]\n[np.float64(46704.5), 3, np.float64(-1.0)]",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 12,
+   "tool": "Bash",
+   "description": "Inspect quartet eigenvalue clustering in detail",
+   "command": "python3 -c \"\nfrom ligf import *\nimport numpy as np\nHs,U0,S,C4=build_full(740,860,3500)\nw=np.real(np.einsum('ia,ij,ja->a',U0,Hs,U0))\nsel=np.where(np.isclose(S,1.5))[0]\nww=np.sort(w[sel]); print(len(ww))\nprint(np.round(ww-ww.min(),2)[::4])\nprint(np.round(np.diff(ww),3)[:200])\n\" | head -30",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "96\n[    0.       0.       0.    3506.98  3506.98  3506.98  5093.47  5093.47\n  5093.47  9415.44  9415.44  9415.44 11113.47 11113.47 13869.21 13869.21\n 13869.21 22413.47 23151.21 23151.21 23151.21 25698.   25698.   25698.  ]\n[   0.       0.       0.       0.       0.       0.       0.       0.\n    0.       0.       0.    3506.978    0.       0.       0.       0.\n    0.       0.       0.       0.       0.       0.       0.    1586.495\n    0.       0.       0.       0.       0.       0.       0.       0.\n    0.       0.       0.    4321.971    0.       0.       0.       0.\n    0.       0.       0.       0.       0.       0.       0.    1698.029\n    0.       0.       0.       0.       0.       0.       0.    2755.739\n    0.       0.       0.       0.       0.       0.       0.       0.\n    0.       0.       0.    8544.261    0.       0.       0.     737.733\n    0.       0.       0.       0.       0.       0.       0.       0.\n    0.       0.       0.    2546.79     0.       0.       0.       0.\n    0.       0.       0.       0.       0.       0.       0.   ]",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 13,
+   "tool": "Bash",
+   "description": "Check C2 characters to disambiguate clusters",
+   "command": "python3 -c \"\nfrom ligf import *\nimport numpy as np\nHs,U0,S,C4=build_full(740,860,3500)\nw=np.real(np.einsum('ia,ij,ja->a',U0,Hs,U0))\nsel=np.where(np.isclose(S,1.5))[0]\norder=sel[np.argsort(w[sel])]\ngroups=[]\nfor a in order:\n    if groups and abs(w[a]-w[groups[-1][0]])<1e-3*max(1,abs(w[a])): groups[-1].append(a)\n    else: groups.append([a])\nC2=C4**2\nfor g in groups:\n    V=U0[:,g]\n    c4=np.real(np.trace(V.conj().T@(C4[:,None]*V)))/4\n    c2=np.real(np.trace(V.conj().T@(C2[:,None]*V)))/4\n    print(round(w[g[0]],1), len(g)//4, round(c4,3), round(c2,3))\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "-58093.5 3 1.0 -1.0\n-54586.5 3 -1.0 -1.0\n-53000.0 3 1.0 3.0\n-48678.0 3 -1.0 -1.0\n-46980.0 2 -0.0 2.0\n-44224.3 3 1.0 -1.0\n-35680.0 1 -1.0 1.0\n-34942.3 3 1.0 -1.0\n-32395.5 3 -1.0 -1.0",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 14,
+   "tool": "Bash",
+   "description": "Add labelled level extractor for fitting",
+   "command": "cat >> ligf.py << 'EOF'\n\ndef levels_assigned(Dq,B,C):\n    Hs,U0,S,C4=build_full(Dq,B,C)\n    w=np.real(np.einsum('ia,ij,ja->a',U0,Hs,U0))\n    E0=w[np.isclose(S,2.5)].min()\n    sel=np.where(np.isclose(S,1.5))[0]\n    order=sel[np.argsort(w[sel])]\n    groups=[]\n    for a in order:\n        if groups and abs(w[a]-w[groups[-1][0]])<1e-3*max(1,abs(w[a])): groups[-1].append(a)\n        else: groups.append([a])\n    info=[]\n    C2=C4**2\n    for g in groups:\n        V=U0[:,g]\n        c4=np.real(np.trace(V.conj().T@(C4[:,None]*V)))/4\n        c2=np.real(np.trace(V.conj().T@(C2[:,None]*V)))/4\n        info.append((w[g[0]]-E0, len(g)//4, round(c4,3), round(c2,3)))\n    return info\nEOF\npython3 -c \"\nfrom ligf import *\nfor r in levels_assigned(740,860,3500): print(np.round(r[0],1), r[1:])\n\"",
+   "scripts": [
+    {
+     "name": "ligf.py",
+     "sha256": "4926d54576787b90d44d8e2ad05d9c2ce2dd330e80c4b4534eba3f37ef43ec1e",
+     "lines": 19,
+     "code": "\ndef levels_assigned(Dq,B,C):\n    Hs,U0,S,C4=build_full(Dq,B,C)\n    w=np.real(np.einsum('ia,ij,ja->a',U0,Hs,U0))\n    E0=w[np.isclose(S,2.5)].min()\n    sel=np.where(np.isclose(S,1.5))[0]\n    order=sel[np.argsort(w[sel])]\n    groups=[]\n    for a in order:\n        if groups and abs(w[a]-w[groups[-1][0]])<1e-3*max(1,abs(w[a])): groups[-1].append(a)\n        else: groups.append([a])\n    info=[]\n    C2=C4**2\n    for g in groups:\n        V=U0[:,g]\n        c4=np.real(np.trace(V.conj().T@(C4[:,None]*V)))/4\n        c2=np.real(np.trace(V.conj().T@(C2[:,None]*V)))/4\n        info.append((w[g[0]]-E0, len(g)//4, round(c4,3), round(c2,3)))\n    return info\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "21006.5 (3, np.float64(1.0), np.float64(-1.0))\n24513.5 (3, np.float64(-1.0), np.float64(-1.0))\n26100.0 (3, np.float64(1.0), np.float64(3.0))\n30422.0 (3, np.float64(-1.0), np.float64(-1.0))\n32120.0 (2, np.float64(-0.0), np.float64(2.0))\n34875.7 (3, np.float64(1.0), np.float64(-1.0))\n43420.0 (1, np.float64(-1.0), np.float64(1.0))\n44157.7 (3, np.float64(1.0), np.float64(-1.0))\n46704.5 (3, np.float64(-1.0), np.float64(-1.0))",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 15,
+   "tool": "Bash",
+   "description": "Least-squares fit of Dq, B, C to the three band energies",
+   "command": "cat > fit.py << 'EOF'\nfrom ligf import *\nfrom scipy.optimize import least_squares\nobs=np.array([19720.,23260.,24980.])\ndef pred(p):\n    Dq,B,C=p\n    info=levels_assigned(Dq,B,C)\n    T1=[r[0] for r in info if r[1]==3 and np.isclose(r[2],1) and np.isclose(r[3],-1)]\n    T2=[r[0] for r in info if r[1]==3 and np.isclose(r[2],-1) and np.isclose(r[3],-1)]\n    AE=[r[0] for r in info if r[1]==3 and np.isclose(r[2],1) and np.isclose(r[3],3)]\n    return np.array([T1[0],T2[0],AE[0]])\ndef res(p):\n    return pred(p)-obs\nsol=least_squares(res,[740,860,3500],diff_step=1e-3,xtol=1e-10,ftol=1e-10)\nprint(sol.x, res(sol.x), pred(sol.x))\nEOF\ntime python3 fit.py",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "bb0d4d37b92d1b1bd364b3d99cb0b84d18c92279656cffb9d37e31d3515a5454",
+     "lines": 14,
+     "code": "from ligf import *\nfrom scipy.optimize import least_squares\nobs=np.array([19720.,23260.,24980.])\ndef pred(p):\n    Dq,B,C=p\n    info=levels_assigned(Dq,B,C)\n    T1=[r[0] for r in info if r[1]==3 and np.isclose(r[2],1) and np.isclose(r[3],-1)]\n    T2=[r[0] for r in info if r[1]==3 and np.isclose(r[2],-1) and np.isclose(r[3],-1)]\n    AE=[r[0] for r in info if r[1]==3 and np.isclose(r[2],1) and np.isclose(r[3],3)]\n    return np.array([T1[0],T2[0],AE[0]])\ndef res(p):\n    return pred(p)-obs\nsol=least_squares(res,[740,860,3500],diff_step=1e-3,xtol=1e-10,ftol=1e-10)\nprint(sol.x, res(sol.x), pred(sol.x))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 15
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 143,
+   "is_error": true,
+   "stdout": "Exit code 143\nCommand timed out after 2m 0s",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit.py",
+     "line": 13,
+     "method": "least_squares",
+     "text": "sol=least_squares(res,[740,860,3500],diff_step=1e-3,xtol=1e-10,ftol=1e-10)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 16,
+   "tool": "Bash",
+   "description": "Precompute linear Hamiltonian pieces and verify levels",
+   "command": "cat > fast.py << 'EOF'\nimport numpy as np\nfrom ligf import *\nfrom scipy.optimize import least_squares\n# precompute linear pieces: H = Dq*A + F2*P2 + F4*P4\ndef ops():\n    Peg=np.zeros((5,5)); Peg[2,2]=1\n    v=np.zeros(5); v[0]=v[4]=1/np.sqrt(2)\n    Peg+=np.outer(v,v)\n    Vm=-4*np.eye(5)+10*Peg\n    A=np.zeros((dim,dim))\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2 and abs(Vm[m1+2,m2+2])>1e-14: A+=Vm[m1+2,m2+2]*cre[i]@ann[j]\n    P={0:np.zeros((dim,dim)),2:np.zeros((dim,dim)),4:np.zeros((dim,dim))}\n    for k in (2,4):\n        F=[0,0,0]; F[k//2]=1.0\n        F=tuple(F)\n        for i,(m1,s1) in enumerate(orbs):\n            for j,(m2,s2) in enumerate(orbs):\n                for kk,(m3,s3) in enumerate(orbs):\n                    if s1!=s3: continue\n                    for l,(m4,s4) in enumerate(orbs):\n                        if s2!=s4 or i==j or kk==l: continue\n                        val=Vsp(m1,m2,m3,m4,F)\n                        if abs(val)<1e-12: continue\n                        P[k]+=0.5*val*(cre[i]@cre[j]@ann[l]@ann[kk])\n    return A,P[2],P[4]\nA,P2,P4=ops()\nMz=np.array([sum(orbs[i][0] for i in range(n) if (st>>i)&1) for st in idx],dtype=float)\nC4=np.exp(-1j*np.pi/2*Mz)\ndef build_fast(Dq,B,C):\n    F2=49*B+7*C; F4=63*C/5.0\n    H=(Dq*A+F2*P2+F4*P4)[np.ix_(idx,idx)]\n    w0,U0=np.linalg.eigh(H+1000.0*S2s)\n    ss=np.real(np.einsum('ia,ij,ja->a',U0,S2s,U0))\n    S=np.round((-1+np.sqrt(1+4*ss))/2*2)/2\n    w=np.real(np.einsum('ia,ij,ja->a',U0,H,U0))\n    return w,U0,S\ndef levels(Dq,B,C):\n    w,U0,S=build_fast(Dq,B,C)\n    E0=w[np.isclose(S,2.5)].min()\n    sel=np.where(np.isclose(S,1.5))[0]\n    order=sel[np.argsort(w[sel])]\n    groups=[]\n    for a in order:\n        if groups and abs(w[a]-w[groups[-1][0]])<1e-3*max(1,abs(w[a])): groups[-1].append(a)\n        else: groups.append([a])\n    info=[]\n    for g in groups:\n        V=U0[:,g]\n        c4=np.real(np.trace(V.conj().T@(C4[:,None]*V)))/4\n        c2=np.real(np.trace(V.conj().T@((C4**2)[:,None]*V)))/4\n        info.append((w[g[0]]-E0, len(g)//4, round(c4,3), round(c2,3)))\n    return info\nEOF\ntime python3 -c \"\nfrom fast import *\nfor r in levels(740,860,3500): print(np.round(r[0],1), r[1:])\n\"",
+   "scripts": [
+    {
+     "name": "fast.py",
+     "sha256": "e0c641ba7eb4725a8924ff61e292993a2f803f32b6fc8013b9cccf7806a39bfb",
+     "lines": 54,
+     "code": "import numpy as np\nfrom ligf import *\nfrom scipy.optimize import least_squares\n# precompute linear pieces: H = Dq*A + F2*P2 + F4*P4\ndef ops():\n    Peg=np.zeros((5,5)); Peg[2,2]=1\n    v=np.zeros(5); v[0]=v[4]=1/np.sqrt(2)\n    Peg+=np.outer(v,v)\n    Vm=-4*np.eye(5)+10*Peg\n    A=np.zeros((dim,dim))\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2 and abs(Vm[m1+2,m2+2])>1e-14: A+=Vm[m1+2,m2+2]*cre[i]@ann[j]\n    P={0:np.zeros((dim,dim)),2:np.zeros((dim,dim)),4:np.zeros((dim,dim))}\n    for k in (2,4):\n        F=[0,0,0]; F[k//2]=1.0\n        F=tuple(F)\n        for i,(m1,s1) in enumerate(orbs):\n            for j,(m2,s2) in enumerate(orbs):\n                for kk,(m3,s3) in enumerate(orbs):\n                    if s1!=s3: continue\n                    for l,(m4,s4) in enumerate(orbs):\n                        if s2!=s4 or i==j or kk==l: continue\n                        val=Vsp(m1,m2,m3,m4,F)\n                        if abs(val)<1e-12: continue\n                        P[k]+=0.5*val*(cre[i]@cre[j]@ann[l]@ann[kk])\n    return A,P[2],P[4]\nA,P2,P4=ops()\nMz=np.array([sum(orbs[i][0] for i in range(n) if (st>>i)&1) for st in idx],dtype=float)\nC4=np.exp(-1j*np.pi/2*Mz)\ndef build_fast(Dq,B,C):\n    F2=49*B+7*C; F4=63*C/5.0\n    H=(Dq*A+F2*P2+F4*P4)[np.ix_(idx,idx)]\n    w0,U0=np.linalg.eigh(H+1000.0*S2s)\n    ss=np.real(np.einsum('ia,ij,ja->a',U0,S2s,U0))\n    S=np.round((-1+np.sqrt(1+4*ss))/2*2)/2\n    w=np.real(np.einsum('ia,ij,ja->a',U0,H,U0))\n    return w,U0,S\ndef levels(Dq,B,C):\n    w,U0,S=build_fast(Dq,B,C)\n    E0=w[np.isclose(S,2.5)].min()\n    sel=np.where(np.isclose(S,1.5))[0]\n    order=sel[np.argsort(w[sel])]\n    groups=[]\n    for a in order:\n        if groups and abs(w[a]-w[groups[-1][0]])<1e-3*max(1,abs(w[a])): groups[-1].append(a)\n        else: groups.append([a])\n    info=[]\n    for g in groups:\n        V=U0[:,g]\n        c4=np.real(np.trace(V.conj().T@(C4[:,None]*V)))/4\n        c2=np.real(np.trace(V.conj().T@((C4**2)[:,None]*V)))/4\n        info.append((w[g[0]]-E0, len(g)//4, round(c4,3), round(c2,3)))\n    return info\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "21006.5 (3, np.float64(1.0), np.float64(-1.0))\n24513.5 (3, np.float64(-1.0), np.float64(-1.0))\n26100.0 (3, np.float64(1.0), np.float64(3.0))\n30422.0 (3, np.float64(-1.0), np.float64(-1.0))\n32120.0 (2, np.float64(0.0), np.float64(2.0))\n34875.7 (3, np.float64(1.0), np.float64(-1.0))\n43420.0 (1, np.float64(-1.0), np.float64(1.0))\n44157.7 (3, np.float64(1.0), np.float64(-1.0))\n46704.5 (3, np.float64(-1.0), np.float64(-1.0))\n\nreal\t0m14,129s\nuser\t3m12,356s\nsys\t0m12,127s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fast.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fast.py",
+     "line": 6,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5)); Peg[2,2]=1"
+    },
+    {
+     "script": "fast.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "A=np.zeros((dim,dim))"
+    },
+    {
+     "script": "fast.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "P={0:np.zeros((dim,dim)),2:np.zeros((dim,dim)),4:np.zeros((dim,dim))}"
+    },
+    {
+     "script": "fast.py",
+     "line": 34,
+     "method": "eigen_solver",
+     "text": "w0,U0=np.linalg.eigh(H+1000.0*S2s)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 17,
+   "tool": "Bash",
+   "description": "Run least-squares fit with precomputed matrices",
+   "command": "cat > fit2.py << 'EOF'\nfrom fast import *\nobs=np.array([19720.,23260.,24980.])\ndef pred(p):\n    info=levels(*p)\n    T1=[r[0] for r in info if r[1]==3 and np.isclose(r[2],1) and np.isclose(r[3],-1)]\n    T2=[r[0] for r in info if r[1]==3 and np.isclose(r[2],-1) and np.isclose(r[3],-1)]\n    AE=[r[0] for r in info if r[1]==3 and np.isclose(r[2],1) and np.isclose(r[3],3)]\n    return np.array([T1[0],T2[0],AE[0]])\nsol=least_squares(lambda p: pred(p)-obs,[740,860,3500],diff_step=1e-3,xtol=1e-9,ftol=1e-9,max_nfev=60)\nprint('Dq,B,C=',sol.x, 'resid',pred(sol.x)-obs)\nEOF\ntimeout 500 python3 fit2.py",
+   "scripts": [
+    {
+     "name": "fit2.py",
+     "sha256": "70dd0ccdf01e2047f74f293099b96dba2b64949c7cdd829f7c4ed99bddcd0b33",
+     "lines": 10,
+     "code": "from fast import *\nobs=np.array([19720.,23260.,24980.])\ndef pred(p):\n    info=levels(*p)\n    T1=[r[0] for r in info if r[1]==3 and np.isclose(r[2],1) and np.isclose(r[3],-1)]\n    T2=[r[0] for r in info if r[1]==3 and np.isclose(r[2],-1) and np.isclose(r[3],-1)]\n    AE=[r[0] for r in info if r[1]==3 and np.isclose(r[2],1) and np.isclose(r[3],3)]\n    return np.array([T1[0],T2[0],AE[0]])\nsol=least_squares(lambda p: pred(p)-obs,[740,860,3500],diff_step=1e-3,xtol=1e-9,ftol=1e-9,max_nfev=60)\nprint('Dq,B,C=',sol.x, 'resid',pred(sol.x)-obs)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit2.py",
+     "written_in_step": 17
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq,B,C= [ 749.96171414  824.20763127 3347.58473747] resid [-1.45519152e-11 -9.82254278e-10  8.00355338e-11]",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit2.py",
+     "line": 9,
+     "method": "least_squares",
+     "text": "sol=least_squares(lambda p: pred(p)-obs,[740,860,3500],diff_step=1e-3,xtol=1e-9,ftol=1e-9,max_nfev=60)"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B",
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 750.0,
+   "weak": false,
+   "steps": [
+    17
+   ],
+   "typed_in_steps": [],
+   "source_step": 17
+  },
+  {
+   "path": "B",
+   "value": 824.0,
+   "weak": false,
+   "steps": [
+    17
+   ],
+   "typed_in_steps": [],
+   "source_step": 17
+  },
+  {
+   "path": "C",
+   "value": 3348.0,
+   "weak": false,
+   "steps": [
+    17
+   ],
+   "typed_in_steps": [],
+   "source_step": 17
+  }
+ ],
+ "summary": {
+  "n_steps": 18,
+  "n_scripts": 10,
+  "n_failed_steps": 4,
+  "n_values": 3,
+  "n_linked": 3,
+  "n_weak": 0,
+  "source_steps": [
+   17
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": true
+ }
+}

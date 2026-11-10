@@ -1,0 +1,1 @@
+cd ~ && pwd && touch x_test && echo writable_home; ls -ld /tmp; 

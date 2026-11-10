@@ -1,0 +1,1 @@
+pip list 2>/dev/null | grep -i -E "numpy|scipy" || pip install -q numpy scipy 2>&1 | tail -1

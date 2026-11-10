@@ -1,0 +1,1 @@
+cd /tmp 2>/dev/null; python3 -c "import numpy, scipy; print(numpy.__version__, scipy.__version__)"; python3 -c "import sympy; print(sympy.__version__)"

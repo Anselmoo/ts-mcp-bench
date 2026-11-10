@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null; pwd; touch x && echo ok; ls -ld /tmp $PWD; echo $TMPDIR

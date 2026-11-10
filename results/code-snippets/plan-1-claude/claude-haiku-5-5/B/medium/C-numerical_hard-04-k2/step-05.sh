@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-ivc7_yik 2>/dev/null && touch t && echo writable; python3 -c "import numpy; print('np ok')"

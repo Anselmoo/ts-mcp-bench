@@ -9,20 +9,22 @@ from __future__ import annotations
 
 import html
 import math
+import re
 from collections.abc import Callable, Iterable, Sequence
 from decimal import ROUND_HALF_UP, Context, Decimal
 
 __all__ = ["CONDS", "ERROR_CLASSES", "FULL_W", "HALF_W", "SCORE_STEPS", "SMALL_PX", "TEXT_PX", "Linear",
            "Log", "axis_bottom", "axis_left", "circle", "coord", "diamond", "error_classes", "escape", "fit", "figure",
            "fixed", "group", "ink", "legend", "legend_rows", "line", "link", "marker", "module_name", "nice_ticks",
-           "number", "path", "pct", "percent", "plural", "polar", "polygon", "rect", "round_half_up", "score_class",
-           "score_legend", "signed_pp", "significant", "text", "text_width", "wrap"]
+           "number", "panel_width", "panels", "path", "pct", "percent", "plural", "polar", "polygon", "rect",
+           "round_half_up", "score_class", "score_legend", "signed_pp", "significant", "text", "text_width", "wrap"]
 
 CONDS = ("A", "B", "C")
 FULL_W = 960  # the width of a full figure: the content column
 HALF_W = 464  # the width of a half figure: two halves and a 32 px gap fill the column
 TEXT_PX = 12.5  # the size of the body text of the figure: labels, ticks, legend
 SMALL_PX = 11  # dense labels only (a matrix header, a tile name)
+PANEL_HEAD = 24.0  # the line above a panel of small multiples: its name
 GLYPH_EM = 0.56  # the mean advance of one character of the figure font (Arial and its metric twins), in em
 _TICK_GAP = 3.0  # the least space between two tick labels of an axis, in px
 # The five steps of coverage and mutation score, best first (classes g0 .. g4; svg.css gives each its colour).
@@ -366,6 +368,40 @@ def figure(w: float, h: float, title: str, body: Iterable[str] | str, cls: str =
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {coord(w)} {coord(h)}" width="{coord(w)}"'
             f' height="{coord(h)}" class="{escape(c)}" role="{role}" aria-label="{escape(title)}">'
             f"<title>{escape(title)}</title>{inner}</svg>")
+
+
+def panels(title: str, items: Sequence[tuple[str, str]], *, width: float = FULL_W, cols: int = 2,
+           gap: float = 32.0) -> str:
+    """Small multiples as one figure: `items` `[(name, svg)]` in the given order, `cols` to a row, each svg (a `figure`
+    drawn at `panel_width(width, cols, gap)`) under its name in bold. A row is as high as its tallest panel. An item
+    without a drawing has no panel; the note under the figure names it. Nothing to draw gives ""."""
+    drawn = [(n, s) for n, s in items if s]
+    if not drawn:
+        return ""
+    pw = panel_width(width, cols, gap)
+    body: list[str] = []
+    y = 0.0
+    for at in range(0, len(drawn), cols):
+        row = drawn[at:at + cols]
+        tallest = 0.0
+        for i, (name, svg) in enumerate(row):
+            head, inner = svg[:svg.index(">") + 1], svg[svg.index(">") + 1:].removesuffix("</svg>")
+            found = re.search(r'\sheight="([0-9.]+)"', head)
+            tallest = max(tallest, float(found.group(1)) if found else 0.0)
+            x = i * (pw + gap)
+            body.append(text(x, y + TEXT_PX, name, "start", "b"))
+            body.append(group(inner, transform=f"translate({coord(x)},{coord(y + PANEL_HEAD)})"))
+        y += tallest + PANEL_HEAD + 12
+    missing = [n for n, s in items if not s]
+    if missing:
+        body.append(text(0, y + TEXT_PX, f"No data: {', '.join(missing)}", "start", "mut"))
+        y += TEXT_PX + 8
+    return figure(width, y, title, body)
+
+
+def panel_width(width: float, cols: int, gap: float = 32.0) -> float:
+    """The width of one panel of `cols` panels of `panels`."""
+    return (float(width) - (cols - 1) * gap) / cols
 
 
 # ---------------------------------------------------------------- axes and legend

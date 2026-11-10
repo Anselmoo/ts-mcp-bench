@@ -1,0 +1,1 @@
+sed -i 's/for x in (q,p):/for x in (p,q):/' d4.py; python3 d4.py

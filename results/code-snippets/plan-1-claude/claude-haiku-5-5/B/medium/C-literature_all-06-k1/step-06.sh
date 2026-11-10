@@ -1,0 +1,1 @@
+ls -la /dev/shm/ | head; cd /dev/shm && pwd && ls

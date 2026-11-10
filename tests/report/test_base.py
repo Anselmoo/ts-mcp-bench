@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import pathlib
 
 import pytest
@@ -29,6 +30,13 @@ def test_boolean_cells_read_the_same_in_any_spelling(cell, want):
 ])
 def test_number_cells_leave_out_empty_text_and_nan(cell, want):
     assert base.as_number(cell) == want
+
+
+@pytest.mark.parametrize(("cells", "want"), [
+    ([], False), (["True"], True), (["False"], False), (["True", "False"], False), (["1", "true", "False"], True),
+    (["True", "False", "False"], False), (["", "True", "True"], True)])
+def test_a_task_is_solved_by_more_than_half_of_its_runs(cells, want):
+    assert base.solved([{"correct": c} for c in cells]) is want
 
 
 def test_median_ignores_missing_values():
@@ -120,7 +128,7 @@ def _defined(tree: ast.AST) -> set[str]:
 
 
 SHARED = {"HARNESS", "_HARNESS", "HARNESS_CATEGORIES", "_median", "_bool", "_true", "_as_float", "as_number",
-          "as_bool", "_share", "_pilot_hash", "as_run_sets", "_as_run_sets", "is_rate_limited"}
+          "as_bool", "_share", "_pilot_hash", "as_run_sets", "_as_run_sets", "is_rate_limited", "_solved"}
 SHARED_IN = {"dashboard.py": {"_num"}, "comparison.py": {"_num"}, "functional.py": {"_yes"}, "method.py": {"_row"}}
 # the {item, value, source} row is facts.distinct_row; no page keeps a local `row` function of its own beside it
 # run_figures._num and provenance._num read JSON values, method._yes reads the manifest word `yes`: other rules
@@ -141,3 +149,81 @@ def test_the_platform_table_has_no_local_copy_of_the_distinct_row():
     tree = ast.parse((REPORT / "facts.py").read_text(encoding="utf-8"))
     local = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "row"]
     assert local == []
+
+
+# ---- the task split of a report
+def test_split_tasks_holds_the_records_of_one_split_by_id():
+    pilot, conf = base.split_tasks("pilot"), base.split_tasks("confirmatory")
+    assert len(pilot) == 50 and len(conf) == 55 and not set(pilot) & set(conf)
+    assert {t["split"] for t in conf.values()} == {"confirmatory"}
+    assert base.split_tasks() == pilot
+
+
+def test_split_tasks_drops_a_record_of_another_split(monkeypatch):
+    import tsbench.tasks as T
+    monkeypatch.setattr(T, "load", lambda split: [{"id": "a", "split": split}, {"id": "b", "split": "other"}])
+    assert set(base.split_tasks("confirmatory")) == {"a"}
+
+
+def test_split_hash_is_the_line_of_its_split():
+    lines = dict(reversed(x.split()) for x in resource("tasks/tasks.sha256").read_text(encoding="utf-8").splitlines())
+    assert base.split_hash("confirmatory") == lines["confirmatory"] != base.split_hash("pilot") == lines["pilot"]
+    assert base.pilot_hash() == base.split_hash("pilot")
+
+
+def _set_of(tmp_path, name: str, split: str | None) -> RunSet:
+    d = tmp_path / name
+    d.mkdir()
+    if split:
+        (d / "MANIFEST.json").write_text(json.dumps({"split": split}), encoding="utf-8")
+    return RunSet(name, name, d)
+
+
+@pytest.mark.parametrize(("split", "recorded", "doi", "refused"), [
+    ("pilot", "pilot", None, None),
+    ("pilot", None, None, None),
+    ("confirmatory", "confirmatory", "10.5281/zenodo.1", None),
+    ("confirmatory", None, "10.5281/zenodo.1", None),
+    ("confirmatory", "confirmatory", None, "--i-have-preregistered"),
+    ("confirmatory", "confirmatory", "not-a-doi", "--i-have-preregistered"),
+    ("pilot", "confirmatory", None, "--i-have-preregistered"),
+    ("pilot", "confirmatory", "10.5281/zenodo.1", "--split confirmatory"),
+    ("confirmatory", "pilot", "10.5281/zenodo.1", "--split pilot"),
+])
+def test_split_refusal_needs_a_doi_and_the_split_of_the_run_sets(tmp_path, split, recorded, doi, refused):
+    got = base.split_refusal([_set_of(tmp_path, "s", recorded)], split, doi)
+    assert (got is None) if refused is None else (refused in got)
+
+
+# ---------------------------------------------------------------- the models
+
+
+def test_the_models_have_one_order():
+    models = ["zeta-1", "claude-opus-5-5", "alpha-2", "claude-sonnet-5-5", "claude-haiku-5-5"]
+    assert sorted(models, key=base.model_key) == ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "alpha-2",
+                                                  "zeta-1"]
+    assert base.display_model("claude-haiku-5-5") == "Haiku" and base.display_model("gemma-4") == "gemma-4"
+    assert base.is_claude("claude-x") and not base.is_claude("gemma-4")
+
+
+def test_every_page_takes_the_models_and_their_colours_from_one_place():
+    from tsbench.report import comparison, coverage, dashboard, gallery, literature, page, science
+
+    assert comparison.model_key is base.model_key and comparison.display_model is base.display_model
+    for module in (coverage, dashboard, gallery, science):
+        assert module.model_key is base.model_key
+    assert literature.comparison.model_key is base.model_key
+    assert dashboard.COLORS == comparison.COLORS == {c: page.THEME[f"series-{i}"] for i, c in enumerate("ABC", 1)}
+
+
+def test_the_coverage_page_lists_the_models_in_that_order(tmp_path, monkeypatch):
+    from tsbench.report import coverage
+    from tsbench.score import score
+
+    found = [(tmp_path / m, m, "A", "medium", "P-closed_form-01", 1) for m in ("claude-opus-5-5", "gemma-4",
+                                                                                 "claude-haiku-5-5")]
+    monkeypatch.setattr(score, "check_runs_match", lambda *a: None)
+    monkeypatch.setattr(score, "find_transcripts", lambda root: found)
+    monkeypatch.setattr(score, "read_transcript", lambda path: None)
+    monkeypatch.setattr(score, "not_evaluable_reason", lambda tr: None)
+    assert coverage.coverage([tmp_path])["models"] == ["claude-haiku-5-5", "claude-opus-5-5", "gemma-4"]

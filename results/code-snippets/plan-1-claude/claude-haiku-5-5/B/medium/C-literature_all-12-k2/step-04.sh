@@ -1,0 +1,1 @@
+pwd; echo $HOME; touch ~/x_test && echo homeok; ls -ld /tmp; df -h 2>/dev/null | head

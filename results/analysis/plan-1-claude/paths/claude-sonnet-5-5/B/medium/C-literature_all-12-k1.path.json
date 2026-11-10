@@ -1,0 +1,1319 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-sonnet-5-5/B/medium/C-literature_all-12-k1.jsonl",
+ "transcript_sha256": "c235ebd69ebebc46394d0345932a6aa9695fc9c4fcd17735c4c3e36a86d40afd",
+ "answer": {
+  "Dq": 673.0,
+  "B": 795.0,
+  "C": 3580.0,
+  "out_of_scope": false,
+  "reason": "Full d7 ligand-field least-squares fit of all four bands; quartet bands fit only approximately (residuals up to about 320 cm^-1) and C depends on the 2T1(2) assignment."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat > /tmp/a.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nl=2;ms=range(-2,3)\ndef ck(k,m1,m2): # <l m1|C^k|l m2> with q=m1-m2\n    return float((-1)**m1*(2*l+1)*gaunt(l,k,l,-m1,m1-m2,m2)) if True else 0\n# <m1|C^k_q|m2> = (-1)^m1 (2l+1) 3j(l k l;-m1 q m2)(l k l;000)\nfrom sympy.physics.wigner import wigner_3j\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(0,2,4) for a in ms for b in ms}\n# complex-basis V(ab,cd)=sum_k F^k c(a,c)c(b,d) ... <ab|1/r12|cd> = sum_k Fk ck(a,c) ck(b,d) with m conservation (a-c = d-b)\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,d,b)]*(-1)**(a-cc)\n    return V\n# check sign: <ab|cd> = sum_k F^k c^k(l a;l c) c^k(l b; l d)... with c^k(a,c)=(-1)^a... use standard: c^k(m,m')=sqrt-stuff; direct: C(a,c)*C(b,d)\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*1.0\n    return V\n# <a b|cd> = sum_k F^k <a|Ck|c><b|Ck(-)|d>; <b|C^k_{-q}|d> = (-1)^q <d|C^k_q|b>* -> use conj sym: c(k,b,d) with q'=b-d=-(a-c): ok as computed.\n# Note sign (-1)^q needed: <a|C_q|c><b|C_-q|d> * (-1)^q\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\n# real orbitals order: z2,xz,yz,x2-y2,xy\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex) # real_i = sum_m U[i,m] |m>\ndef idx(m):return m+2\nU[0,idx(0)]=1\nU[1,idx(1)]=s;U[1,idx(-1)]=-s   # xz\nU[2,idx(1)]=1j*s;U[2,idx(-1)]=1j*s #yz\nU[3,idx(2)]=s;U[3,idx(-2)]=s\nU[4,idx(2)]=-1j*s;U[4,idx(-2)]=1j*s\ndef tr(V):\n    # <ab|cd> real = sum conj(U ia)conj(U jb) U kc U ld V\n    return np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\n# orbitals spin: so=(orb,spin)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef build(Dq,B,Cc):\n    F2=49*B+7*Cc; F4=63*Cc/5*0+ (441*Cc/35)  # C=(35F4)/441 in this F4 normalization? set below\n    # Condon-Shortley: B=F2-5F4, C=35F4 with F2,F4 = F^k/49,/441\n    f4=Cc/35; f2=B+5*f4\n    F2=f2*49;F4=f4*441\n    # two-electron <ab|cd>\n    G=F2*R2+F4*R4\n    h=np.zeros(10)\n    for i,(o,sp) in enumerate(so): h[i]= (6*Dq if o in(0,3) else -4*Dq)\n    N=len(dets);H=np.zeros((N,N))\n    def apply(ops,det): # ops list of (i,create?) apply right to left\n        det=list(det);sign=1\n        for i,cr in ops:\n            if cr:\n                if i in det:return None,0\n                pos=sum(1 for x in det if x<i);det.insert(pos,i);sign*=(-1)**pos\n            else:\n                if i not in det:return None,0\n                pos=det.index(i);det.pop(pos);sign*=(-1)**pos\n        return tuple(det),sign\n    for n,d in enumerate(dets):\n        for i in d:H[n,n]+=h[i]\n        # 1/2 sum <pq|rs> a+p a+q a_s a_r\n        for r in d:\n          for t in d:\n            if r==t:continue\n            for p in range(10):\n              for q in range(10):\n                if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n                val=G[so[p][0],so[q][0],so[r][0],so[t][0]]\n                if val==0:continue\n                nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n                if nd is None:continue\n                H[di[nd],n]+=0.5*val*sg\n    return H\ndef levels(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));return w\nimport sys\nw=levels(800,900,3500);w=np.unique(np.round(w-w[0],3));print(w[:12])\nnp.save('/tmp/x',0)\ndef model(p):\n    Dq,B,Cc=p\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w-=w[0]\n    return w\n# identify by spin multiplicity is hard; use matching by nearest degenerate levels\ndef lev(p):\n    w=model(p);u=[];\n    for x in w:\n        if not u or abs(x-u[-1][0])>1:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\nfor x in lev((800,900,3500))[:15]:print(x)\nE\npython3 /tmp/a.py\n",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "b8632f3b5e44e5ccc38788a877e26b60f246e7c2eea938443dbf2fa4ce6a4f38",
+     "lines": 112,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nl=2;ms=range(-2,3)\ndef ck(k,m1,m2): # <l m1|C^k|l m2> with q=m1-m2\n    return float((-1)**m1*(2*l+1)*gaunt(l,k,l,-m1,m1-m2,m2)) if True else 0\n# <m1|C^k_q|m2> = (-1)^m1 (2l+1) 3j(l k l;-m1 q m2)(l k l;000)\nfrom sympy.physics.wigner import wigner_3j\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(0,2,4) for a in ms for b in ms}\n# complex-basis V(ab,cd)=sum_k F^k c(a,c)c(b,d) ... <ab|1/r12|cd> = sum_k Fk ck(a,c) ck(b,d) with m conservation (a-c = d-b)\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,d,b)]*(-1)**(a-cc)\n    return V\n# check sign: <ab|cd> = sum_k F^k c^k(l a;l c) c^k(l b; l d)... with c^k(a,c)=(-1)^a... use standard: c^k(m,m')=sqrt-stuff; direct: C(a,c)*C(b,d)\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*1.0\n    return V\n# <a b|cd> = sum_k F^k <a|Ck|c><b|Ck(-)|d>; <b|C^k_{-q}|d> = (-1)^q <d|C^k_q|b>* -> use conj sym: c(k,b,d) with q'=b-d=-(a-c): ok as computed.\n# Note sign (-1)^q needed: <a|C_q|c><b|C_-q|d> * (-1)^q\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\n# real orbitals order: z2,xz,yz,x2-y2,xy\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex) # real_i = sum_m U[i,m] |m>\ndef idx(m):return m+2\nU[0,idx(0)]=1\nU[1,idx(1)]=s;U[1,idx(-1)]=-s   # xz\nU[2,idx(1)]=1j*s;U[2,idx(-1)]=1j*s #yz\nU[3,idx(2)]=s;U[3,idx(-2)]=s\nU[4,idx(2)]=-1j*s;U[4,idx(-2)]=1j*s\ndef tr(V):\n    # <ab|cd> real = sum conj(U ia)conj(U jb) U kc U ld V\n    return np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\n# orbitals spin: so=(orb,spin)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef build(Dq,B,Cc):\n    F2=49*B+7*Cc; F4=63*Cc/5*0+ (441*Cc/35)  # C=(35F4)/441 in this F4 normalization? set below\n    # Condon-Shortley: B=F2-5F4, C=35F4 with F2,F4 = F^k/49,/441\n    f4=Cc/35; f2=B+5*f4\n    F2=f2*49;F4=f4*441\n    # two-electron <ab|cd>\n    G=F2*R2+F4*R4\n    h=np.zeros(10)\n    for i,(o,sp) in enumerate(so): h[i]= (6*Dq if o in(0,3) else -4*Dq)\n    N=len(dets);H=np.zeros((N,N))\n    def apply(ops,det): # ops list of (i,create?) apply right to left\n        det=list(det);sign=1\n        for i,cr in ops:\n            if cr:\n                if i in det:return None,0\n                pos=sum(1 for x in det if x<i);det.insert(pos,i);sign*=(-1)**pos\n            else:\n                if i not in det:return None,0\n                pos=det.index(i);det.pop(pos);sign*=(-1)**pos\n        return tuple(det),sign\n    for n,d in enumerate(dets):\n        for i in d:H[n,n]+=h[i]\n        # 1/2 sum <pq|rs> a+p a+q a_s a_r\n        for r in d:\n          for t in d:\n            if r==t:continue\n            for p in range(10):\n              for q in range(10):\n                if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n                val=G[so[p][0],so[q][0],so[r][0],so[t][0]]\n                if val==0:continue\n                nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n                if nd is None:continue\n                H[di[nd],n]+=0.5*val*sg\n    return H\ndef levels(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));return w\nimport sys\nw=levels(800,900,3500);w=np.unique(np.round(w-w[0],3));print(w[:12])\nnp.save('/tmp/x',0)\ndef model(p):\n    Dq,B,Cc=p\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w-=w[0]\n    return w\n# identify by spin multiplicity is hard; use matching by nearest degenerate levels\ndef lev(p):\n    w=model(p);u=[];\n    for x in w:\n        if not u or abs(x-u[-1][0])>1:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\nfor x in lev((800,900,3500))[:15]:print(x)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 0
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 118: /tmp/a.py: Read-only file system\npython3: can't open file '/tmp/a.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "a.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "a.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "a.py",
+     "line": 35,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "a.py",
+     "line": 46,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex) # real_i = sum_m U[i,m] |m>"
+    },
+    {
+     "script": "a.py",
+     "line": 70,
+     "method": "matrix",
+     "text": "N=len(dets);H=np.zeros((N,N))"
+    },
+    {
+     "script": "a.py",
+     "line": 97,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(Dq,B,Cc));return w"
+    },
+    {
+     "script": "a.py",
+     "line": 103,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(Dq,B,Cc));w-=w[0]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ 2>/dev/null; pwd; touch t && echo ok; ls -ld /dev/shm; echo $TMPDIR",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 't': Read-only file system\ndrwxr-xr-x 2 <USER> <USER> 40 Nov  3 14:54 /dev/shm\n<SANDBOX_TMP>\nShell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/a.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\n# precompute terms\nterms=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            terms.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    N=len(dets);H=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)\n    for a,b,p,q,r,t,sg in terms:H[a,b]+=0.5*G[p,q,r,t]*sg\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>1:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\n# quartet fit\ndef q(p):\n    Dq,B=p\n    M=np.array([[-6*Dq,6*B],[6*B,15*B+6*Dq]]);e=np.linalg.eigvalsh(M)\n    return [2*Dq-e[0],12*Dq-e[0],e[1]-e[0]]\nsol=fsolve(lambda p:[q(p)[0]-6150,q(p)[2]-16850],[800,800]);print(sol,q(sol))\nfrom scipy.optimize import least_squares\nr=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))\nDq,B=r.x\nfor Cc in(3000,3500,4000,4500):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if x<26000])\nE\npython3 /dev/shm/a.py",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "673b2267f171742aa10ef2a7eadaf578bffb48fa75d3544afa12c2afa40149f0",
+     "lines": 78,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\n# precompute terms\nterms=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            terms.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    N=len(dets);H=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)\n    for a,b,p,q,r,t,sg in terms:H[a,b]+=0.5*G[p,q,r,t]*sg\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>1:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\n# quartet fit\ndef q(p):\n    Dq,B=p\n    M=np.array([[-6*Dq,6*B],[6*B,15*B+6*Dq]]);e=np.linalg.eigvalsh(M)\n    return [2*Dq-e[0],12*Dq-e[0],e[1]-e[0]]\nsol=fsolve(lambda p:[q(p)[0]-6150,q(p)[2]-16850],[800,800]);print(sol,q(sol))\nfrom scipy.optimize import least_squares\nr=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))\nDq,B=r.x\nfor Cc in(3000,3500,4000,4500):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if x<26000])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[702.37080442 490.63221451] [np.float64(6150.000000000001), np.float64(13173.708044229443), np.float64(16850.0)]\n[661.97953605 516.15311398] [np.float64(5885.126854824988), np.float64(12504.92221529628), np.float64(16864.632275212716)]\n3000 [(0, 12), (5867, 12), (6487, 4), (11675, 6), (12100, 6), (12486, 4), (12856, 12), (14562, 6), (16931, 2), (18085, 6), (18896, 6), (20260, 4), (22024, 6), (22925, 6), (24775, 4), (25242, 6)]\n3500 [(0, 12), (5867, 12), (8138, 4), (12486, 4), (12856, 12), (13175, 6), (13667, 6), (16062, 6), (18431, 2), (19684, 6), (20396, 6), (21862, 4), (23553, 6), (24425, 6)]\n4000 [(0, 12), (5867, 12), (9772, 4), (12486, 4), (12856, 12), (14675, 6), (15224, 6), (17562, 6), (19931, 2), (21269, 6), (21896, 6), (23444, 4), (25079, 6), (25925, 6)]\n4500 [(0, 12), (5867, 12), (11390, 4), (12486, 4), (12856, 12), (16175, 6), (16773, 6), (19062, 6), (21431, 2), (22842, 6), (23396, 6), (25011, 4)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    },
+    {
+     "script": "a.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "a.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "a.py",
+     "line": 57,
+     "method": "matrix",
+     "text": "N=len(dets);H=np.zeros((N,N))"
+    },
+    {
+     "script": "a.py",
+     "line": 59,
+     "method": "matrix",
+     "text": "H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)"
+    },
+    {
+     "script": "a.py",
+     "line": 63,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]"
+    },
+    {
+     "script": "a.py",
+     "line": 71,
+     "method": "eigen_solver",
+     "text": "M=np.array([[-6*Dq,6*B],[6*B,15*B+6*Dq]]);e=np.linalg.eigvalsh(M)"
+    },
+    {
+     "script": "a.py",
+     "line": 73,
+     "method": "least_squares",
+     "text": "sol=fsolve(lambda p:[q(p)[0]-6150,q(p)[2]-16850],[800,800]);print(sol,q(sol))"
+    },
+    {
+     "script": "a.py",
+     "line": 74,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "a.py",
+     "line": 75,
+     "method": "least_squares",
+     "text": "r=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; cat >> a.py <<'E'\nprint([(round(x),n) for x,n in lev(0,1000,4000)])\nE\npython3 a.py | tail -1",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "c1b5fb04892cb4a58bb26a7e5a373516508591659e444fe8db1749493ceeb1b6",
+     "lines": 1,
+     "code": "print([(round(x),n) for x,n in lev(0,1000,4000)])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Traceback (most recent call last):\n  File \"/dev/shm/a.py\", line 1, in <module>\n    print([(round(x),n) for x,n in lev(0,1000,4000)])\n                                   ^^^\nNameError: name 'lev' is not defined. Did you mean: 'len'?\nShell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; ls; head -3 a.py; python3 /dev/shm/a.py | tail -1",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "head: cannot open 'a.py' for reading: No such file or directory\npython3: can't open file '/dev/shm/a.py': [Errno 2] No such file or directory\nShell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/a.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nterms=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            terms.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    N=len(dets);H=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)\n    for a,b,p,q,r,t,sg in terms:H[a,b]+=0.5*G[p,q,r,t]*sg\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>1:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\nprint([(round(x),n) for x,n in lev(0,1000,4000)])\nE\npython3 /dev/shm/a.py",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "bc025c7912f84ba882345718104bb9f7edfc99ce874e2153547fcc8729048484",
+     "lines": 67,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nterms=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            terms.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    N=len(dets);H=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)\n    for a,b,p,q,r,t,sg in terms:H[a,b]+=0.5*G[p,q,r,t]*sg\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>1:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\nprint([(round(x),n) for x,n in lev(0,1000,4000)])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[(0, 28), (15000, 12), (16000, 18), (21000, 28), (23000, 10), (36000, 14), (57000, 10)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "a.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "a.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "a.py",
+     "line": 56,
+     "method": "matrix",
+     "text": "N=len(dets);H=np.zeros((N,N))"
+    },
+    {
+     "script": "a.py",
+     "line": 58,
+     "method": "matrix",
+     "text": "H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)"
+    },
+    {
+     "script": "a.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat >> /dev/shm/a.py <<'E'\nw=np.linalg.eigvalsh(build(662,516,3500));w-=w[0]\nprint(np.round(w[::2]).astype(int))\nE\npython3 /dev/shm/a.py | tail -20",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "397ab9db4850e482509936fc96ccb3d413be22f6599bf641fe2c317c4f503306",
+     "lines": 2,
+     "code": "w=np.linalg.eigvalsh(build(662,516,3500));w-=w[0]\nprint(np.round(w[::2]).astype(int))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 6
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Traceback (most recent call last):\n  File \"/dev/shm/a.py\", line 1, in <module>\n    w=np.linalg.eigvalsh(build(662,516,3500));w-=w[0]\n      ^^\nNameError: name 'np' is not defined",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 1,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(662,516,3500));w-=w[0]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; python3 - <<'E'\nimport re,subprocess\nE\ncat > /dev/shm/b.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nterms=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            terms.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    N=len(dets);H=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)\n    for a,b,p,q,r,t,sg in terms:H[a,b]+=0.5*G[p,q,r,t]*sg\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\ndef targets(p):\n    u=lev(*p)\n    # quartet deg 12 / 4 ; doublets deg 6 (T1,T2) / 4(E,A)\n    e12=[x for x,n in u if n==12]; e4=[x for x,n in u if n==4]\n    return u\nfor x in targets((662,516,3500))[:20]:print(round(x[0]),x[1])\nE\npython3 /dev/shm/b.py",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "0a5c811afff6895dbc44038953f70313dc248963a9b7dc42232e271ab34a7458",
+     "lines": 1,
+     "code": "import re,subprocess\n"
+    },
+    {
+     "name": "b.py",
+     "sha256": "f8b7537603b8449d27f4f3dd20990399122a36f33acc0ddbe20438de0bafcf8d",
+     "lines": 72,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nterms=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            terms.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    N=len(dets);H=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)\n    for a,b,p,q,r,t,sg in terms:H[a,b]+=0.5*G[p,q,r,t]*sg\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\ndef targets(p):\n    u=lev(*p)\n    # quartet deg 12 / 4 ; doublets deg 6 (T1,T2) / 4(E,A)\n    e12=[x for x,n in u if n==12]; e4=[x for x,n in u if n==4]\n    return u\nfor x in targets((662,516,3500))[:20]:print(round(x[0]),x[1])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "b.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0 12\n5867 12\n8137 4\n12487 4\n12854 12\n13174 6\n13667 6\n16060 6\n18431 2\n19684 6\n20395 6\n21861 4\n23552 6\n24423 6\n26495 4\n26860 6\n28751 2\n29541 6\n43703 4\n45185 6\nShell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "b.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "b.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "b.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "b.py",
+     "line": 56,
+     "method": "matrix",
+     "text": "N=len(dets);H=np.zeros((N,N))"
+    },
+    {
+     "script": "b.py",
+     "line": 58,
+     "method": "matrix",
+     "text": "H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)"
+    },
+    {
+     "script": "b.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; sed -i '$d' b.py; sed -i '$d' b.py; sed -i '$d' b.py; cat >> b.py <<'E'\ndef q(p):\n    Dq,B=p\n    M=np.array([[-6*Dq,6*B],[6*B,15*B]]);e=np.linalg.eigvalsh(M)\n    return [2*Dq-e[0],12*Dq-e[0],e[1]-e[0]]\nr=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))\nDq,B=r.x\nfor Cc in np.arange(2000,4001,500):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if x<24000])\nE\npython3 b.py",
+   "scripts": [
+    {
+     "name": "b.py",
+     "sha256": "30e963a5e2af283db446553366eca8f9cd0aeccc60a1f94247f1fc2e646ae5d7",
+     "lines": 8,
+     "code": "def q(p):\n    Dq,B=p\n    M=np.array([[-6*Dq,6*B],[6*B,15*B]]);e=np.linalg.eigvalsh(M)\n    return [2*Dq-e[0],12*Dq-e[0],e[1]-e[0]]\nr=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))\nDq,B=r.x\nfor Cc in np.arange(2000,4001,500):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if x<24000])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "b.py",
+     "written_in_step": 8
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nsed: can't read b.py: No such file or directory\nsed: can't read b.py: No such file or directory\nsed: can't read b.py: No such file or directory\nTraceback (most recent call last):\n  File \"/dev/shm/b.py\", line 5, in <module>\n    r=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))\n      ^^^^^^^^^^^^^\nNameError: name 'least_squares' is not defined",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "b.py",
+     "line": 3,
+     "method": "eigen_solver",
+     "text": "M=np.array([[-6*Dq,6*B],[6*B,15*B]]);e=np.linalg.eigvalsh(M)"
+    },
+    {
+     "script": "b.py",
+     "line": 5,
+     "method": "least_squares",
+     "text": "r=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > <SANDBOX_TMP>/c.py 2>/dev/null || true\ncat > /dev/shm/c.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nterms=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            terms.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    N=len(dets);H=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)\n    for a,b,p,q,r,t,sg in terms:H[a,b]+=0.5*G[p,q,r,t]*sg\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\ndef q(p):\n    Dq,B=p\n    M=np.array([[-6*Dq,6*B],[6*B,15*B]]);e=np.linalg.eigvalsh(M)\n    return [2*Dq-e[0],12*Dq-e[0],e[1]-e[0]]\nr=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))\nDq,B=r.x\nfor Cc in np.arange(2000,4501,500):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if x<24000])\nE\npython3 /dev/shm/c.py",
+   "scripts": [
+    {
+     "name": "c.py",
+     "sha256": "f40d90fd571a85eab71eb9305262c47535c4f0b397ebad07151efd4f9e85972d",
+     "lines": 74,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nterms=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            terms.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    N=len(dets);H=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)\n    for a,b,p,q,r,t,sg in terms:H[a,b]+=0.5*G[p,q,r,t]*sg\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\ndef q(p):\n    Dq,B=p\n    M=np.array([[-6*Dq,6*B],[6*B,15*B]]);e=np.linalg.eigvalsh(M)\n    return [2*Dq-e[0],12*Dq-e[0],e[1]-e[0]]\nr=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))\nDq,B=r.x\nfor Cc in np.arange(2000,4501,500):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if x<24000])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "c.py",
+     "written_in_step": 9
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 143,
+   "is_error": true,
+   "stdout": "Exit code 143\nCommand timed out after 2m 0s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "c.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "c.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "c.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "c.py",
+     "line": 56,
+     "method": "matrix",
+     "text": "N=len(dets);H=np.zeros((N,N))"
+    },
+    {
+     "script": "c.py",
+     "line": 58,
+     "method": "matrix",
+     "text": "H[n,n]+=sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d)"
+    },
+    {
+     "script": "c.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]"
+    },
+    {
+     "script": "c.py",
+     "line": 69,
+     "method": "eigen_solver",
+     "text": "M=np.array([[-6*Dq,6*B],[6*B,15*B]]);e=np.linalg.eigvalsh(M)"
+    },
+    {
+     "script": "c.py",
+     "line": 71,
+     "method": "least_squares",
+     "text": "r=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/c.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt,tsg=[T[:,i].astype(int) for i in range(7)];tsg=T[:,6]\nN=len(dets)\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\ndef q(p):\n    Dq,B=p\n    M=np.array([[-6*Dq,6*B],[6*B,15*B]]);e=np.linalg.eigvalsh(M)\n    return [2*Dq-e[0],12*Dq-e[0],e[1]-e[0]]\nr=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))\nDq,B=r.x\nfor Cc in np.arange(2000,4501,500):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if x<24000])\nE\ntime python3 /dev/shm/c.py",
+   "scripts": [
+    {
+     "name": "c.py",
+     "sha256": "be9d12feff870f34361de5068c68b8698d9dd4e48492d1b2376989e74e7c3bcf",
+     "lines": 75,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt,tsg=[T[:,i].astype(int) for i in range(7)];tsg=T[:,6]\nN=len(dets)\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\ndef q(p):\n    Dq,B=p\n    M=np.array([[-6*Dq,6*B],[6*B,15*B]]);e=np.linalg.eigvalsh(M)\n    return [2*Dq-e[0],12*Dq-e[0],e[1]-e[0]]\nr=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))\nDq,B=r.x\nfor Cc in np.arange(2000,4501,500):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if x<24000])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "c.py",
+     "written_in_step": 10
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[622.9967463  716.71542525] [np.float64(6164.1779026542135), np.float64(12394.145365620832), np.float64(16849.11972111253)]\n2000 [(0, 12), (4581, 4), (5401, 12), (9811, 6), (9867, 6), (11631, 4), (13459, 6), (14267, 2), (15322, 12), (15945, 6), (17028, 6), (18150, 4), (20490, 6), (21497, 6), (21572, 4)]\n2500 [(0, 12), (5401, 12), (6272, 4), (11311, 6), (11461, 6), (11631, 4), (14959, 6), (15322, 12), (15767, 2), (17602, 6), (18528, 6), (19854, 4), (22118, 6), (22997, 6), (23347, 4)]\n3000 [(0, 12), (5401, 12), (7939, 4), (11631, 4), (12811, 6), (13040, 6), (15322, 12), (16459, 6), (17267, 2), (19235, 6), (20028, 6), (21513, 4), (23735, 6)]\n3500 [(0, 12), (5401, 12), (9586, 4), (11631, 4), (14311, 6), (14606, 6), (15322, 12), (17959, 6), (18767, 2), (20849, 6), (21528, 6), (23139, 4)]\n4000 [(0, 12), (5401, 12), (11216, 4), (11631, 4), (15322, 12), (15811, 6), (16163, 6), (19459, 6), (20267, 2), (22446, 6), (23028, 6)]\n4500 [(0, 12), (5401, 12), (11631, 4), (12832, 4), (15322, 12), (17311, 6), (17713, 6), (20959, 6), (21767, 2)]\n\nreal\t0m2,023s\nuser\t0m5,601s\nsys\t0m0,145s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "c.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "c.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "c.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "c.py",
+     "line": 63,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]"
+    },
+    {
+     "script": "c.py",
+     "line": 70,
+     "method": "eigen_solver",
+     "text": "M=np.array([[-6*Dq,6*B],[6*B,15*B]]);e=np.linalg.eigvalsh(M)"
+    },
+    {
+     "script": "c.py",
+     "line": 72,
+     "method": "least_squares",
+     "text": "r=least_squares(lambda p:np.array(q(p))-[6150,12400,16850],[800,800]);print(r.x,q(r.x))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 11,
+   "tool": "bash",
+   "description": "",
+   "command": "{\"command\": \"echo\"}",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "<tool_use_error>Error: No such tool available: bash. Tool names are case-sensitive: call Bash instead.</tool_use_error>",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 12,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; python3 - <<'E'\nE\nsed -n 1,5p /dev/null; ls /dev/shm",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Shell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 13,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/d.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\ndef quart(p):\n    u=lev(p[0],p[1],3000)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4]\n    return [e12[1],[x for x in e4 if abs(x-12400)<3000][0],e12[2]]\nr=least_squares(lambda p:np.array(quart(p))-[6150,12400,16850],[700,800],diff_step=1e-3);print(r.x,quart(r.x))\nDq,B=r.x\nfor Cc in np.arange(2500,4501,250):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if 12000<x<26000 and n in(6,)])\nE\npython3 /dev/shm/d.py",
+   "scripts": [
+    {
+     "name": "d.py",
+     "sha256": "0575fd580ba34768c8d44fd703cfd3a584381c03805f139c976138d27cc92414",
+     "lines": 74,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\ndef quart(p):\n    u=lev(p[0],p[1],3000)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4]\n    return [e12[1],[x for x in e4 if abs(x-12400)<3000][0],e12[2]]\nr=least_squares(lambda p:np.array(quart(p))-[6150,12400,16850],[700,800],diff_step=1e-3);print(r.x,quart(r.x))\nDq,B=r.x\nfor Cc in np.arange(2500,4501,250):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if 12000<x<26000 and n in(6,)])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d.py",
+     "written_in_step": 13
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[673.03654158 794.89875216] [np.float64(5826.127027482347), np.float64(12556.492443307026), np.float64(16845.369921480247)]\n2500 [(15753, 6), (18498, 6), (19570, 6), (23434, 6), (24436, 6)]\n2750 [(12481, 6), (12633, 6), (16503, 6), (19324, 6), (20320, 6), (24249, 6), (25186, 6)]\n3000 [(13231, 6), (13424, 6), (17253, 6), (20143, 6), (21070, 6), (25061, 6), (25936, 6)]\n3250 [(13981, 6), (14211, 6), (18003, 6), (20958, 6), (21820, 6), (25870, 6)]\n3500 [(14731, 6), (14996, 6), (18753, 6), (21768, 6), (22570, 6)]\n3750 [(15481, 6), (15778, 6), (19503, 6), (22574, 6), (23320, 6)]\n4000 [(16231, 6), (16558, 6), (20253, 6), (23376, 6), (24070, 6)]\n4250 [(16981, 6), (17336, 6), (21003, 6), (24175, 6), (24820, 6)]\n4500 [(17731, 6), (18112, 6), (21753, 6), (24971, 6), (25570, 6)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]"
+    },
+    {
+     "script": "d.py",
+     "line": 71,
+     "method": "least_squares",
+     "text": "r=least_squares(lambda p:np.array(quart(p))-[6150,12400,16850],[700,800],diff_step=1e-3);print(r.x,quart(r.x))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 14,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; cat > e.py <<'E'\nexec(open('/dev/shm/d.py').read().split(\"def quart\")[0]) if False else None\nE\necho skip",
+   "scripts": [
+    {
+     "name": "e.py",
+     "sha256": "c7489f068026a0e628adc38345e5780303baf1e974455a73829b7870513603ab",
+     "lines": 1,
+     "code": "exec(open('/dev/shm/d.py').read().split(\"def quart\")[0]) if False else None\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "skip\nShell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 15,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/d.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\ndef model(p):\n    u=lev(*p)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4]\n    e6=[x for x,n in u if n==6]\n    return [e12[1],[x for x in e4 if abs(x-12400)<3000][0],e12[2],e6[2]]\nobs=[6150,12400,16850,19000]\nr=least_squares(lambda p:np.array(model(p))-obs,[670,800,3600],diff_step=1e-3,x_scale=[100,100,500]);print(r.x,model(r.x))\nprint([(round(x),n) for x,n in lev(*r.x) if x<25000])\nE\npython3 /dev/shm/d.py",
+   "scripts": [
+    {
+     "name": "d.py",
+     "sha256": "a28d4169a8aed2831466ee419d7f7d9d915aef5d2205fde0e850bcdfc0b10aa5",
+     "lines": 74,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\ndef model(p):\n    u=lev(*p)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4]\n    e6=[x for x,n in u if n==6]\n    return [e12[1],[x for x in e4 if abs(x-12400)<3000][0],e12[2],e6[2]]\nobs=[6150,12400,16850,19000]\nr=least_squares(lambda p:np.array(model(p))-obs,[670,800,3600],diff_step=1e-3,x_scale=[100,100,500]);print(r.x,model(r.x))\nprint([(round(x),n) for x,n in lev(*r.x) if x<25000])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d.py",
+     "written_in_step": 15
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[ 621.12819469  801.79731363 3923.48575436] [np.float64(5351.567703767112), np.float64(11450.32223545738), np.float64(16518.813165145053), np.float64(20029.400241639698)]\n[(0, 12), (5352, 12), (11450, 4), (11563, 4), (16052, 6), (16318, 6), (16519, 12), (20029, 6), (20329, 2), (22823, 6), (23432, 6)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]"
+    },
+    {
+     "script": "d.py",
+     "line": 73,
+     "method": "least_squares",
+     "text": "r=least_squares(lambda p:np.array(model(p))-obs,[670,800,3600],diff_step=1e-3,x_scale=[100,100,500]);print(r.x,model(r.x))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 16,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; python3 - <<'E'\nE\ncat > /dev/shm/hdr.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\nE\ncat > /dev/shm/t.py <<'E'\nexec(open('/dev/shm/hdr.py').read())\nprint([(round(x),n) for x,n in lev(930,970,4300) if x<26000])\nE\npython3 /dev/shm/t.py",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "hdr.py",
+     "sha256": "85c1d2ddd7643c9cbe47c654eb58ee77f7ae6b6236000b9aa098070e793cf3dd",
+     "lines": 65,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][0])>0.01:u.append([x,1])\n        else:u[-1][1]+=1\n    return u\n"
+    },
+    {
+     "name": "t.py",
+     "sha256": "f6ecf83b885adca02e03fd5ff3cfa52d4027795db38e281e5563295c4a82a8cd",
+     "lines": 2,
+     "code": "exec(open('/dev/shm/hdr.py').read())\nprint([(round(x),n) for x,n in lev(930,970,4300) if x<26000])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t.py",
+     "written_in_step": 16
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[(0, 1), (0, 1), (0, 1), (0, 1), (1, 2), (3, 1), (3, 1), (4, 1), (4, 1), (5, 1), (5, 1), (8107, 2), (8109, 1), (8109, 1), (8110, 1), (8110, 1), (8110, 1), (8111, 1), (8112, 1), (8112, 1), (8115, 2), (10713, 1), (10713, 1), (10720, 1), (10720, 1), (17407, 1), (17408, 1), (17410, 1), (17411, 1), (18029, 1), (18029, 1), (18031, 1), (18031, 1), (18031, 1), (18032, 1), (18437, 1), (18438, 1), (18440, 2), (18441, 1), (18441, 1), (21460, 1), (21461, 1), (21461, 1), (21462, 2), (21463, 1), (21463, 1), (21464, 1), (21464, 1), (21464, 1), (21466, 1), (21467, 1), (23085, 1), (23085, 1), (23086, 1), (23086, 1), (23088, 1), (23088, 1), (24889, 1), (24890, 1)]\nShell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "hdr.py",
+     "line": 8,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "hdr.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "hdr.py",
+     "line": 61,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(build(Dq,B,Cc));w=w-w[0];u=[]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 17,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/t.py <<'E'\nexec(open('/dev/shm/hdr.py').read())\nH=build(930,970,4300)\nprint(abs(H-H.T).max(), abs(H).max())\nprint(abs(np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V2).imag).max())\nG=R2\nprint(abs(G-G.transpose(2,3,0,1)).max(),abs(G-G.transpose(1,0,3,2)).max(),abs(G-G.transpose(2,1,0,3)).max())\nE\npython3 /dev/shm/t.py",
+   "scripts": [
+    {
+     "name": "t.py",
+     "sha256": "bfc184ddf1cf477b706f43936ab82bae85ea193794b2999902e564cbbd8ce377",
+     "lines": 6,
+     "code": "exec(open('/dev/shm/hdr.py').read())\nH=build(930,970,4300)\nprint(abs(H-H.T).max(), abs(H).max())\nprint(abs(np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V2).imag).max())\nG=R2\nprint(abs(G-G.transpose(2,3,0,1)).max(),abs(G-G.transpose(1,0,3,2)).max(),abs(G-G.transpose(2,1,0,3)).max())\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t.py",
+     "written_in_step": 17
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"/dev/shm/t.py\", line 1, in <module>\n    exec(open('/dev/shm/hdr.py').read())\n         ~~~~^^^^^^^^^^^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: '/dev/shm/hdr.py'",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 18,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/t.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nprint('imag',abs(np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V2).imag).max())\nfor G in (R2,R4):\n    print(abs(G-G.transpose(2,3,0,1)).max(),abs(G-G.transpose(1,0,3,2)).max(),abs(G-G.transpose(2,1,0,3)).max(),abs(G).max())\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\nH=build(930,970,4300);print('asym',abs(H-H.T).max())\nE\npython3 /dev/shm/t.py",
+   "scripts": [
+    {
+     "name": "t.py",
+     "sha256": "70cbf774f3ce796096c850e43a2b043f386cf53802827dd895dc70a334c241c7",
+     "lines": 64,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nprint('imag',abs(np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V2).imag).max())\nfor G in (R2,R4):\n    print(abs(G-G.transpose(2,3,0,1)).max(),abs(G-G.transpose(1,0,3,2)).max(),abs(G-G.transpose(2,1,0,3)).max(),abs(G).max())\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\nH=build(930,970,4300);print('asym',abs(H-H.T).max())\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t.py",
+     "written_in_step": 18
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "imag 1.0408340855860843e-17\n0.0 0.0 6.938893903907228e-18 0.08163265306122448\n1.3877787807814457e-17 0.0 1.3877787807814457e-17 0.08163265306122448\nasym 1",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "t.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "t.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "t.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 19,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; python3 - <<'E'\nE\nsed -n 1p /dev/null\ncat > /dev/shm/t2.py <<'E'\nexec(open('/dev/shm/t.py').read())\nA=H-H.T\nij=np.argwhere(abs(A)>0.5)\nprint(len(ij))\nfor i,j in ij[:6]:\n    print(dets[i],dets[j],H[i,j],H[j,i])\nE\ncat /dev/shm/t.py >/dev/null 2>&1 || echo nofile",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "t2.py",
+     "sha256": "c7e0af1334b859c44df2e5b0062aaaaab5e6a709848e9311b7988a5a4302d686",
+     "lines": 6,
+     "code": "exec(open('/dev/shm/t.py').read())\nA=H-H.T\nij=np.argwhere(abs(A)>0.5)\nprint(len(ij))\nfor i,j in ij[:6]:\n    print(dets[i],dets[j],H[i,j],H[j,i])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "nofile\nShell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 20,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/t.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\nH=build(930,970,4300)\nA=H-H.T\nij=np.argwhere(abs(A)>0.5)\nprint(len(ij))\nfor i,j in ij[:6]:\n    print(dets[i],dets[j],H[i,j],H[j,i])\nE\npython3 /dev/shm/t.py",
+   "scripts": [
+    {
+     "name": "t.py",
+     "sha256": "1505bacfad17f23fd2b8e0d5e3241b9e02de295a3228940c220d18f9da984919",
+     "lines": 65,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\nH=build(930,970,4300)\nA=H-H.T\nij=np.argwhere(abs(A)>0.5)\nprint(len(ij))\nfor i,j in ij[:6]:\n    print(dets[i],dets[j],H[i,j],H[j,i])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t.py",
+     "written_in_step": 20
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "24\n(0, 1, 2, 3, 6, 7, 8) (2, 3, 4, 5, 6, 7, 8) 5270 5269\n(0, 1, 2, 3, 6, 7, 9) (2, 3, 4, 5, 6, 7, 9) 5270 5269\n(0, 1, 2, 3, 6, 8, 9) (2, 3, 4, 5, 6, 8, 9) 5270 5269\n(0, 1, 2, 3, 7, 8, 9) (2, 3, 4, 5, 7, 8, 9) 5270 5269\n(0, 1, 2, 6, 7, 8, 9) (2, 4, 5, 6, 7, 8, 9) 5270 5269\n(0, 1, 3, 6, 7, 8, 9) (3, 4, 5, 6, 7, 8, 9) 5270 5269",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "t.py",
+     "line": 8,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "t.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 21,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; python3 - <<'E'\nE\ncat >> /dev/shm/t.py <<'E'\ndef lev(Dq,B,Cc):\n    H=build(Dq,B,Cc);H=(H+H.T)/2\n    w=np.linalg.eigvalsh(H);w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][-1])>20:u.append([x,1,x])\n        else:u[-1][1]+=1;u[-1][2]=x\n    return [(x,n) for x,n,_ in u]\ndef quart(Dq,B):\n    u=lev(Dq,B,3000)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4 and abs(x-12400)<3500]\n    return np.array([e12[1],e4[0],e12[2]])\nobs=np.array([6150,12400,16850])\nbest=[]\nfor Dq in np.arange(560,761,20):\n  for B in np.arange(650,951,25):\n    try:\n        r=quart(Dq,B)-obs\n        best.append((np.sum(r**2),Dq,B,r))\n    except Exception as e: pass\nbest.sort(key=lambda x:x[0])\nfor b in best[:5]:print(b)\nE\npython3 /dev/shm/t.py | tail -6",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "t.py",
+     "sha256": "52a585c5199d4f6a1c3741b31e2cea16d83b926bd5bcb828d238f0cd7d2486f3",
+     "lines": 21,
+     "code": "def lev(Dq,B,Cc):\n    H=build(Dq,B,Cc);H=(H+H.T)/2\n    w=np.linalg.eigvalsh(H);w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][-1])>20:u.append([x,1,x])\n        else:u[-1][1]+=1;u[-1][2]=x\n    return [(x,n) for x,n,_ in u]\ndef quart(Dq,B):\n    u=lev(Dq,B,3000)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4 and abs(x-12400)<3500]\n    return np.array([e12[1],e4[0],e12[2]])\nobs=np.array([6150,12400,16850])\nbest=[]\nfor Dq in np.arange(560,761,20):\n  for B in np.arange(650,951,25):\n    try:\n        r=quart(Dq,B)-obs\n        best.append((np.sum(r**2),Dq,B,r))\n    except Exception as e: pass\nbest.sort(key=lambda x:x[0])\nfor b in best[:5]:print(b)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t.py",
+     "written_in_step": 21
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Traceback (most recent call last):\n  File \"/dev/shm/t.py\", line 12, in <module>\n    obs=np.array([6150,12400,16850])\n        ^^\nNameError: name 'np' is not defined\nShell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "t.py",
+     "line": 3,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(H);w=w-w[0];u=[]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 22,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/t.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    H=build(Dq,B,Cc);H=(H+H.T)/2\n    w=np.linalg.eigvalsh(H);w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][-1])>20:u.append([x,1,x])\n        else:u[-1][1]+=1;u[-1][2]=x\n    return [(x,n) for x,n,_ in u]\ndef quart(Dq,B):\n    u=lev(Dq,B,3000)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4 and abs(x-12400)<3500]\n    return np.array([e12[1],e4[0],e12[2]])\nobs=np.array([6150,12400,16850])\nbest=[]\nfor Dq in np.arange(560,761,20):\n  for B in np.arange(650,951,25):\n    try:\n        r=quart(Dq,B)-obs\n        best.append((np.sum(r**2),Dq,B,r))\n    except Exception as e: pass\nbest.sort(key=lambda x:x[0])\nfor b in best[:5]:print(b)\n_,Dq,B,_=best[0]\nfor Cc in np.arange(2800,4401,200):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if 12000<x<24000 and n==6])\nE\npython3 /dev/shm/t.py",
+   "scripts": [
+    {
+     "name": "t.py",
+     "sha256": "6e9751a874e317eb452a32be9be1d3279510a736c39f713579bbd19fa249b05b",
+     "lines": 83,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    H=build(Dq,B,Cc);H=(H+H.T)/2\n    w=np.linalg.eigvalsh(H);w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][-1])>20:u.append([x,1,x])\n        else:u[-1][1]+=1;u[-1][2]=x\n    return [(x,n) for x,n,_ in u]\ndef quart(Dq,B):\n    u=lev(Dq,B,3000)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4 and abs(x-12400)<3500]\n    return np.array([e12[1],e4[0],e12[2]])\nobs=np.array([6150,12400,16850])\nbest=[]\nfor Dq in np.arange(560,761,20):\n  for B in np.arange(650,951,25):\n    try:\n        r=quart(Dq,B)-obs\n        best.append((np.sum(r**2),Dq,B,r))\n    except Exception as e: pass\nbest.sort(key=lambda x:x[0])\nfor b in best[:5]:print(b)\n_,Dq,B,_=best[0]\nfor Cc in np.arange(2800,4401,200):\n    print(Cc,[(round(x),n) for x,n in lev(Dq,B,Cc) if 12000<x<24000 and n==6])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t.py",
+     "written_in_step": 22
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(np.float64(165742.79963668366), np.int64(680), np.int64(800), array([-263.13803964,  286.86196036,  119.2115239 ]))\n(np.float64(206952.26912189726), np.int64(680), np.int64(775), array([-254.69832986,  295.30167014, -234.26043947]))\n(np.float64(209580.2679343586), np.int64(660), np.int64(800), array([-445.43541757,  -95.43541757,  -45.3832324 ]))\n(np.float64(316045.6638549905), np.int64(660), np.int64(825), array([-456.99277558, -106.99277558,  309.44436155]))\n(np.float64(358657.06836436054), np.int64(660), np.int64(775), array([-437.38807156,  -87.38807156, -399.63992315]))\n2800 [(12655, 6), (12819, 6), (16709, 6), (19572, 6), (20571, 6)]\n3000 [(13255, 6), (13452, 6), (17309, 6), (20228, 6), (21171, 6)]\n3200 [(13856, 6), (14083, 6), (17909, 6), (20880, 6), (21772, 6)]\n3400 [(14455, 6), (14711, 6), (18509, 6), (21531, 6), (22372, 6)]\n3600 [(15055, 6), (15338, 6), (19109, 6), (22177, 6), (22971, 6)]\n3800 [(15655, 6), (15964, 6), (19709, 6), (22822, 6), (23572, 6)]\n4000 [(16256, 6), (16589, 6), (20309, 6), (23463, 6)]\n4200 [(16855, 6), (17211, 6), (20909, 6)]\n4400 [(17457, 6), (17834, 6), (21508, 6)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "t.py",
+     "line": 8,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "t.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "t.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(H);w=w-w[0];u=[]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 23,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; python3 - <<'E'\nE\necho",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Shell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 24,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/t.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    H=build(Dq,B,Cc);H=(H+H.T)/2\n    w=np.linalg.eigvalsh(H);w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][-1])>20:u.append([x,1,x])\n        else:u[-1][1]+=1;u[-1][2]=x\n    return [(x,n) for x,n,_ in u]\nfor Dq in (625,):\n  for B in range(740,861,20):\n    u=lev(Dq,B,3500)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4 and 11000<x<14000]\n    print(Dq,B,round(e12[1]),[round(x) for x in e4],round(e12[2]))\nE\npython3 /dev/shm/t.py",
+   "scripts": [
+    {
+     "name": "t.py",
+     "sha256": "3e2676bf963cad225187daa9a5c3df80dc3b7819923bfd5e77dd30655853817e",
+     "lines": 71,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    H=build(Dq,B,Cc);H=(H+H.T)/2\n    w=np.linalg.eigvalsh(H);w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][-1])>20:u.append([x,1,x])\n        else:u[-1][1]+=1;u[-1][2]=x\n    return [(x,n) for x,n,_ in u]\nfor Dq in (625,):\n  for B in range(740,861,20):\n    u=lev(Dq,B,3500)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4 and 11000<x<14000]\n    print(Dq,B,round(e12[1]),[round(x) for x in e4],round(e12[2]))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t.py",
+     "written_in_step": 24
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "625 740 5410 [11659] 15663\n625 760 5403 [11653] 15951\n625 780 5395 [11645] 16233\n625 800 5386 [11637] 16519\n625 820 5380 [11631] 16809\n625 840 5373 [11624] 17092\n625 860 5366 [11617] 17379",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "t.py",
+     "line": 8,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "t.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "t.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(H);w=w-w[0];u=[]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 25,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm; python3 - <<'E'\nE\necho",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Shell cwd was reset to /tmp/tsbench-run-9fe71od6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 26,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/t.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import minimize\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    H=build(Dq,B,Cc);H=(H+H.T)/2\n    w=np.linalg.eigvalsh(H);w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][-1])>20:u.append([x,1,x])\n        else:u[-1][1]+=1;u[-1][2]=x\n    return [(x,n) for x,n,_ in u]\nobs=np.array([6150,12400,16850,19000])\ndef model(p):\n    u=lev(*p)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4 and 10000<x<15000]\n    e6=[x for x,n in u if n==6]\n    return np.array([e12[1],e4[0],e12[2],e6[2]])\nf=lambda p:np.sum((model(p)-obs)**2)\nr=minimize(f,[650,800,3600],method='Nelder-Mead',options=dict(xatol=1,fatol=1,initial_simplex=[[650,800,3600],[700,800,3600],[650,850,3600],[650,800,3800]]))\nprint(r.x,r.fun,model(r.x))\nprint([(round(x),n) for x,n in lev(*r.x) if x<26000])\nE\npython3 /dev/shm/t.py",
+   "scripts": [
+    {
+     "name": "t.py",
+     "sha256": "6d23bd4e257c8aeb86f5675fb1f875a00954f0a99958d39e03af01b83af9db28",
+     "lines": 77,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import minimize\nms=range(-2,3)\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in(2,4) for a in ms for b in ms}\ndef Vc(k):\n    V=np.zeros((5,5,5,5))\n    for a in ms:\n     for b in ms:\n      for cc in ms:\n       for d in ms:\n        if a+b==cc+d:\n         V[a+2,b+2,cc+2,d+2]=C[(k,a,cc)]*C[(k,b,d)]*(-1)**(a-cc)\n    return V\nV2,V4=Vc(2),Vc(4)\ns=1/np.sqrt(2)\nU=np.zeros((5,5),complex)\ni_=lambda m:m+2\nU[0,i_(0)]=1\nU[1,i_(1)]=s;U[1,i_(-1)]=-s\nU[2,i_(1)]=1j*s;U[2,i_(-1)]=1j*s\nU[3,i_(2)]=s;U[3,i_(-2)]=s\nU[4,i_(2)]=-1j*s;U[4,i_(-2)]=1j*s\ntr=lambda V:np.einsum('ia,jb,kc,ld,abcd->ijkl',U.conj(),U.conj(),U,U,V).real\nR2,R4=tr(V2),tr(V4)\nso=[(o,s_) for o in range(5) for s_ in (0,1)]\ndets=list(itertools.combinations(range(10),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    det=list(det);sign=1\n    for i,cr in ops:\n        if cr:\n            if i in det:return None,0\n            pos=sum(1 for x in det if x<i);det.insert(pos,i)\n        else:\n            if i not in det:return None,0\n            pos=det.index(i);det.pop(pos)\n        sign*=(-1)**pos\n    return tuple(det),sign\nT=[]\nfor n,d in enumerate(dets):\n    for r in d:\n      for t in d:\n        if r==t:continue\n        for p in range(10):\n          for q in range(10):\n            if so[p][1]!=so[r][1] or so[q][1]!=so[t][1]:continue\n            nd,sg=apply([(r,0),(t,0),(q,1),(p,1)],d)\n            if nd is None:continue\n            T.append((di[nd],n,so[p][0],so[q][0],so[r][0],so[t][0],sg))\nT=np.array(T);ta,tb,tp,tq,tr_,tt=[T[:,i].astype(int) for i in range(6)];tsg=T[:,6]\nhd=lambda Dq:np.array([sum(6*Dq if so[i][0] in(0,3) else -4*Dq for i in d) for d in dets])\ndef build(Dq,B,Cc):\n    f4=Cc/35;f2=B+5*f4\n    G=49*f2*R2+441*f4*R4\n    H=np.diag(hd(Dq))\n    np.add.at(H,(ta,tb),0.5*G[tp,tq,tr_,tt]*tsg)\n    return H\ndef lev(Dq,B,Cc):\n    H=build(Dq,B,Cc);H=(H+H.T)/2\n    w=np.linalg.eigvalsh(H);w=w-w[0];u=[]\n    for x in w:\n        if not u or abs(x-u[-1][-1])>20:u.append([x,1,x])\n        else:u[-1][1]+=1;u[-1][2]=x\n    return [(x,n) for x,n,_ in u]\nobs=np.array([6150,12400,16850,19000])\ndef model(p):\n    u=lev(*p)\n    e12=[x for x,n in u if n==12];e4=[x for x,n in u if n==4 and 10000<x<15000]\n    e6=[x for x,n in u if n==6]\n    return np.array([e12[1],e4[0],e12[2],e6[2]])\nf=lambda p:np.sum((model(p)-obs)**2)\nr=minimize(f,[650,800,3600],method='Nelder-Mead',options=dict(xatol=1,fatol=1,initial_simplex=[[650,800,3600],[700,800,3600],[650,850,3600],[650,800,3800]]))\nprint(r.x,r.fun,model(r.x))\nprint([(round(x),n) for x,n in lev(*r.x) if x<26000])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t.py",
+     "written_in_step": 26
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[ 673.04043843  794.90991912 3582.00274345] 129405.39835598873 [ 5826.15817777 12556.56256207 16845.56075809 18999.42569993]\n[(0, 12), (5826, 12), (9814, 4), (12557, 4), (14977, 6), (15253, 6), (16846, 12), (18999, 6), (19752, 2), (22033, 6), (22817, 6), (24521, 4)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "t.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import minimize"
+    },
+    {
+     "script": "t.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "t.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "t.py",
+     "line": 63,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(H);w=w-w[0];u=[]"
+    },
+    {
+     "script": "t.py",
+     "line": 75,
+     "method": "least_squares",
+     "text": "r=minimize(f,[650,800,3600],method='Nelder-Mead',options=dict(xatol=1,fatol=1,initial_simplex=[[650,800,3600],[700,800,3600],[650,850,3600],[650,800,3800]]))"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B",
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 673.0,
+   "weak": false,
+   "steps": [
+    13,
+    26
+   ],
+   "typed_in_steps": [],
+   "source_step": 26
+  },
+  {
+   "path": "B",
+   "value": 795.0,
+   "weak": false,
+   "steps": [
+    13,
+    26
+   ],
+   "typed_in_steps": [],
+   "source_step": 26
+  },
+  {
+   "path": "C",
+   "value": 3580.0,
+   "weak": false,
+   "steps": [
+    26
+   ],
+   "typed_in_steps": [],
+   "source_step": 26
+  }
+ ],
+ "summary": {
+  "n_steps": 27,
+  "n_scripts": 29,
+  "n_failed_steps": 5,
+  "n_values": 3,
+  "n_linked": 3,
+  "n_weak": 0,
+  "source_steps": [
+   26
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": true
+ }
+}

@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null; pwd; touch x && echo ok; echo $TMPDIR; python3 -c "import sympy,numpy;print(1)"

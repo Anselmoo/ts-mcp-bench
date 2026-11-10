@@ -1,0 +1,1 @@
+cd /tmp && pwd; touch /tmp/x 2>&1; echo $HOME; ls -ld $HOME; df -h | head -3

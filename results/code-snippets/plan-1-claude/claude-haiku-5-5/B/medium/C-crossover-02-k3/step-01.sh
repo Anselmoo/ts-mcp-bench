@@ -1,0 +1,1 @@
+pip list 2>/dev/null | grep -i -E "numpy|sympy|scipy" ; python3 -c "import numpy, sympy, scipy; print('ok')"

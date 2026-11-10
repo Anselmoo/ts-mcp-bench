@@ -1,0 +1,516 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-crossover-04-k2.jsonl",
+ "transcript_sha256": "56d5458a9aebd66cf360885272c10ff7ff80c7fecad29b896845c4a22841039e",
+ "answer": {
+  "Dq": 1958.0,
+  "B": 922.0,
+  "C": 4156.0,
+  "out_of_scope": false,
+  "reason": "Numerical diagonalization of the full d7 Hamiltonian places the 4T1g/2Eg ground-state crossover at Dq ≈ 1958 cm-1 (Dq/B ≈ 2.12)."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d7.py\nimport numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom scipy.integrate import quad\nfrom numpy.polynomial.legendre import leggauss\n# real d orbitals as functions on unit sphere\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    return [np.sqrt(15)/2*x*y, np.sqrt(15)/2*y*z, np.sqrt(5)/4*(3*z*z-1), np.sqrt(15)/2*x*z, np.sqrt(15)/4*(x*x-y*y)]\n# quadrature grid\nnt,npz=24,48\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[];W=[];\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])  # npts x 5\nn=len(pts)\n# unit vectors\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=U@U.T\n# angular coefficients a_k[a,b,c,d] = sum_{i,j} W_i W_j Y_a(i)Y_c(i) Y_b(j) Y_d(j) P_k(cos g_ij)\nKs=[0,2,4]\nP={k:eval_legendre(k,cosg) for k in Ks}\nA={}\nfor k in Ks:\n    # M[i,j] weights\n    T=np.einsum('i,ia,ic->iac',W,Y,Y)  # orbital pair density on grid 1\n    S=np.einsum('j,jb,jd->jbd',W,Y,Y)\n    A[k]=np.einsum('iac,ij,jbd->abcd',T,P[k],S)\n# spin orbitals: index s = 2*orb + spin\nnorb=5; nso=10\ndef g_spin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n        for b in range(nso):\n            for c in range(nso):\n                for d in range(nso):\n                    if (a%2)==(c%2) and (b%2)==(d%2):\n                        G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:g_spin(k) for k in Ks}\n# basis: 7 electrons in 10 spin orbitals\nbasis=[]\nfor occ in itertools.combinations(range(nso),7):\n    basis.append(sum(1<<i for i in occ))\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef apply_cdag_c(p,q,state):\n    # a_p^dag a_q |state>, returns (sign,newstate) or None\n    if not (state>>q)&1: return None\n    s=1\n    st=state\n    # annihilate q\n    sign=(-1)**bin(st & ((1<<q)-1)).count('1'); st ^= (1<<q)\n    if (st>>p)&1: return None\n    sign*= (-1)**bin(st & ((1<<p)-1)).count('1'); st |= (1<<p)\n    return sign*1, st\ndef build_op_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                # a†_a a†_b a_d a_c\n                st=b; sign=1; ok=True\n                # apply a_c\n                if not (st>>c)&1: continue\n                sg=(-1)**bin(st & ((1<<c)-1)).count('1'); st^=(1<<c); sign*=sg\n                if not (st>>d)&1: continue\n                sg=(-1)**bin(st & ((1<<d)-1)).count('1'); st^=(1<<d); sign*=sg\n                if (st>>b_)&1: continue\n                sg=(-1)**bin(st & ((1<<b_)-1)).count('1'); st|=(1<<b_); sign*=sg\n                if (st>>a_)&1: continue\n                sg=(-1)**bin(st & ((1<<a_)-1)).count('1'); st|=(1<<a_); sign*=sg\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                r=apply_cdag_c(p,q,b)\n                if r is None: continue\n                sg,st=r\n                H[idx[st],j]+=h[p,q]*sg\n    return H\n# octahedral one-electron potential: x^4+y^4+z^4 - 3/5 r^4 on unit sphere\nVang=np.array([ (U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6) ])[0]\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M)\nprint(\"one-electron eigen\",ev)\n# eg = higher pair (2), t2g = lower triplet\net=ev[0:3].mean(); ee=ev[3:5].mean()\n# orbital indices: real d-orbitals assumed; find via eigen of M for generic check\nnp.save('/tmp/M.npy',M)\nEOF\ncd /tmp && timeout 3000 python3 -c \"\nexec(open('/tmp/d7.py').read())\nprint(np.round(M,4))\n\"\n",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "79911e6be6b2db576f0a2d28cb2bf68854056996517f4f4bdd69089542a7dfd4",
+     "lines": 100,
+     "code": "import numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom scipy.integrate import quad\nfrom numpy.polynomial.legendre import leggauss\n# real d orbitals as functions on unit sphere\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    return [np.sqrt(15)/2*x*y, np.sqrt(15)/2*y*z, np.sqrt(5)/4*(3*z*z-1), np.sqrt(15)/2*x*z, np.sqrt(15)/4*(x*x-y*y)]\n# quadrature grid\nnt,npz=24,48\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[];W=[];\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])  # npts x 5\nn=len(pts)\n# unit vectors\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=U@U.T\n# angular coefficients a_k[a,b,c,d] = sum_{i,j} W_i W_j Y_a(i)Y_c(i) Y_b(j) Y_d(j) P_k(cos g_ij)\nKs=[0,2,4]\nP={k:eval_legendre(k,cosg) for k in Ks}\nA={}\nfor k in Ks:\n    # M[i,j] weights\n    T=np.einsum('i,ia,ic->iac',W,Y,Y)  # orbital pair density on grid 1\n    S=np.einsum('j,jb,jd->jbd',W,Y,Y)\n    A[k]=np.einsum('iac,ij,jbd->abcd',T,P[k],S)\n# spin orbitals: index s = 2*orb + spin\nnorb=5; nso=10\ndef g_spin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n        for b in range(nso):\n            for c in range(nso):\n                for d in range(nso):\n                    if (a%2)==(c%2) and (b%2)==(d%2):\n                        G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:g_spin(k) for k in Ks}\n# basis: 7 electrons in 10 spin orbitals\nbasis=[]\nfor occ in itertools.combinations(range(nso),7):\n    basis.append(sum(1<<i for i in occ))\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef apply_cdag_c(p,q,state):\n    # a_p^dag a_q |state>, returns (sign,newstate) or None\n    if not (state>>q)&1: return None\n    s=1\n    st=state\n    # annihilate q\n    sign=(-1)**bin(st & ((1<<q)-1)).count('1'); st ^= (1<<q)\n    if (st>>p)&1: return None\n    sign*= (-1)**bin(st & ((1<<p)-1)).count('1'); st |= (1<<p)\n    return sign*1, st\ndef build_op_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                # a†_a a†_b a_d a_c\n                st=b; sign=1; ok=True\n                # apply a_c\n                if not (st>>c)&1: continue\n                sg=(-1)**bin(st & ((1<<c)-1)).count('1'); st^=(1<<c); sign*=sg\n                if not (st>>d)&1: continue\n                sg=(-1)**bin(st & ((1<<d)-1)).count('1'); st^=(1<<d); sign*=sg\n                if (st>>b_)&1: continue\n                sg=(-1)**bin(st & ((1<<b_)-1)).count('1'); st|=(1<<b_); sign*=sg\n                if (st>>a_)&1: continue\n                sg=(-1)**bin(st & ((1<<a_)-1)).count('1'); st|=(1<<a_); sign*=sg\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                r=apply_cdag_c(p,q,b)\n                if r is None: continue\n                sg,st=r\n                H[idx[st],j]+=h[p,q]*sg\n    return H\n# octahedral one-electron potential: x^4+y^4+z^4 - 3/5 r^4 on unit sphere\nVang=np.array([ (U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6) ])[0]\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M)\nprint(\"one-electron eigen\",ev)\n# eg = higher pair (2), t2g = lower triplet\net=ev[0:3].mean(); ee=ev[3:5].mean()\n# orbital indices: real d-orbitals assumed; find via eigen of M for generic check\nnp.save('/tmp/M.npy',M)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 109: /tmp/d7.py: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    exec(open('/tmp/d7.py').read())\n         ~~~~^^^^^^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: '/tmp/d7.py'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "U=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])"
+    },
+    {
+     "script": "d7.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "G=np.zeros((nso,nso,nso,nso))"
+    },
+    {
+     "script": "d7.py",
+     "line": 60,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "d7.py",
+     "line": 82,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "d7.py",
+     "line": 95,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(M)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "\nmkdir -p ~/w && cd ~/w && cat << 'EOF' > d7.py\nimport numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom numpy.polynomial.legendre import leggauss\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    return [np.sqrt(15)/2*x*y, np.sqrt(15)/2*y*z, np.sqrt(5)/4*(3*z*z-1), np.sqrt(15)/2*x*z, np.sqrt(15)/4*(x*x-y*y)]\nnt,npz=20,40\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[]; W=[]\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=np.clip(U@U.T,-1,1)\nKs=[0,2,4]\nA={}\nT=np.einsum('i,ia,ic->iac',W,Y,Y)\nfor k in Ks:\n    Pk=eval_legendre(k,cosg)\n    A[k]=np.einsum('iac,ij,jbd->abcd',T,Pk,T)\nnso=10\nbasis=[sum(1<<i for i in occ) for occ in itertools.combinations(range(nso),7)]\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef par(st,i): return (-1)**bin(st & ((1<<i)-1)).count('1')\ndef build_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                st=b; sign=1\n                if not (st>>c)&1: continue\n                sign*=par(st,c); st^=(1<<c)\n                if not (st>>d)&1: continue\n                sign*=par(st,d); st^=(1<<d)\n                if (st>>b_)&1: continue\n                sign*=par(st,b_); st|=(1<<b_)\n                if (st>>a_)&1: continue\n                sign*=par(st,a_); st|=(1<<a_)\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                st=b\n                if not (st>>q)&1: continue\n                sign=par(st,q); st^=(1<<q)\n                if (st>>p)&1: continue\n                sign*=par(st,p); st|=(1<<p)\n                H[idx[st],j]+=h[p,q]*sign\n    return H\n# spin-orbital two-body tensors\ndef gspin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n     for b in range(nso):\n      for c in range(nso):\n       for d in range(nso):\n        if a%2==c%2 and b%2==d%2:\n            G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:gspin(k) for k in Ks}\n# one-electron octahedral potential\nVang=U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M); print(\"M eig\",ev)\n# spin-orbital h: Dq * h0 where h0 has t2g=-4, eg=+6\nev_sorted=ev\n# identify: t2g triplet = eigenvalues lowest-ratio; ratio ee/et should be -3/2\net=ev[:3].mean(); ee=ev[3:].mean()\nprint(\"ratio\",ee/et)\n# normalized: h0 = M * (10/(ee-et)) gives t2g -4 and eg +6 if ratio -3/2\ns=10/(ee-et)\nh0=M*s  # Dq=1 units with eigen\nprint(\"check\", np.linalg.eigvalsh(h0))\n# spin-orbital\ndef spin_h(h):\n    H=np.zeros((nso,nso))\n    for a in range(nso):\n        for b in range(nso):\n            if a%2==b%2: H[a,b]=h[a//2,b//2]\n    return H\nnp.savez('ops.npz', **{f'G{k}':G[k] for k in Ks}, h0=spin_h(h0), M=M)\nEOF\npython3 d7.py",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "24f2d2e405cd6844b1aeee147e8dd40be62821c344dbed77b2ce234077689ccf",
+     "lines": 92,
+     "code": "import numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom numpy.polynomial.legendre import leggauss\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    return [np.sqrt(15)/2*x*y, np.sqrt(15)/2*y*z, np.sqrt(5)/4*(3*z*z-1), np.sqrt(15)/2*x*z, np.sqrt(15)/4*(x*x-y*y)]\nnt,npz=20,40\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[]; W=[]\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=np.clip(U@U.T,-1,1)\nKs=[0,2,4]\nA={}\nT=np.einsum('i,ia,ic->iac',W,Y,Y)\nfor k in Ks:\n    Pk=eval_legendre(k,cosg)\n    A[k]=np.einsum('iac,ij,jbd->abcd',T,Pk,T)\nnso=10\nbasis=[sum(1<<i for i in occ) for occ in itertools.combinations(range(nso),7)]\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef par(st,i): return (-1)**bin(st & ((1<<i)-1)).count('1')\ndef build_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                st=b; sign=1\n                if not (st>>c)&1: continue\n                sign*=par(st,c); st^=(1<<c)\n                if not (st>>d)&1: continue\n                sign*=par(st,d); st^=(1<<d)\n                if (st>>b_)&1: continue\n                sign*=par(st,b_); st|=(1<<b_)\n                if (st>>a_)&1: continue\n                sign*=par(st,a_); st|=(1<<a_)\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                st=b\n                if not (st>>q)&1: continue\n                sign=par(st,q); st^=(1<<q)\n                if (st>>p)&1: continue\n                sign*=par(st,p); st|=(1<<p)\n                H[idx[st],j]+=h[p,q]*sign\n    return H\n# spin-orbital two-body tensors\ndef gspin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n     for b in range(nso):\n      for c in range(nso):\n       for d in range(nso):\n        if a%2==c%2 and b%2==d%2:\n            G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:gspin(k) for k in Ks}\n# one-electron octahedral potential\nVang=U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M); print(\"M eig\",ev)\n# spin-orbital h: Dq * h0 where h0 has t2g=-4, eg=+6\nev_sorted=ev\n# identify: t2g triplet = eigenvalues lowest-ratio; ratio ee/et should be -3/2\net=ev[:3].mean(); ee=ev[3:].mean()\nprint(\"ratio\",ee/et)\n# normalized: h0 = M * (10/(ee-et)) gives t2g -4 and eg +6 if ratio -3/2\ns=10/(ee-et)\nh0=M*s  # Dq=1 units with eigen\nprint(\"check\", np.linalg.eigvalsh(h0))\n# spin-orbital\ndef spin_h(h):\n    H=np.zeros((nso,nso))\n    for a in range(nso):\n        for b in range(nso):\n            if a%2==b%2: H[a,b]=h[a//2,b//2]\n    return H\nnp.savez('ops.npz', **{f'G{k}':G[k] for k in Ks}, h0=spin_h(h0), M=M)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d7.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/w’: Read-only file system\npython3: can't open file '/tmp/tsbench-run-5h2o9_t7/d7.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "U=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])"
+    },
+    {
+     "script": "d7.py",
+     "line": 29,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "d7.py",
+     "line": 49,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "d7.py",
+     "line": 63,
+     "method": "matrix",
+     "text": "G=np.zeros((nso,nso,nso,nso))"
+    },
+    {
+     "script": "d7.py",
+     "line": 75,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(M); print(\"M eig\",ev)"
+    },
+    {
+     "script": "d7.py",
+     "line": 84,
+     "method": "eigen_solver",
+     "text": "print(\"check\", np.linalg.eigvalsh(h0))"
+    },
+    {
+     "script": "d7.py",
+     "line": 87,
+     "method": "matrix",
+     "text": "H=np.zeros((nso,nso))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "pwd; echo $HOME; ls -ld $HOME 2>&1; touch $HOME/x 2>&1 && echo ok",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/tmp/tsbench-run-5h2o9_t7\n/tmp/tsbench-home-xehwqch9\ndrwx------ 6 <USER> <USER> 4096 Nov  3 07:57 /tmp/tsbench-home-xehwqch9\ntouch: cannot touch '/tmp/tsbench-home-xehwqch9/x': Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "python3 -c \"import numpy, scipy; print(numpy.__version__, scipy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "2.5.4 1.18.1",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.optimize import brentq\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    return [np.sqrt(15)/2*x*y, np.sqrt(15)/2*y*z, np.sqrt(5)/4*(3*z*z-1), np.sqrt(15)/2*x*z, np.sqrt(15)/4*(x*x-y*y)]\nnt,npz=20,40\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[]; W=[]\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=np.clip(U@U.T,-1,1)\nKs=[0,2,4]\nT=np.einsum('i,ia,ic->iac',W,Y,Y)\nA={k:np.einsum('iac,ij,jbd->abcd',T,eval_legendre(k,cosg),T) for k in Ks}\nnso=10\nbasis=[sum(1<<i for i in occ) for occ in itertools.combinations(range(nso),7)]\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef par(st,i): return (-1)**bin(st & ((1<<i)-1)).count('1')\ndef build_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                st=b; sign=1\n                if not (st>>c)&1: continue\n                sign*=par(st,c); st^=(1<<c)\n                if not (st>>d)&1: continue\n                sign*=par(st,d); st^=(1<<d)\n                if (st>>b_)&1: continue\n                sign*=par(st,b_); st|=(1<<b_)\n                if (st>>a_)&1: continue\n                sign*=par(st,a_); st|=(1<<a_)\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                st=b\n                if not (st>>q)&1: continue\n                sign=par(st,q); st^=(1<<q)\n                if (st>>p)&1: continue\n                sign*=par(st,p); st|=(1<<p)\n                H[idx[st],j]+=h[p,q]*sign\n    return H\ndef gspin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n     for b in range(nso):\n      for c in range(nso):\n       for d in range(nso):\n        if a%2==c%2 and b%2==d%2:\n            G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:gspin(k) for k in Ks}\nVang=U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M); print(\"M eig\",np.round(ev,5))\net=ev[:3].mean(); ee=ev[3:].mean(); print(\"ratio ee/et\",ee/et)\nh0=M*10/(ee-et)\nhs=np.zeros((nso,nso))\nfor a in range(nso):\n  for b in range(nso):\n    if a%2==b%2: hs[a,b]=h0[a//2,b//2]\nH1=build_1body(hs)\n# two-body per unit Slater F\nGop={k:build_2body(G[k]) for k in Ks}\n# Sz sectors\nnup=np.array([sum(1 for i in range(0,nso,2) if (b>>i)&1) for b in basis])\ndef spectrum(B,Cc,Dq):\n    F4=441*Cc/35; F2=(441*B+5*F4)/9\n    H=Dq*H1+F2*Gop[2]+F4*Gop[4]\n    # sectors\n    out={}\n    for n_up in [5,4]:  # Sz=3/2 (5 up,2 down) and Sz=1/2 (4 up,3 down)\n        ids=np.where(nup==n_up)[0]\n        out[n_up]=np.linalg.eigvalsh(H[np.ix_(ids,ids)])\n    return out\n# free-ion check at Dq=0 with B=922, C=4156\ns=spectrum(922,4156,0.0)\nprint(\"quartet free ion lowest energies:\", np.round(s[5][:6]-s[5][0],2))\nprint(\"doublet-sector lowest:\", np.round(s[4][:12]-s[5][0],2))\nprint(\"ratio 4P-4F /B:\", (np.unique(np.round(s[5],3))[:0]))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "4de044df56b7d5e9bd510fdb8fa5bf2c8e852beaa16fa83dd895ca94af5bf686",
+     "lines": 96,
+     "code": "import numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.optimize import brentq\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    return [np.sqrt(15)/2*x*y, np.sqrt(15)/2*y*z, np.sqrt(5)/4*(3*z*z-1), np.sqrt(15)/2*x*z, np.sqrt(15)/4*(x*x-y*y)]\nnt,npz=20,40\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[]; W=[]\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=np.clip(U@U.T,-1,1)\nKs=[0,2,4]\nT=np.einsum('i,ia,ic->iac',W,Y,Y)\nA={k:np.einsum('iac,ij,jbd->abcd',T,eval_legendre(k,cosg),T) for k in Ks}\nnso=10\nbasis=[sum(1<<i for i in occ) for occ in itertools.combinations(range(nso),7)]\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef par(st,i): return (-1)**bin(st & ((1<<i)-1)).count('1')\ndef build_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                st=b; sign=1\n                if not (st>>c)&1: continue\n                sign*=par(st,c); st^=(1<<c)\n                if not (st>>d)&1: continue\n                sign*=par(st,d); st^=(1<<d)\n                if (st>>b_)&1: continue\n                sign*=par(st,b_); st|=(1<<b_)\n                if (st>>a_)&1: continue\n                sign*=par(st,a_); st|=(1<<a_)\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                st=b\n                if not (st>>q)&1: continue\n                sign=par(st,q); st^=(1<<q)\n                if (st>>p)&1: continue\n                sign*=par(st,p); st|=(1<<p)\n                H[idx[st],j]+=h[p,q]*sign\n    return H\ndef gspin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n     for b in range(nso):\n      for c in range(nso):\n       for d in range(nso):\n        if a%2==c%2 and b%2==d%2:\n            G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:gspin(k) for k in Ks}\nVang=U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M); print(\"M eig\",np.round(ev,5))\net=ev[:3].mean(); ee=ev[3:].mean(); print(\"ratio ee/et\",ee/et)\nh0=M*10/(ee-et)\nhs=np.zeros((nso,nso))\nfor a in range(nso):\n  for b in range(nso):\n    if a%2==b%2: hs[a,b]=h0[a//2,b//2]\nH1=build_1body(hs)\n# two-body per unit Slater F\nGop={k:build_2body(G[k]) for k in Ks}\n# Sz sectors\nnup=np.array([sum(1 for i in range(0,nso,2) if (b>>i)&1) for b in basis])\ndef spectrum(B,Cc,Dq):\n    F4=441*Cc/35; F2=(441*B+5*F4)/9\n    H=Dq*H1+F2*Gop[2]+F4*Gop[4]\n    # sectors\n    out={}\n    for n_up in [5,4]:  # Sz=3/2 (5 up,2 down) and Sz=1/2 (4 up,3 down)\n        ids=np.where(nup==n_up)[0]\n        out[n_up]=np.linalg.eigvalsh(H[np.ix_(ids,ids)])\n    return out\n# free-ion check at Dq=0 with B=922, C=4156\ns=spectrum(922,4156,0.0)\nprint(\"quartet free ion lowest energies:\", np.round(s[5][:6]-s[5][0],2))\nprint(\"doublet-sector lowest:\", np.round(s[4][:12]-s[5][0],2))\nprint(\"ratio 4P-4F /B:\", (np.unique(np.round(s[5],3))[:0]))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "M eig [-0.23936 -0.23936 -0.23936  0.35904  0.35904]\nratio ee/et -1.4999999999999845\nquartet free ion lowest energies: [0. 0. 0. 0. 0. 0.]\ndoublet-sector lowest: [    -0.        0.        0.        0.        0.        0.        0.\n 136496.63 136496.63 136496.63 159453.33 159453.33]\nratio 4P-4F /B: []",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 16,
+     "method": "matrix",
+     "text": "U=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 47,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 60,
+     "method": "matrix",
+     "text": "G=np.zeros((nso,nso,nso,nso))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 71,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(M); print(\"M eig\",np.round(ev,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 74,
+     "method": "matrix",
+     "text": "hs=np.zeros((nso,nso))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 90,
+     "method": "eigen_solver",
+     "text": "out[n_up]=np.linalg.eigvalsh(H[np.ix_(ids,ids)])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat << 'EOF' > /dev/null\nEOF\ncat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.optimize import brentq\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    s=1/np.sqrt(np.pi)\n    return [s*np.sqrt(15)/2*x*y, s*np.sqrt(15)/2*y*z, s*np.sqrt(5)/4*(3*z*z-1), s*np.sqrt(15)/2*x*z, s*np.sqrt(15)/4*(x*x-y*y)]\nnt,npz=20,40\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[]; W=[]\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])\nprint(\"norms\",np.round(np.einsum('i,ia,ib->ab',W,Y,Y),6).diagonal())\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=np.clip(U@U.T,-1,1)\nKs=[0,2,4]\nT=np.einsum('i,ia,ic->iac',W,Y,Y)\nA={k:np.einsum('iac,ij,jbd->abcd',T,eval_legendre(k,cosg),T) for k in Ks}\nprint(\"A0[0,0,0,0],A2[0,0,0,0],A4[0,0,0,0]\",A[0][0,0,0,0],A[2][0,0,0,0],A[4][0,0,0,0])\nnso=10\nbasis=[sum(1<<i for i in occ) for occ in itertools.combinations(range(nso),7)]\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef par(st,i): return (-1)**bin(st & ((1<<i)-1)).count('1')\ndef build_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                st=b; sign=1\n                if not (st>>c)&1: continue\n                sign*=par(st,c); st^=(1<<c)\n                if not (st>>d)&1: continue\n                sign*=par(st,d); st^=(1<<d)\n                if (st>>b_)&1: continue\n                sign*=par(st,b_); st|=(1<<b_)\n                if (st>>a_)&1: continue\n                sign*=par(st,a_); st|=(1<<a_)\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                st=b\n                if not (st>>q)&1: continue\n                sign=par(st,q); st^=(1<<q)\n                if (st>>p)&1: continue\n                sign*=par(st,p); st|=(1<<p)\n                H[idx[st],j]+=h[p,q]*sign\n    return H\ndef gspin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n     for b in range(nso):\n      for c in range(nso):\n       for d in range(nso):\n        if a%2==c%2 and b%2==d%2:\n            G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:gspin(k) for k in Ks}\nVang=U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M); print(\"M eig\",np.round(ev,5))\net=ev[:3].mean(); ee=ev[3:].mean(); print(\"ratio ee/et\",ee/et)\nh0=M*10/(ee-et)\nhs=np.zeros((nso,nso))\nfor a in range(nso):\n  for b in range(nso):\n    if a%2==b%2: hs[a,b]=h0[a//2,b//2]\nH1=build_1body(hs)\nGop={k:build_2body(G[k]) for k in Ks}\nnup=np.array([sum(1 for i in range(0,nso,2) if (b>>i)&1) for b in basis])\nids5=np.where(nup==5)[0]; ids4=np.where(nup==4)[0]\ndef spectrum(B,Cc,Dq):\n    F4=441*Cc/35; F2=(441*B+5*F4)/9\n    H=Dq*H1+F2*Gop[2]+F4*Gop[4]\n    q=np.linalg.eigvalsh(H[np.ix_(ids5,ids5)])\n    d=np.linalg.eigvalsh(H[np.ix_(ids4,ids4)])\n    return q,d,H\nB0,C0=922.,4156.\nq,d,_=spectrum(B0,C0,0.0)\nprint(\"quartet M=3/2 free ion levels:\",np.round(np.unique(np.round(q-q[0],2)),2))\nEOF",
+   "scripts": [
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "7e9f7a7a67519f93431ae63405c1e9b8aeb3930f3f77f173fe764d25c8823f0f",
+     "lines": 93,
+     "code": "import numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.optimize import brentq\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    s=1/np.sqrt(np.pi)\n    return [s*np.sqrt(15)/2*x*y, s*np.sqrt(15)/2*y*z, s*np.sqrt(5)/4*(3*z*z-1), s*np.sqrt(15)/2*x*z, s*np.sqrt(15)/4*(x*x-y*y)]\nnt,npz=20,40\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[]; W=[]\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])\nprint(\"norms\",np.round(np.einsum('i,ia,ib->ab',W,Y,Y),6).diagonal())\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=np.clip(U@U.T,-1,1)\nKs=[0,2,4]\nT=np.einsum('i,ia,ic->iac',W,Y,Y)\nA={k:np.einsum('iac,ij,jbd->abcd',T,eval_legendre(k,cosg),T) for k in Ks}\nprint(\"A0[0,0,0,0],A2[0,0,0,0],A4[0,0,0,0]\",A[0][0,0,0,0],A[2][0,0,0,0],A[4][0,0,0,0])\nnso=10\nbasis=[sum(1<<i for i in occ) for occ in itertools.combinations(range(nso),7)]\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef par(st,i): return (-1)**bin(st & ((1<<i)-1)).count('1')\ndef build_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                st=b; sign=1\n                if not (st>>c)&1: continue\n                sign*=par(st,c); st^=(1<<c)\n                if not (st>>d)&1: continue\n                sign*=par(st,d); st^=(1<<d)\n                if (st>>b_)&1: continue\n                sign*=par(st,b_); st|=(1<<b_)\n                if (st>>a_)&1: continue\n                sign*=par(st,a_); st|=(1<<a_)\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                st=b\n                if not (st>>q)&1: continue\n                sign=par(st,q); st^=(1<<q)\n                if (st>>p)&1: continue\n                sign*=par(st,p); st|=(1<<p)\n                H[idx[st],j]+=h[p,q]*sign\n    return H\ndef gspin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n     for b in range(nso):\n      for c in range(nso):\n       for d in range(nso):\n        if a%2==c%2 and b%2==d%2:\n            G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:gspin(k) for k in Ks}\nVang=U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M); print(\"M eig\",np.round(ev,5))\net=ev[:3].mean(); ee=ev[3:].mean(); print(\"ratio ee/et\",ee/et)\nh0=M*10/(ee-et)\nhs=np.zeros((nso,nso))\nfor a in range(nso):\n  for b in range(nso):\n    if a%2==b%2: hs[a,b]=h0[a//2,b//2]\nH1=build_1body(hs)\nGop={k:build_2body(G[k]) for k in Ks}\nnup=np.array([sum(1 for i in range(0,nso,2) if (b>>i)&1) for b in basis])\nids5=np.where(nup==5)[0]; ids4=np.where(nup==4)[0]\ndef spectrum(B,Cc,Dq):\n    F4=441*Cc/35; F2=(441*B+5*F4)/9\n    H=Dq*H1+F2*Gop[2]+F4*Gop[4]\n    q=np.linalg.eigvalsh(H[np.ix_(ids5,ids5)])\n    d=np.linalg.eigvalsh(H[np.ix_(ids4,ids4)])\n    return q,d,H\nB0,C0=922.,4156.\nq,d,_=spectrum(B0,C0,0.0)\nprint(\"quartet M=3/2 free ion levels:\",np.round(np.unique(np.round(q-q[0],2)),2))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "norms [1. 1. 1. 1. 1.]\nA0[0,0,0,0],A2[0,0,0,0],A4[0,0,0,0] 1.0000000000003058 0.08163265306119948 0.08163265306120812\nM eig [-0.07619 -0.07619 -0.07619  0.11429  0.11429]\nratio ee/et -1.4999999999999774\nquartet M=3/2 free ion levels: [    0. 13830.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "U=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 50,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 63,
+     "method": "matrix",
+     "text": "G=np.zeros((nso,nso,nso,nso))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 74,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(M); print(\"M eig\",np.round(ev,5))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 77,
+     "method": "matrix",
+     "text": "hs=np.zeros((nso,nso))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 88,
+     "method": "eigen_solver",
+     "text": "q=np.linalg.eigvalsh(H[np.ix_(ids5,ids5)])"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 89,
+     "method": "eigen_solver",
+     "text": "d=np.linalg.eigvalsh(H[np.ix_(ids4,ids4)])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat << 'EOF' | python3 - 2>/dev/null | tail -20\nimport numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.optimize import brentq\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    s=1/np.sqrt(np.pi)\n    return [s*np.sqrt(15)/2*x*y, s*np.sqrt(15)/2*y*z, s*np.sqrt(5)/4*(3*z*z-1), s*np.sqrt(15)/2*x*z, s*np.sqrt(15)/4*(x*x-y*y)]\nnt,npz=20,40\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[]; W=[]\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=np.clip(U@U.T,-1,1)\nKs=[0,2,4]\nT=np.einsum('i,ia,ic->iac',W,Y,Y)\nA={k:np.einsum('iac,ij,jbd->abcd',T,eval_legendre(k,cosg),T) for k in Ks}\nnso=10\nbasis=[sum(1<<i for i in occ) for occ in itertools.combinations(range(nso),7)]\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef par(st,i): return (-1)**bin(st & ((1<<i)-1)).count('1')\ndef build_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                st=b; sign=1\n                if not (st>>c)&1: continue\n                sign*=par(st,c); st^=(1<<c)\n                if not (st>>d)&1: continue\n                sign*=par(st,d); st^=(1<<d)\n                if (st>>b_)&1: continue\n                sign*=par(st,b_); st|=(1<<b_)\n                if (st>>a_)&1: continue\n                sign*=par(st,a_); st|=(1<<a_)\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                st=b\n                if not (st>>q)&1: continue\n                sign=par(st,q); st^=(1<<q)\n                if (st>>p)&1: continue\n                sign*=par(st,p); st|=(1<<p)\n                H[idx[st],j]+=h[p,q]*sign\n    return H\ndef gspin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n     for b in range(nso):\n      for c in range(nso):\n       for d in range(nso):\n        if a%2==c%2 and b%2==d%2:\n            G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:gspin(k) for k in Ks}\nVang=U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M)\net=ev[:3].mean(); ee=ev[3:].mean()\nh0=M*10/(ee-et)\nhs=np.zeros((nso,nso))\nfor a in range(nso):\n  for b in range(nso):\n    if a%2==b%2: hs[a,b]=h0[a//2,b//2]\nH1=build_1body(hs)\nGop={k:build_2body(G[k]) for k in Ks}\nnup=np.array([sum(1 for i in range(0,nso,2) if (b>>i)&1) for b in basis])\nids5=np.where(nup==5)[0]; ids4=np.where(nup==4)[0]\nB,C=922.,4156.\nF4=441*C/35; F2=(441*B+5*F4)/9\ndef states(Dq):\n    H=Dq*H1+F2*Gop[2]+F4*Gop[4]\n    q=np.linalg.eigvalsh(H[np.ix_(ids5,ids5)])\n    d=list(np.linalg.eigvalsh(H[np.ix_(ids4,ids4)]))\n    for x in q:\n        k=int(np.argmin([abs(y-x) for y in d])); d.pop(k)\n    return q[0], min(d)\nfor Dq in [0,5000,10000,15000,18000,20000,22000,25000,30000]:\n    eq,ed=states(Dq); print(Dq, round(eq,1), round(ed,1), round(eq-ed,1))\nf=lambda Dq: states(Dq)[0]-states(Dq)[1]\nx=brentq(f,10000,30000,xtol=1e-6)\nprint(\"crossover Dq =\",x, \"Dq/B=\",x/B, \"C/B=\",C/B)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "4fc7004d9863ab48955ebeca3233a092a5ef699688f898f129d2e3523dbf61d6",
+     "lines": 96,
+     "code": "import numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.optimize import brentq\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    s=1/np.sqrt(np.pi)\n    return [s*np.sqrt(15)/2*x*y, s*np.sqrt(15)/2*y*z, s*np.sqrt(5)/4*(3*z*z-1), s*np.sqrt(15)/2*x*z, s*np.sqrt(15)/4*(x*x-y*y)]\nnt,npz=20,40\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[]; W=[]\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=np.clip(U@U.T,-1,1)\nKs=[0,2,4]\nT=np.einsum('i,ia,ic->iac',W,Y,Y)\nA={k:np.einsum('iac,ij,jbd->abcd',T,eval_legendre(k,cosg),T) for k in Ks}\nnso=10\nbasis=[sum(1<<i for i in occ) for occ in itertools.combinations(range(nso),7)]\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef par(st,i): return (-1)**bin(st & ((1<<i)-1)).count('1')\ndef build_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                st=b; sign=1\n                if not (st>>c)&1: continue\n                sign*=par(st,c); st^=(1<<c)\n                if not (st>>d)&1: continue\n                sign*=par(st,d); st^=(1<<d)\n                if (st>>b_)&1: continue\n                sign*=par(st,b_); st|=(1<<b_)\n                if (st>>a_)&1: continue\n                sign*=par(st,a_); st|=(1<<a_)\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                st=b\n                if not (st>>q)&1: continue\n                sign=par(st,q); st^=(1<<q)\n                if (st>>p)&1: continue\n                sign*=par(st,p); st|=(1<<p)\n                H[idx[st],j]+=h[p,q]*sign\n    return H\ndef gspin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n     for b in range(nso):\n      for c in range(nso):\n       for d in range(nso):\n        if a%2==c%2 and b%2==d%2:\n            G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:gspin(k) for k in Ks}\nVang=U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M)\net=ev[:3].mean(); ee=ev[3:].mean()\nh0=M*10/(ee-et)\nhs=np.zeros((nso,nso))\nfor a in range(nso):\n  for b in range(nso):\n    if a%2==b%2: hs[a,b]=h0[a//2,b//2]\nH1=build_1body(hs)\nGop={k:build_2body(G[k]) for k in Ks}\nnup=np.array([sum(1 for i in range(0,nso,2) if (b>>i)&1) for b in basis])\nids5=np.where(nup==5)[0]; ids4=np.where(nup==4)[0]\nB,C=922.,4156.\nF4=441*C/35; F2=(441*B+5*F4)/9\ndef states(Dq):\n    H=Dq*H1+F2*Gop[2]+F4*Gop[4]\n    q=np.linalg.eigvalsh(H[np.ix_(ids5,ids5)])\n    d=list(np.linalg.eigvalsh(H[np.ix_(ids4,ids4)]))\n    for x in q:\n        k=int(np.argmin([abs(y-x) for y in d])); d.pop(k)\n    return q[0], min(d)\nfor Dq in [0,5000,10000,15000,18000,20000,22000,25000,30000]:\n    eq,ed=states(Dq); print(Dq, round(eq,1), round(ed,1), round(eq-ed,1))\nf=lambda Dq: states(Dq)[0]-states(Dq)[1]\nx=brentq(f,10000,30000,xtol=1e-6)\nprint(\"crossover Dq =\",x, \"Dq/B=\",x/B, \"C/B=\",C/B)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0 -103648.4 -87492.4 -16156.0\n5000 -141402.7 -171502.2 30099.5\n10000 -181164.2 -261091.8 79927.5\n15000 -221075.5 -350932.3 129856.8\n18000 -245044.8 -404876.1 159831.4\n20000 -261029.2 -440847.5 179818.3\n22000 -277016.4 -476823.7 199807.4\n25000 -301000.8 -530794.9 229794.0\n30000 -340981.6 -620759.1 279777.4",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 17,
+     "method": "matrix",
+     "text": "U=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 61,
+     "method": "matrix",
+     "text": "G=np.zeros((nso,nso,nso,nso))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(M)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 75,
+     "method": "matrix",
+     "text": "hs=np.zeros((nso,nso))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 87,
+     "method": "eigen_solver",
+     "text": "q=np.linalg.eigvalsh(H[np.ix_(ids5,ids5)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 88,
+     "method": "eigen_solver",
+     "text": "d=list(np.linalg.eigvalsh(H[np.ix_(ids4,ids4)]))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat << 'EOF' | python3 - 2>&1 | tail -5\nimport numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.optimize import brentq\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    s=1/np.sqrt(np.pi)\n    return [s*np.sqrt(15)/2*x*y, s*np.sqrt(15)/2*y*z, s*np.sqrt(5)/4*(3*z*z-1), s*np.sqrt(15)/2*x*z, s*np.sqrt(15)/4*(x*x-y*y)]\nnt,npz=20,40\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[]; W=[]\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=np.clip(U@U.T,-1,1)\nKs=[0,2,4]\nT=np.einsum('i,ia,ic->iac',W,Y,Y)\nA={k:np.einsum('iac,ij,jbd->abcd',T,eval_legendre(k,cosg),T) for k in Ks}\nnso=10\nbasis=[sum(1<<i for i in occ) for occ in itertools.combinations(range(nso),7)]\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef par(st,i): return (-1)**bin(st & ((1<<i)-1)).count('1')\ndef build_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                st=b; sign=1\n                if not (st>>c)&1: continue\n                sign*=par(st,c); st^=(1<<c)\n                if not (st>>d)&1: continue\n                sign*=par(st,d); st^=(1<<d)\n                if (st>>b_)&1: continue\n                sign*=par(st,b_); st|=(1<<b_)\n                if (st>>a_)&1: continue\n                sign*=par(st,a_); st|=(1<<a_)\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                st=b\n                if not (st>>q)&1: continue\n                sign=par(st,q); st^=(1<<q)\n                if (st>>p)&1: continue\n                sign*=par(st,p); st|=(1<<p)\n                H[idx[st],j]+=h[p,q]*sign\n    return H\ndef gspin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n     for b in range(nso):\n      for c in range(nso):\n       for d in range(nso):\n        if a%2==c%2 and b%2==d%2:\n            G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:gspin(k) for k in Ks}\nVang=U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M)\net=ev[:3].mean(); ee=ev[3:].mean()\nh0=M*10/(ee-et)\nhs=np.zeros((nso,nso))\nfor a in range(nso):\n  for b in range(nso):\n    if a%2==b%2: hs[a,b]=h0[a//2,b//2]\nH1=build_1body(hs)\nGop={k:build_2body(G[k]) for k in Ks}\nnup=np.array([sum(1 for i in range(0,nso,2) if (b>>i)&1) for b in basis])\nids5=np.where(nup==5)[0]; ids4=np.where(nup==4)[0]\nB,C=922.,4156.\nF4=441*C/35; F2=(441*B+5*F4)/9\ndef states(Dq):\n    H=Dq*H1+F2*Gop[2]+F4*Gop[4]\n    q=np.linalg.eigvalsh(H[np.ix_(ids5,ids5)])\n    d=list(np.linalg.eigvalsh(H[np.ix_(ids4,ids4)]))\n    for x in q:\n        k=int(np.argmin([abs(y-x) for y in d])); d.pop(k)\n    return q[0], min(d)\nfor Dq in [0,500,1000,1500,1700,1800,2000,2500]:\n    eq,ed=states(Dq); print(Dq, round(eq-ed,1))\nx=brentq(lambda D: states(D)[0]-states(D)[1],0,5000,xtol=1e-6)\nprint(\"crossover Dq =\",round(x,1), \"Dq/B=\",round(x/B,3))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "554c1e56c3617ceafb6823892a1da1b8376109aa44e40c00f19ab3d89c772301",
+     "lines": 95,
+     "code": "import numpy as np, itertools\nfrom scipy.special import eval_legendre\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.optimize import brentq\ndef dorb(th,ph):\n    x=np.sin(th)*np.cos(ph); y=np.sin(th)*np.sin(ph); z=np.cos(th)\n    s=1/np.sqrt(np.pi)\n    return [s*np.sqrt(15)/2*x*y, s*np.sqrt(15)/2*y*z, s*np.sqrt(5)/4*(3*z*z-1), s*np.sqrt(15)/2*x*z, s*np.sqrt(15)/4*(x*x-y*y)]\nnt,npz=20,40\nxg,wg=leggauss(nt); th=np.arccos(xg); ph=np.arange(npz)*2*np.pi/npz; wph=2*np.pi/npz\npts=[]; W=[]\nfor i in range(nt):\n    for j in range(npz):\n        pts.append((th[i],ph[j])); W.append(wg[i]*wph)\nW=np.array(W)\nY=np.array([dorb(t,p) for t,p in pts])\nU=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])\ncosg=np.clip(U@U.T,-1,1)\nKs=[0,2,4]\nT=np.einsum('i,ia,ic->iac',W,Y,Y)\nA={k:np.einsum('iac,ij,jbd->abcd',T,eval_legendre(k,cosg),T) for k in Ks}\nnso=10\nbasis=[sum(1<<i for i in occ) for occ in itertools.combinations(range(nso),7)]\nidx={b:i for i,b in enumerate(basis)}\nN=len(basis)\ndef par(st,i): return (-1)**bin(st & ((1<<i)-1)).count('1')\ndef build_2body(Gt):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for a_ in range(nso):\n          for b_ in range(nso):\n            for c in range(nso):\n              for d in range(nso):\n                g=Gt[a_,b_,c,d]\n                if abs(g)<1e-12: continue\n                st=b; sign=1\n                if not (st>>c)&1: continue\n                sign*=par(st,c); st^=(1<<c)\n                if not (st>>d)&1: continue\n                sign*=par(st,d); st^=(1<<d)\n                if (st>>b_)&1: continue\n                sign*=par(st,b_); st|=(1<<b_)\n                if (st>>a_)&1: continue\n                sign*=par(st,a_); st|=(1<<a_)\n                H[idx[st],j]+=0.5*g*sign\n    return H\ndef build_1body(h):\n    H=np.zeros((N,N))\n    for j,b in enumerate(basis):\n        for p in range(nso):\n            for q in range(nso):\n                if abs(h[p,q])<1e-14: continue\n                st=b\n                if not (st>>q)&1: continue\n                sign=par(st,q); st^=(1<<q)\n                if (st>>p)&1: continue\n                sign*=par(st,p); st|=(1<<p)\n                H[idx[st],j]+=h[p,q]*sign\n    return H\ndef gspin(k):\n    G=np.zeros((nso,nso,nso,nso))\n    for a in range(nso):\n     for b in range(nso):\n      for c in range(nso):\n       for d in range(nso):\n        if a%2==c%2 and b%2==d%2:\n            G[a,b,c,d]=A[k][a//2,b//2,c//2,d//2]\n    return G\nG={k:gspin(k) for k in Ks}\nVang=U[:,0]**4+U[:,1]**4+U[:,2]**4-0.6\nM=np.einsum('i,ia,ib->ab',W*Vang,Y,Y)\nev=np.linalg.eigvalsh(M)\net=ev[:3].mean(); ee=ev[3:].mean()\nh0=M*10/(ee-et)\nhs=np.zeros((nso,nso))\nfor a in range(nso):\n  for b in range(nso):\n    if a%2==b%2: hs[a,b]=h0[a//2,b//2]\nH1=build_1body(hs)\nGop={k:build_2body(G[k]) for k in Ks}\nnup=np.array([sum(1 for i in range(0,nso,2) if (b>>i)&1) for b in basis])\nids5=np.where(nup==5)[0]; ids4=np.where(nup==4)[0]\nB,C=922.,4156.\nF4=441*C/35; F2=(441*B+5*F4)/9\ndef states(Dq):\n    H=Dq*H1+F2*Gop[2]+F4*Gop[4]\n    q=np.linalg.eigvalsh(H[np.ix_(ids5,ids5)])\n    d=list(np.linalg.eigvalsh(H[np.ix_(ids4,ids4)]))\n    for x in q:\n        k=int(np.argmin([abs(y-x) for y in d])); d.pop(k)\n    return q[0], min(d)\nfor Dq in [0,500,1000,1500,1700,1800,2000,2500]:\n    eq,ed=states(Dq); print(Dq, round(eq-ed,1))\nx=brentq(lambda D: states(D)[0]-states(D)[1],0,5000,xtol=1e-6)\nprint(\"crossover Dq =\",round(x,1), \"Dq/B=\",round(x/B,3))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1700 -2526.4\n1800 -1548.3\n2000 411.7\n2500 5329.4\ncrossover Dq = 1958.0 Dq/B= 2.124",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 17,
+     "method": "matrix",
+     "text": "U=np.array([[np.sin(t)*np.cos(p),np.sin(t)*np.sin(p),np.cos(t)] for t,p in pts])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 61,
+     "method": "matrix",
+     "text": "G=np.zeros((nso,nso,nso,nso))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(M)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 75,
+     "method": "matrix",
+     "text": "hs=np.zeros((nso,nso))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 87,
+     "method": "eigen_solver",
+     "text": "q=np.linalg.eigvalsh(H[np.ix_(ids5,ids5)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 88,
+     "method": "eigen_solver",
+     "text": "d=list(np.linalg.eigvalsh(H[np.ix_(ids4,ids4)]))"
+    }
+   ],
+   "produces": [
+    "Dq"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1958.0,
+   "weak": false,
+   "steps": [
+    7
+   ],
+   "typed_in_steps": [],
+   "source_step": 7
+  },
+  {
+   "path": "B",
+   "value": 922.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 4156.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 8,
+  "n_scripts": 7,
+  "n_failed_steps": 3,
+  "n_values": 3,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   7
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

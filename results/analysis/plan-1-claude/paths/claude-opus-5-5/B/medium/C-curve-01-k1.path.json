@@ -1,0 +1,442 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-opus-5-5/B/medium/C-curve-01-k1.jsonl",
+ "transcript_sha256": "c55b53c34a73e1cda6e1cb9ce87e7c674f0e352ae99af71ab4a7580e25eb8920",
+ "answer": {
+  "points": [
+   {
+    "dq_over_b": 0.9,
+    "term": "5T2g",
+    "e_over_b": 9.0
+   },
+   {
+    "dq_over_b": 0.9,
+    "term": "3T1g",
+    "e_over_b": 16.254
+   },
+   {
+    "dq_over_b": 0.9,
+    "term": "3Eg",
+    "e_over_b": 22.592
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "3T1g",
+    "e_over_b": 4.84
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "1T2g",
+    "e_over_b": 17.074
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "1Eg",
+    "e_over_b": 18.425
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "5Eg",
+    "e_over_b": 6.675
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "1T2g",
+    "e_over_b": 12.692
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "1Eg",
+    "e_over_b": 14.087
+   }
+  ],
+  "reason": "These energies come from setting up and solving the full 210-state d4 problem, including electron repulsion (B = 821 cm⁻¹, C/B = 4.454) and the octahedral field. With no field the result reproduces the free-ion gap 3H − 5D = 4B + 4C, which checks the setup. Each level's spin and symmetry label were assigned from its spin value and its symmetry under a 90° rotation. The ground term is 5Eg at Dq/B = 0.90 and 2.15. At Dq/B = 3.35 it is 3T1g, because the high-spin to low-spin crossover lies between Dq/B = 2.15 and 3.35. All E/B values are measured from the ground term at that Dq/B."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d4.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nB=821.;C=3657.\nF4=C/35;F2=B+5*F4;F0=0\nFk={0:F0,2:F2*49,4:F4*441}\nml=[-2,-1,0,1,2]\nso=[(m,s) for m in ml for s in (0,1)]\ndef ck(k,m1,m2):\n  # c^k(l m1, l m2)\n  l=2\n  return float((-1)**m1*np.sqrt((2*l+1)**2/(2*k+1)*4*np.pi/(2*k+1))*0+0) \nfrom sympy.physics.wigner import wigner_3j\ndef ckf(k,m1,m2):\n  return float((-1)**(-m1)*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m1,m1-m2,m2))\n# two-electron integral <ab|g|cd> spin orbitals\ndef g(a,b,c,d):\n  (ma,sa),(mb,sb),(mc,sc),(md,sd)=so[a],so[b],so[c],so[d]\n  if sa!=sc or sb!=sd or ma+mb!=mc+md: return 0\n  return sum(ckf(k,ma,mc)*ckf(k,md,mb)*Fk[k] for k in (0,2,4))\nDq=1.0\ndef cf(m1,m2):\n  if m1==m2: return {2:1,-2:1,1:-4,-1:-4,0:6}[m1]\n  if abs(m1-m2)==4: return 5\n  return 0\nn=10\nG=np.zeros((n,n,n,n))\nfor a,b,c,d in itertools.product(range(n),repeat=4): G[a,b,c,d]=g(a,b,c,d)\nh1=np.array([[cf(so[i][0],so[j][0]) if so[i][1]==so[j][1] else 0 for j in range(n)] for i in range(n)],float)\ndets=list(itertools.combinations(range(n),4))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef apply_ops(det,ops):\n  # ops list of (type,orb) applied right to left; returns sign,newdet\n  occ=list(det);sign=1\n  for t,o in reversed(ops):\n    if t=='a':\n      if o not in occ: return 0,None\n      p=occ.index(o);sign*=(-1)**p;occ.pop(p)\n    else:\n      if o in occ: return 0,None\n      p=sum(1 for x in occ if x<o);sign*=(-1)**p;occ.insert(p,o)\n  return sign,tuple(occ)\nH1=np.zeros((N,N));H2=np.zeros((N,N))\nfor j,d in enumerate(dets):\n  for p in range(n):\n    for q in range(n):\n      if h1[p,q]:\n        s,nd=apply_ops(d,[('c',p),('a',q)])\n        if s: H1[idx[nd],j]+=s*h1[p,q]\n  for p,q,r,s_ in itertools.product(range(n),repeat=4):\n    v=G[p,q,r,s_]\n    if abs(v)<1e-12: continue\n    s,nd=apply_ops(d,[('c',p),('c',q),('a',s_),('a',r)])\n    if s: H2[idx[nd],j]+=0.5*s*v\n# S^2\nS2=np.zeros((N,N))\nfor j,d in enumerate(dets):\n  sz=sum(0.5 if so[o][1]==0 else -0.5 for o in d)\n  S2[j,j]+=sz*sz-sz\n  # S+S-\n  for p in range(n):\n    for q in range(n):\n      if so[p][1]==1 and so[q][1]==0 and so[p][0]==so[q][0]:\n        for r in range(n):\n          for t in range(n):\n            if so[r][1]==0 and so[t][1]==1 and so[r][0]==so[t][0]:\n              s,nd=apply_ops(d,[('c',r),('a',t),('c',p),('a',q)])\n              # S+ S-: S- = c†(down)a(up); S+ = c†(up) a(down)\n              if s: S2[idx[nd],j]+=s\n# C4 rotation phase: orbital m -> exp(i m pi/2)\nR=np.array([np.prod([1j**so[o][0] for o in d]) for d in dets])\nfor x in (0.90,2.15,3.35):\n  H=H2+x*B*H1\n  w,v=np.linalg.eigh(H+1e-7*S2)\n  E=(w-w[0])/B\n  # group\n  i=0;res=[]\n  while i<N:\n    j=i\n    while j<N and abs(E[j]-E[i])<1e-3: j+=1\n    V=v[:,i:j]\n    s2=np.real(np.trace(V.conj().T@S2@V))/(j-i)\n    S=(-1+np.sqrt(1+4*s2))/2\n    mult=int(round(2*S+1));deg=(j-i)//mult\n    chi=np.real(np.trace(V.conj().T@(R[:,None]*V)))/mult\n    res.append((round(E[i],3),mult,deg,round(chi,2)))\n    i=j\n  print(x,res[:5])\nEOF\npython3 /tmp/d4.py\n",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "f7584ce78eee15cfe87331b819621bb72e2c2d7419254a47c234a4d3df4c9bfd",
+     "lines": 88,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nB=821.;C=3657.\nF4=C/35;F2=B+5*F4;F0=0\nFk={0:F0,2:F2*49,4:F4*441}\nml=[-2,-1,0,1,2]\nso=[(m,s) for m in ml for s in (0,1)]\ndef ck(k,m1,m2):\n  # c^k(l m1, l m2)\n  l=2\n  return float((-1)**m1*np.sqrt((2*l+1)**2/(2*k+1)*4*np.pi/(2*k+1))*0+0) \nfrom sympy.physics.wigner import wigner_3j\ndef ckf(k,m1,m2):\n  return float((-1)**(-m1)*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m1,m1-m2,m2))\n# two-electron integral <ab|g|cd> spin orbitals\ndef g(a,b,c,d):\n  (ma,sa),(mb,sb),(mc,sc),(md,sd)=so[a],so[b],so[c],so[d]\n  if sa!=sc or sb!=sd or ma+mb!=mc+md: return 0\n  return sum(ckf(k,ma,mc)*ckf(k,md,mb)*Fk[k] for k in (0,2,4))\nDq=1.0\ndef cf(m1,m2):\n  if m1==m2: return {2:1,-2:1,1:-4,-1:-4,0:6}[m1]\n  if abs(m1-m2)==4: return 5\n  return 0\nn=10\nG=np.zeros((n,n,n,n))\nfor a,b,c,d in itertools.product(range(n),repeat=4): G[a,b,c,d]=g(a,b,c,d)\nh1=np.array([[cf(so[i][0],so[j][0]) if so[i][1]==so[j][1] else 0 for j in range(n)] for i in range(n)],float)\ndets=list(itertools.combinations(range(n),4))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef apply_ops(det,ops):\n  # ops list of (type,orb) applied right to left; returns sign,newdet\n  occ=list(det);sign=1\n  for t,o in reversed(ops):\n    if t=='a':\n      if o not in occ: return 0,None\n      p=occ.index(o);sign*=(-1)**p;occ.pop(p)\n    else:\n      if o in occ: return 0,None\n      p=sum(1 for x in occ if x<o);sign*=(-1)**p;occ.insert(p,o)\n  return sign,tuple(occ)\nH1=np.zeros((N,N));H2=np.zeros((N,N))\nfor j,d in enumerate(dets):\n  for p in range(n):\n    for q in range(n):\n      if h1[p,q]:\n        s,nd=apply_ops(d,[('c',p),('a',q)])\n        if s: H1[idx[nd],j]+=s*h1[p,q]\n  for p,q,r,s_ in itertools.product(range(n),repeat=4):\n    v=G[p,q,r,s_]\n    if abs(v)<1e-12: continue\n    s,nd=apply_ops(d,[('c',p),('c',q),('a',s_),('a',r)])\n    if s: H2[idx[nd],j]+=0.5*s*v\n# S^2\nS2=np.zeros((N,N))\nfor j,d in enumerate(dets):\n  sz=sum(0.5 if so[o][1]==0 else -0.5 for o in d)\n  S2[j,j]+=sz*sz-sz\n  # S+S-\n  for p in range(n):\n    for q in range(n):\n      if so[p][1]==1 and so[q][1]==0 and so[p][0]==so[q][0]:\n        for r in range(n):\n          for t in range(n):\n            if so[r][1]==0 and so[t][1]==1 and so[r][0]==so[t][0]:\n              s,nd=apply_ops(d,[('c',r),('a',t),('c',p),('a',q)])\n              # S+ S-: S- = c†(down)a(up); S+ = c†(up) a(down)\n              if s: S2[idx[nd],j]+=s\n# C4 rotation phase: orbital m -> exp(i m pi/2)\nR=np.array([np.prod([1j**so[o][0] for o in d]) for d in dets])\nfor x in (0.90,2.15,3.35):\n  H=H2+x*B*H1\n  w,v=np.linalg.eigh(H+1e-7*S2)\n  E=(w-w[0])/B\n  # group\n  i=0;res=[]\n  while i<N:\n    j=i\n    while j<N and abs(E[j]-E[i])<1e-3: j+=1\n    V=v[:,i:j]\n    s2=np.real(np.trace(V.conj().T@S2@V))/(j-i)\n    S=(-1+np.sqrt(1+4*s2))/2\n    mult=int(round(2*S+1));deg=(j-i)//mult\n    chi=np.real(np.trace(V.conj().T@(R[:,None]*V)))/mult\n    res.append((round(E[i],3),mult,deg,round(chi,2)))\n    i=j\n  print(x,res[:5])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d4.py",
+     "written_in_step": 0
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 94: /tmp/d4.py: Read-only file system\npython3: can't open file '/tmp/d4.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "G=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "d4.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "h1=np.array([[cf(so[i][0],so[j][0]) if so[i][1]==so[j][1] else 0 for j in range(n)] for i in range(n)],float)"
+    },
+    {
+     "script": "d4.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H1=np.zeros((N,N));H2=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 56,
+     "method": "matrix",
+     "text": "S2=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 59,
+     "method": "matrix",
+     "text": "S2[j,j]+=sz*sz-sz"
+    },
+    {
+     "script": "d4.py",
+     "line": 74,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H+1e-7*S2)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ 2>/dev/null || cd .; mkdir -p ./w && cd w && history | tail -0; echo ok; pwd",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "mkdir: cannot create directory ‘./w’: Read-only file system\nok\n/tmp/tsbench-home-xehwqch9\nShell cwd was reset to /tmp/tsbench-run-hjamwf2n",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp/tsbench-run-hjamwf2n; touch x && echo writable; ls; echo $TMPDIR",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "writable\nx\n<SANDBOX_TMP>",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp/tsbench-run-hjamwf2n; cat > d4.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nB=821.;C=3657.\nF4=C/35;F2=B+5*F4\nFk={0:0,2:F2*49,4:F4*441}\nml=[-2,-1,0,1,2]\nso=[(m,s) for m in ml for s in (0,1)]\ndef ckf(k,m1,m2):\n  return float((-1)**(-m1)*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m1,m1-m2,m2))\ndef g(a,b,c,d):\n  (ma,sa),(mb,sb),(mc,sc),(md,sd)=so[a],so[b],so[c],so[d]\n  if sa!=sc or sb!=sd or ma+mb!=mc+md: return 0\n  return sum(ckf(k,ma,mc)*ckf(k,md,mb)*Fk[k] for k in (0,2,4))\ndef cf(m1,m2):\n  if m1==m2: return {2:1,-2:1,1:-4,-1:-4,0:6}[m1]\n  if abs(m1-m2)==4: return 5\n  return 0\nn=10\nG=np.zeros((n,n,n,n))\nfor a,b,c,d in itertools.product(range(n),repeat=4): G[a,b,c,d]=g(a,b,c,d)\nh1=np.array([[cf(so[i][0],so[j][0]) if so[i][1]==so[j][1] else 0 for j in range(n)] for i in range(n)],float)\ndets=list(itertools.combinations(range(n),4))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef apply_ops(det,ops):\n  occ=list(det);sign=1\n  for t,o in reversed(ops):\n    if t=='a':\n      if o not in occ: return 0,None\n      p=occ.index(o);sign*=(-1)**p;occ.pop(p)\n    else:\n      if o in occ: return 0,None\n      p=sum(1 for x in occ if x<o);sign*=(-1)**p;occ.insert(p,o)\n  return sign,tuple(occ)\nH1=np.zeros((N,N));H2=np.zeros((N,N));S2=np.zeros((N,N))\nnz=[(p,q,r,s) for p,q,r,s in itertools.product(range(n),repeat=4) if abs(G[p,q,r,s])>1e-12]\nfor j,d in enumerate(dets):\n  for p in range(n):\n    for q in range(n):\n      if h1[p,q]:\n        s,nd=apply_ops(d,[('c',p),('a',q)])\n        if s: H1[idx[nd],j]+=s*h1[p,q]\n  for p,q,r,s_ in nz:\n    s,nd=apply_ops(d,[('c',p),('c',q),('a',s_),('a',r)])\n    if s: H2[idx[nd],j]+=0.5*s*G[p,q,r,s_]\n  sz=sum(0.5 if so[o][1]==0 else -0.5 for o in d)\n  S2[j,j]+=sz*sz-sz\n  for m in range(5):\n    for m2 in range(5):\n      s,nd=apply_ops(d,[('c',2*m2),('a',2*m2+1),('c',2*m+1),('a',2*m)])\n      if s: S2[idx[nd],j]+=s\nprint(np.abs(S2-S2.T).max(),np.abs(H2-H2.T).max())\nR=np.array([np.prod([1j**so[o][0] for o in d]) for d in dets])\nfor x in (0.0,0.90,2.15,3.35):\n  H=H2+x*B*H1\n  w,v=np.linalg.eigh(H)\n  E=(w-w[0])/B\n  i=0;res=[]\n  while i<N and len(res)<6:\n    j=i\n    while j<N and abs(E[j]-E[i])<1e-6: j+=1\n    V=v[:,i:j]\n    s2=np.real(np.trace(V.conj().T@S2@V))/(j-i)\n    S=(-1+np.sqrt(1+4*s2))/2\n    mult=int(round(2*S+1));deg=(j-i)//mult\n    chi=np.real(np.trace(V.conj().T@(R[:,None]*V)))/mult\n    res.append((round(E[i],3),j-i,round(S,2),deg,round(chi,2)))\n    i=j\n  print(x,res)\nEOF\npython3 d4.py",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "5a92a10a8e89ef5c84508cbbcd3238c4fd04d0f6860724972b7207f5d8b21afd",
+     "lines": 69,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nB=821.;C=3657.\nF4=C/35;F2=B+5*F4\nFk={0:0,2:F2*49,4:F4*441}\nml=[-2,-1,0,1,2]\nso=[(m,s) for m in ml for s in (0,1)]\ndef ckf(k,m1,m2):\n  return float((-1)**(-m1)*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m1,m1-m2,m2))\ndef g(a,b,c,d):\n  (ma,sa),(mb,sb),(mc,sc),(md,sd)=so[a],so[b],so[c],so[d]\n  if sa!=sc or sb!=sd or ma+mb!=mc+md: return 0\n  return sum(ckf(k,ma,mc)*ckf(k,md,mb)*Fk[k] for k in (0,2,4))\ndef cf(m1,m2):\n  if m1==m2: return {2:1,-2:1,1:-4,-1:-4,0:6}[m1]\n  if abs(m1-m2)==4: return 5\n  return 0\nn=10\nG=np.zeros((n,n,n,n))\nfor a,b,c,d in itertools.product(range(n),repeat=4): G[a,b,c,d]=g(a,b,c,d)\nh1=np.array([[cf(so[i][0],so[j][0]) if so[i][1]==so[j][1] else 0 for j in range(n)] for i in range(n)],float)\ndets=list(itertools.combinations(range(n),4))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef apply_ops(det,ops):\n  occ=list(det);sign=1\n  for t,o in reversed(ops):\n    if t=='a':\n      if o not in occ: return 0,None\n      p=occ.index(o);sign*=(-1)**p;occ.pop(p)\n    else:\n      if o in occ: return 0,None\n      p=sum(1 for x in occ if x<o);sign*=(-1)**p;occ.insert(p,o)\n  return sign,tuple(occ)\nH1=np.zeros((N,N));H2=np.zeros((N,N));S2=np.zeros((N,N))\nnz=[(p,q,r,s) for p,q,r,s in itertools.product(range(n),repeat=4) if abs(G[p,q,r,s])>1e-12]\nfor j,d in enumerate(dets):\n  for p in range(n):\n    for q in range(n):\n      if h1[p,q]:\n        s,nd=apply_ops(d,[('c',p),('a',q)])\n        if s: H1[idx[nd],j]+=s*h1[p,q]\n  for p,q,r,s_ in nz:\n    s,nd=apply_ops(d,[('c',p),('c',q),('a',s_),('a',r)])\n    if s: H2[idx[nd],j]+=0.5*s*G[p,q,r,s_]\n  sz=sum(0.5 if so[o][1]==0 else -0.5 for o in d)\n  S2[j,j]+=sz*sz-sz\n  for m in range(5):\n    for m2 in range(5):\n      s,nd=apply_ops(d,[('c',2*m2),('a',2*m2+1),('c',2*m+1),('a',2*m)])\n      if s: S2[idx[nd],j]+=s\nprint(np.abs(S2-S2.T).max(),np.abs(H2-H2.T).max())\nR=np.array([np.prod([1j**so[o][0] for o in d]) for d in dets])\nfor x in (0.0,0.90,2.15,3.35):\n  H=H2+x*B*H1\n  w,v=np.linalg.eigh(H)\n  E=(w-w[0])/B\n  i=0;res=[]\n  while i<N and len(res)<6:\n    j=i\n    while j<N and abs(E[j]-E[i])<1e-6: j+=1\n    V=v[:,i:j]\n    s2=np.real(np.trace(V.conj().T@S2@V))/(j-i)\n    S=(-1+np.sqrt(1+4*s2))/2\n    mult=int(round(2*S+1));deg=(j-i)//mult\n    chi=np.real(np.trace(V.conj().T@(R[:,None]*V)))/mult\n    res.append((round(E[i],3),j-i,round(S,2),deg,round(chi,2)))\n    i=j\n  print(x,res)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d4.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0.0 0.0\n0.0 [(np.float64(0.0), 25, np.float64(2.0), 5, np.float64(-1.0)), (np.float64(21.817), 33, np.float64(1.0), 11, np.float64(1.0)), (np.float64(24.817), 9, np.float64(1.0), 3, np.float64(1.0)), (np.float64(25.08), 21, np.float64(1.0), 7, np.float64(-1.0)), (np.float64(26.817), 27, np.float64(1.0), 9, np.float64(1.0)), (np.float64(32.726), 13, np.float64(0.0), 13, np.float64(-1.0))]\n0.9 [(np.float64(0.0), 10, np.float64(2.0), 2, np.float64(-0.0)), (np.float64(9.0), 15, np.float64(2.0), 3, np.float64(-1.0)), (np.float64(16.254), 9, np.float64(1.0), 3, np.float64(1.0)), (np.float64(22.592), 6, np.float64(1.0), 2, np.float64(-0.0)), (np.float64(23.972), 9, np.float64(1.0), 3, np.float64(1.0)), (np.float64(24.597), 9, np.float64(1.0), 3, np.float64(-1.0))]\n2.15 [(np.float64(0.0), 10, np.float64(2.0), 2, np.float64(-0.0)), (np.float64(4.84), 9, np.float64(1.0), 3, np.float64(1.0)), (np.float64(17.074), 3, np.float64(0.0), 3, np.float64(-1.0)), (np.float64(18.425), 2, np.float64(0.0), 2, np.float64(0.0)), (np.float64(21.5), 15, np.float64(2.0), 3, np.float64(-1.0)), (np.float64(22.813), 6, np.float64(1.0), 2, np.float64(0.0))]\n3.35 [(np.float64(0.0), 9, np.float64(1.0), 3, np.float64(1.0)), (np.float64(6.675), 10, np.float64(2.0), 2, np.float64(0.0)), (np.float64(12.692), 3, np.float64(0.0), 3, np.float64(-1.0)), (np.float64(14.087), 2, np.float64(0.0), 2, np.float64(-0.0)), (np.float64(26.812), 1, np.float64(0.0), 1, np.float64(1.0)), (np.float64(29.563), 6, np.float64(1.0), 2, np.float64(0.0))]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "G=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "d4.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "h1=np.array([[cf(so[i][0],so[j][0]) if so[i][1]==so[j][1] else 0 for j in range(n)] for i in range(n)],float)"
+    },
+    {
+     "script": "d4.py",
+     "line": 35,
+     "method": "matrix",
+     "text": "H1=np.zeros((N,N));H2=np.zeros((N,N));S2=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 47,
+     "method": "matrix",
+     "text": "S2[j,j]+=sz*sz-sz"
+    },
+    {
+     "script": "d4.py",
+     "line": 56,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H)"
+    }
+   ],
+   "produces": [
+    "points[1].e_over_b",
+    "points[2].e_over_b",
+    "points[3].e_over_b",
+    "points[4].e_over_b",
+    "points[5].e_over_b",
+    "points[6].e_over_b",
+    "points[7].e_over_b",
+    "points[8].e_over_b"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "points[0].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[0].e_over_b",
+   "value": 9.0,
+   "weak": true,
+   "steps": [
+    1,
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[1].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[1].e_over_b",
+   "value": 16.254,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  },
+  {
+   "path": "points[2].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[2].e_over_b",
+   "value": 22.592,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  },
+  {
+   "path": "points[3].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[3].e_over_b",
+   "value": 4.84,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  },
+  {
+   "path": "points[4].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[4].e_over_b",
+   "value": 17.074,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  },
+  {
+   "path": "points[5].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[5].e_over_b",
+   "value": 18.425,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  },
+  {
+   "path": "points[6].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[6].e_over_b",
+   "value": 6.675,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  },
+  {
+   "path": "points[7].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[7].e_over_b",
+   "value": 12.692,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  },
+  {
+   "path": "points[8].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[8].e_over_b",
+   "value": 14.087,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  }
+ ],
+ "summary": {
+  "n_steps": 4,
+  "n_scripts": 2,
+  "n_failed_steps": 1,
+  "n_values": 18,
+  "n_linked": 8,
+  "n_weak": 1,
+  "source_steps": [
+   3
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

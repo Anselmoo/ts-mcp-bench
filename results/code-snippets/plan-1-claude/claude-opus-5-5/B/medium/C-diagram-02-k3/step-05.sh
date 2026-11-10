@@ -1,0 +1,1 @@
+ls -R <HOME>/.cache/tsbench/matplotlib <HOME>/.cache/tsbench/python | head -30; /usr/bin/python3 -m pip --version

@@ -1,0 +1,1 @@
+mkdir -p <HOME>/.cache/tsbench/output && ls -la <HOME>/.cache/tsbench/output

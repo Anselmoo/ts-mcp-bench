@@ -1,0 +1,1 @@
+cd /dev/shm; ls; head -3 a.py; python3 /dev/shm/a.py | tail -1

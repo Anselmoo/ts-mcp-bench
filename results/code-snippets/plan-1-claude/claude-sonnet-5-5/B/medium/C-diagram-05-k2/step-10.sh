@@ -1,0 +1,1 @@
+sed -i 's/xs=np.linspace(0,4,81)/xs=np.linspace(0.02,4,80)/;s/o\[:12\]\])/o[:8]])/' e.py; python3 e.py 2>&1|tail -3; sha256sum diagram.png; realpath diagram.png

@@ -1,0 +1,1 @@
+cd /dev/shm && ls; sed -i "s/^np.save.*$/import pickle/" d5.py 2>/dev/null; ls

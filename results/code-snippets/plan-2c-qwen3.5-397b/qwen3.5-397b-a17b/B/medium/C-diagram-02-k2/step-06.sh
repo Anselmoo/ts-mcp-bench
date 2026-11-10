@@ -1,0 +1,1 @@
+ls -la diagram.png && file diagram.png

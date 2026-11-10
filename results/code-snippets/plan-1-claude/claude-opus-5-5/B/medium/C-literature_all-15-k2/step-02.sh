@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null; touch x.py && echo ok || (mkdir -p /dev/shm/w && echo shm); pwd

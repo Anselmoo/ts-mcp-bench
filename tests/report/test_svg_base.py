@@ -354,3 +354,29 @@ def test_significant_rounds_a_half_up_to_n_significant_digits():
     assert base.significant(12.0) == "12"
     assert base.significant(0.0) == "0"
     assert base.significant(-2.5, 1) == "−3"
+
+
+# ---------------------------------------------------------------- small multiples
+
+
+def _small(height: float, label: str) -> str:
+    return base.figure(100, height, "inner", base.text(1, 2, label))
+
+
+def test_panels_put_each_drawing_under_its_name_with_rows_as_high_as_the_tallest():
+    svg = base.panels("All", [("a", _small(50, "A1")), ("b", _small(80, "B1")), ("c", _small(30, "C1"))], width=232,
+                      cols=2)
+    assert svg.count("<svg") == 1 and 'aria-label="All"' in svg and "</svg></g>" not in svg
+    assert "translate(132,24)" in svg  # second panel of the row: 100 + 32 gap, under the name line
+    assert f"translate(0,{base.coord(24 + 80 + 12 + 24)})" in svg  # the second row starts below the tallest panel
+    assert ">A1<" in svg and ">B1<" in svg and ">C1<" in svg and ">a<" in svg
+
+
+def test_a_panel_without_data_is_named_in_a_note_and_nothing_gives_nothing():
+    svg = base.panels("All", [("a", _small(50, "A1")), ("b", "")], width=232)
+    assert "No data: b" in svg and ">b<" not in svg
+    assert base.panels("All", [("a", ""), ("b", "")]) == ""
+
+
+def test_panel_width_is_what_the_gaps_leave():
+    assert base.panel_width(960, 2) == 464 and base.panel_width(960, 1) == 960

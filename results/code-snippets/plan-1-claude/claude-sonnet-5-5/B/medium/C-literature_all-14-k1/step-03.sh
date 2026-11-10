@@ -1,0 +1,1 @@
+cd /dev/shm 2>/dev/null && touch x && echo ok; pwd; touch ./y && echo ok2

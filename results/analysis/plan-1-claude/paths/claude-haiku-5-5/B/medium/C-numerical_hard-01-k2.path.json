@@ -1,0 +1,292 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-numerical_hard-01-k2.jsonl",
+ "transcript_sha256": "eaca660240f6058c6ba5a8c72a784bb0a5215c8213c3e96de7a5ffde60c544ae",
+ "answer": {
+  "Dq": 2176.0,
+  "B": 725.0,
+  "C": 3408.0,
+  "out_of_scope": false,
+  "reason": "Full d4 low-spin ligand-field diagonalization with C=4.7B fitted to the three observed triplet bands gives Dq≈2176 cm-1 and B≈725 cm-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d4.py\nimport numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.optimize import least_squares\nfrom scipy.integrate import dblquad\n# Angular quadrature (Gauss-Legendre x uniform phi)\nnt, nphi = 40, 80\nxg, wg = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(xg); ph = np.arange(nphi)*2*np.pi/nphi; wph = 2*np.pi/nphi\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = (wg[:,None]*wph*np.ones_like(TH))\nms = [-2,-1,0,1,2]\ndef Y(l,m,t,p): return sph_harm(m,l,p,t)   # scipy: sph_harm(m,n,azimuth,polar)\n# angular coefficient a_k(ma,mc;mb,md) = sum_q <Y_la^* Y_kq^* Y_lc>... compute via integrals\ndef ang(k, ma, mc, mb, md):\n    # integral of conj(Y_ma(1)) * conj(Y_mb(2)) * (4pi/(2k+1)) sum_q Y_kq(1)^* Y_kq(2)... general: \n    # V_{ab,cd} = sum_k F^k * 4pi/(2k+1) * sum_q <a|Y_kq*|c> <b|Y_kq|d>  (a,c on electron1; b,d on electron2)\n    s=0\n    for q in range(-k,k+1):\n        A = np.sum(W*np.conj(Y(2,ma,TH,PH))*np.conj(Y(k,q,TH,PH))*Y(2,mc,TH,PH))\n        B = np.sum(W*np.conj(Y(2,mb,TH,PH))*Y(k,q,TH,PH)*Y(2,md,TH,PH))\n        s += A*B\n    return 4*np.pi/(2*k+1)*s\n# spin-orbitals: index (m, s), s=+1/2 -> 0, -1/2 -> 1 ; orbital index m+2\nso = [(m,s) for m in ms for s in (0,1)]\nN=len(so)\n# two-electron integrals per k (in units of F^k)\nV = {}\nfor k in (0,2,4):\n    Vk = np.zeros((N,N,N,N),complex)\n    for a,(ma,sa) in enumerate(so):\n        for b,(mb,sb) in enumerate(so):\n            for c,(mc,sc) in enumerate(so):\n                for d,(md,sd) in enumerate(so):\n                    if sa!=sc or sb!=sd: continue\n                    Vk[a,b,c,d]=ang(k,ma,mc,mb,md)\n    V[k]=Vk\n# Slater-Condon: H_ee = 1/2 sum V_abcd c^+_a c^+_b c_d c_c  with V_abcd = sum_k F^k * ang_k(a,c;b,d) (electron1 a<-c, electron2 b<-d)\n# Racah-type: F0 irrelevant (constant for fixed N). Use F2,F4 with F4 = ratio\ndef build(F2,F4):\n    Vt = F2*V[2]+F4*V[4]\n    dets = list(itertools.combinations(range(N),4))\n    idx = {d:i for i,d in enumerate(dets)}\n    return dets, idx, Vt\ndef apply_ee(det, Vt):\n    out={}\n    occ=list(det)\n    for c in occ:\n        for d in occ:\n            pass\n    return out\ndef ee_matrix(F2,F4):\n    dets,idx,Vt = build(F2,F4)\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,dj in enumerate(dets):\n        for a in range(N):\n            for b in range(N):\n                for c in range(N):\n                    for d in range(N):\n                        v=Vt[a,b,c,d]\n                        if abs(v)<1e-12: continue\n                        # operator 1/2 V_abcd a+_a a+_b a_d a_c   (a,b create; c,d annihilate)\n                        # apply a_c then a_d then a+_b then a+_a\n                        st=list(dj); sign=1\n                        def ann(st,x,sign):\n                            if x not in st: return None,0\n                            p=st.index(x); s=(-1)**p\n                            st=st[:p]+st[p+1:]; return st,sign*s\n                        st2,s2=ann(st,c,sign)\n                        if st2 is None: continue\n                        st3,s3=ann(st2,d,s2)\n                        if st3 is None: continue\n                        # create b then a\n                        if b in st3: continue\n                        p=sum(1 for x in st3 if x<b); st4=sorted(st3+[b]); s4=s3*(-1)**p\n                        if a in st4: continue\n                        p=sum(1 for x in st4 if x<a); st5=tuple(sorted(st4+[a])); s5=s4*(-1)**p\n                        if st5 in idx:\n                            M[idx[st5],j]+=0.5*v*s5\n    return M,dets\nEOF\ncd /tmp && python3 -c \"\nimport d4\nprint(d4.N)\n\"\n",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "a1f87da78a13b44550ead5930956cdde9e4fea3ea8e5f0791be99d6b1b729bd3",
+     "lines": 78,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.optimize import least_squares\nfrom scipy.integrate import dblquad\n# Angular quadrature (Gauss-Legendre x uniform phi)\nnt, nphi = 40, 80\nxg, wg = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(xg); ph = np.arange(nphi)*2*np.pi/nphi; wph = 2*np.pi/nphi\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = (wg[:,None]*wph*np.ones_like(TH))\nms = [-2,-1,0,1,2]\ndef Y(l,m,t,p): return sph_harm(m,l,p,t)   # scipy: sph_harm(m,n,azimuth,polar)\n# angular coefficient a_k(ma,mc;mb,md) = sum_q <Y_la^* Y_kq^* Y_lc>... compute via integrals\ndef ang(k, ma, mc, mb, md):\n    # integral of conj(Y_ma(1)) * conj(Y_mb(2)) * (4pi/(2k+1)) sum_q Y_kq(1)^* Y_kq(2)... general: \n    # V_{ab,cd} = sum_k F^k * 4pi/(2k+1) * sum_q <a|Y_kq*|c> <b|Y_kq|d>  (a,c on electron1; b,d on electron2)\n    s=0\n    for q in range(-k,k+1):\n        A = np.sum(W*np.conj(Y(2,ma,TH,PH))*np.conj(Y(k,q,TH,PH))*Y(2,mc,TH,PH))\n        B = np.sum(W*np.conj(Y(2,mb,TH,PH))*Y(k,q,TH,PH)*Y(2,md,TH,PH))\n        s += A*B\n    return 4*np.pi/(2*k+1)*s\n# spin-orbitals: index (m, s), s=+1/2 -> 0, -1/2 -> 1 ; orbital index m+2\nso = [(m,s) for m in ms for s in (0,1)]\nN=len(so)\n# two-electron integrals per k (in units of F^k)\nV = {}\nfor k in (0,2,4):\n    Vk = np.zeros((N,N,N,N),complex)\n    for a,(ma,sa) in enumerate(so):\n        for b,(mb,sb) in enumerate(so):\n            for c,(mc,sc) in enumerate(so):\n                for d,(md,sd) in enumerate(so):\n                    if sa!=sc or sb!=sd: continue\n                    Vk[a,b,c,d]=ang(k,ma,mc,mb,md)\n    V[k]=Vk\n# Slater-Condon: H_ee = 1/2 sum V_abcd c^+_a c^+_b c_d c_c  with V_abcd = sum_k F^k * ang_k(a,c;b,d) (electron1 a<-c, electron2 b<-d)\n# Racah-type: F0 irrelevant (constant for fixed N). Use F2,F4 with F4 = ratio\ndef build(F2,F4):\n    Vt = F2*V[2]+F4*V[4]\n    dets = list(itertools.combinations(range(N),4))\n    idx = {d:i for i,d in enumerate(dets)}\n    return dets, idx, Vt\ndef apply_ee(det, Vt):\n    out={}\n    occ=list(det)\n    for c in occ:\n        for d in occ:\n            pass\n    return out\ndef ee_matrix(F2,F4):\n    dets,idx,Vt = build(F2,F4)\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,dj in enumerate(dets):\n        for a in range(N):\n            for b in range(N):\n                for c in range(N):\n                    for d in range(N):\n                        v=Vt[a,b,c,d]\n                        if abs(v)<1e-12: continue\n                        # operator 1/2 V_abcd a+_a a+_b a_d a_c   (a,b create; c,d annihilate)\n                        # apply a_c then a_d then a+_b then a+_a\n                        st=list(dj); sign=1\n                        def ann(st,x,sign):\n                            if x not in st: return None,0\n                            p=st.index(x); s=(-1)**p\n                            st=st[:p]+st[p+1:]; return st,sign*s\n                        st2,s2=ann(st,c,sign)\n                        if st2 is None: continue\n                        st3,s3=ann(st2,d,s2)\n                        if st3 is None: continue\n                        # create b then a\n                        if b in st3: continue\n                        p=sum(1 for x in st3 if x<b); st4=sorted(st3+[b]); s4=s3*(-1)**p\n                        if a in st4: continue\n                        p=sum(1 for x in st4 if x<a); st5=tuple(sorted(st4+[a])); s5=s4*(-1)**p\n                        if st5 in idx:\n                            M[idx[st5],j]+=0.5*v*s5\n    return M,dets\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 87: /tmp/d4.py: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    import d4\nModuleNotFoundError: No module named 'd4'",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d4.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "Vk = np.zeros((N,N,N,N),complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "\nmkdir -p ~/w && cd ~/w && cat << 'EOF' > run.py\nimport numpy as np, itertools\nexec(open('/dev/stdin').read()) if False else None\nEOF\ncat << 'EOF' > d4lib.py\nimport numpy as np, itertools\nfrom scipy.special import sph_harm\nnt, nphi = 40, 80\nxg, wg = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(xg); ph = np.arange(nphi)*2*np.pi/nphi; wph = 2*np.pi/nphi\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = (wg[:,None]*wph*np.ones_like(TH))\nms=[-2,-1,0,1,2]\ndef Y(l,m): return sph_harm(m,l,PH,TH)\ndef ang(k,ma,mc,mb,md):\n    s=0\n    for q in range(-k,k+1):\n        A=np.sum(W*np.conj(Y(2,ma))*np.conj(Y(k,q))*Y(2,mc))\n        B=np.sum(W*np.conj(Y(2,mb))*Y(k,q)*Y(2,md))\n        s+=A*B\n    return 4*np.pi/(2*k+1)*s\nso=[(m,s) for m in ms for s in (0,1)]\nN=len(so)\nV={}\nfor k in (2,4):\n    Vk=np.zeros((N,N,N,N),complex)\n    for a,(ma,sa) in enumerate(so):\n        for c,(mc,sc) in enumerate(so):\n            if sa!=sc: continue\n            for b,(mb,sb) in enumerate(so):\n                for d,(md,sd) in enumerate(so):\n                    if sb!=sd: continue\n                    Vk[a,b,c,d]=ang(k,ma,mc,mb,md)\n    V[k]=Vk\ndets=list(itertools.combinations(range(N),4)); idx={d:i for i,d in enumerate(dets)}\ndef ann(st,x):\n    if x not in st: return None,0\n    p=st.index(x); return st[:p]+st[p+1:], (-1)**p\ndef cre(st,x):\n    if x in st: return None,0\n    p=sum(1 for y in st if y<x); return tuple(sorted(st+(x,))), (-1)**p\ndef ee_ops(F2,F4):\n    Vt=F2*V[2]+F4*V[4]\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,dj in enumerate(dets):\n        for c in range(N):\n            for d in range(N):\n                for b in range(N):\n                    for a in range(N):\n                        v=Vt[a,b,c,d]\n                        if abs(v)<1e-12: continue\n                        st,s1=ann(dj,c)\n                        if st is None: continue\n                        st,s2=ann(st,d)\n                        if st is None: continue\n                        st,s3=cre(st,b)\n                        if st is None: continue\n                        st,s4=cre(st,a)\n                        if st is None: continue\n                        M[idx[st],j]+=0.5*v*s1*s2*s3*s4\n    return M\n# one-electron: real d orbitals in complex basis\ndef cvec(l=2):\n    c={}\n    c['z2']={0:1}\n    c['x2y2']={2:1/np.sqrt(2),-2:1/np.sqrt(2)}\n    c['xy']={-2:1/np.sqrt(2)*(-1j)*-1 ,2:-1/np.sqrt(2)*(-1j)*-1}  # placeholder replaced below\n    return c\ndef orbvecs():\n    vec={}\n    v=np.zeros(5,complex); v[2]=1; vec['z2']=v\n    v=np.zeros(5,complex); v[0]=1/np.sqrt(2); v[4]=1/np.sqrt(2); vec['x2y2']=v\n    v=np.zeros(5,complex); v[0]=-1j/np.sqrt(2); v[4]=1j/np.sqrt(2); vec['xy']=v\n    v=np.zeros(5,complex); v[1]=-1/np.sqrt(2); v[3]=1/np.sqrt(2); vec['xz']=v\n    v=np.zeros(5,complex); v[1]=-1j/np.sqrt(2); v[3]=-1j/np.sqrt(2); vec['yz']=v\n    return vec\ndef cf_matrix(Dq):\n    vec=orbvecs(); E={'z2':6*Dq,'x2y2':6*Dq,'xy':-4*Dq,'xz':-4*Dq,'yz':-4*Dq}\n    h=np.zeros((5,5),complex)\n    for k,v in vec.items():\n        h+=E[k]*np.outer(v,v.conj())\n    H=np.zeros((N,N),complex)\n    for a,(ma,sa) in enumerate(so):\n        for b,(mb,sb) in enumerate(so):\n            if sa==sb: H[a,b]=h[ma+2,mb+2]\n    return H\ndef oneel(H1):\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,dj in enumerate(dets):\n        for b in range(N):\n            for a in range(N):\n                if abs(H1[a,b])<1e-14: continue\n                st,s1=ann(dj,b)\n                if st is None: continue\n                st,s2=cre(st,a)\n                if st is None: continue\n                M[idx[st],j]+=H1[a,b]*s1*s2\n    return M\nEOF\npython3 -c \"\nimport sys; sys.path.insert(0,'.')\nimport d4lib as L, numpy as np\nprint('built')\n\" ; ls",
+   "scripts": [
+    {
+     "name": "run.py",
+     "sha256": "af964f42eebc51b4aae0e75d38b1a85df122d2d34297674871e378650a45bba8",
+     "lines": 2,
+     "code": "import numpy as np, itertools\nexec(open('/dev/stdin').read()) if False else None\n"
+    },
+    {
+     "name": "d4lib.py",
+     "sha256": "d90b0749eea93fd24c71dc34139354e17382374afd1ece6161a6eb25951fd9a8",
+     "lines": 92,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm\nnt, nphi = 40, 80\nxg, wg = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(xg); ph = np.arange(nphi)*2*np.pi/nphi; wph = 2*np.pi/nphi\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = (wg[:,None]*wph*np.ones_like(TH))\nms=[-2,-1,0,1,2]\ndef Y(l,m): return sph_harm(m,l,PH,TH)\ndef ang(k,ma,mc,mb,md):\n    s=0\n    for q in range(-k,k+1):\n        A=np.sum(W*np.conj(Y(2,ma))*np.conj(Y(k,q))*Y(2,mc))\n        B=np.sum(W*np.conj(Y(2,mb))*Y(k,q)*Y(2,md))\n        s+=A*B\n    return 4*np.pi/(2*k+1)*s\nso=[(m,s) for m in ms for s in (0,1)]\nN=len(so)\nV={}\nfor k in (2,4):\n    Vk=np.zeros((N,N,N,N),complex)\n    for a,(ma,sa) in enumerate(so):\n        for c,(mc,sc) in enumerate(so):\n            if sa!=sc: continue\n            for b,(mb,sb) in enumerate(so):\n                for d,(md,sd) in enumerate(so):\n                    if sb!=sd: continue\n                    Vk[a,b,c,d]=ang(k,ma,mc,mb,md)\n    V[k]=Vk\ndets=list(itertools.combinations(range(N),4)); idx={d:i for i,d in enumerate(dets)}\ndef ann(st,x):\n    if x not in st: return None,0\n    p=st.index(x); return st[:p]+st[p+1:], (-1)**p\ndef cre(st,x):\n    if x in st: return None,0\n    p=sum(1 for y in st if y<x); return tuple(sorted(st+(x,))), (-1)**p\ndef ee_ops(F2,F4):\n    Vt=F2*V[2]+F4*V[4]\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,dj in enumerate(dets):\n        for c in range(N):\n            for d in range(N):\n                for b in range(N):\n                    for a in range(N):\n                        v=Vt[a,b,c,d]\n                        if abs(v)<1e-12: continue\n                        st,s1=ann(dj,c)\n                        if st is None: continue\n                        st,s2=ann(st,d)\n                        if st is None: continue\n                        st,s3=cre(st,b)\n                        if st is None: continue\n                        st,s4=cre(st,a)\n                        if st is None: continue\n                        M[idx[st],j]+=0.5*v*s1*s2*s3*s4\n    return M\n# one-electron: real d orbitals in complex basis\ndef cvec(l=2):\n    c={}\n    c['z2']={0:1}\n    c['x2y2']={2:1/np.sqrt(2),-2:1/np.sqrt(2)}\n    c['xy']={-2:1/np.sqrt(2)*(-1j)*-1 ,2:-1/np.sqrt(2)*(-1j)*-1}  # placeholder replaced below\n    return c\ndef orbvecs():\n    vec={}\n    v=np.zeros(5,complex); v[2]=1; vec['z2']=v\n    v=np.zeros(5,complex); v[0]=1/np.sqrt(2); v[4]=1/np.sqrt(2); vec['x2y2']=v\n    v=np.zeros(5,complex); v[0]=-1j/np.sqrt(2); v[4]=1j/np.sqrt(2); vec['xy']=v\n    v=np.zeros(5,complex); v[1]=-1/np.sqrt(2); v[3]=1/np.sqrt(2); vec['xz']=v\n    v=np.zeros(5,complex); v[1]=-1j/np.sqrt(2); v[3]=-1j/np.sqrt(2); vec['yz']=v\n    return vec\ndef cf_matrix(Dq):\n    vec=orbvecs(); E={'z2':6*Dq,'x2y2':6*Dq,'xy':-4*Dq,'xz':-4*Dq,'yz':-4*Dq}\n    h=np.zeros((5,5),complex)\n    for k,v in vec.items():\n        h+=E[k]*np.outer(v,v.conj())\n    H=np.zeros((N,N),complex)\n    for a,(ma,sa) in enumerate(so):\n        for b,(mb,sb) in enumerate(so):\n            if sa==sb: H[a,b]=h[ma+2,mb+2]\n    return H\ndef oneel(H1):\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,dj in enumerate(dets):\n        for b in range(N):\n            for a in range(N):\n                if abs(H1[a,b])<1e-14: continue\n                st,s1=ann(dj,b)\n                if st is None: continue\n                st,s2=cre(st,a)\n                if st is None: continue\n                M[idx[st],j]+=H1[a,b]*s1*s2\n    return M\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "mkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/w’: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 3, in <module>\n    import d4lib as L, numpy as np\n  File \"/tmp/tsbench-run-bifa9lgd/d4lib.py\", line 2, in <module>\n    from scipy.special import sph_harm\nImportError: cannot import name 'sph_harm' from 'scipy.special' (<B_VENV>/lib/python3.14/site-packages/scipy/special/__init__.py)\nd4lib.py\n__pycache__",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "d4lib.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "Vk=np.zeros((N,N,N,N),complex)"
+    },
+    {
+     "script": "d4lib.py",
+     "line": 73,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d4lib.py",
+     "line": 76,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N),complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-bifa9lgd && sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y/; s/def Y(l,m): return sph_harm(m,l,PH,TH)/def Y(l,m): return sph_harm_y(l,m,TH,PH)/' d4lib.py && cat << 'EOF' > fit.py\nimport numpy as np, d4lib as L\nfrom scipy.optimize import least_squares\nM_ee_cache={}\nF2_EE=None\ndef ee(F2,F4): return L.ee_ops(F2,F4)\n# precompute ee for unit F2 and unit F4 (linear)\nE2=L.ee_ops(1.0,0.0); E4=L.ee_ops(0.0,1.0)\ndef spectrum(Dq,B,C=None,ratio=4.7):\n    C=ratio*B\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    H=F2*E2+F4*E4+L.oneel(L.cf_matrix(Dq))\n    H=(H+H.conj().T)/2\n    w,v=np.linalg.eigh(H)\n    # total spin S from S^2 operator: use Sz-resolved count: number of unpaired electrons via spin ladder\n    return w,v\n# Spin of each determinant: total Sz=0 for 4 electrons? need S=1 states: Sz=1 subspace (2 up-spin extra)\n# Build S^2 in determinant basis\ndef S2op():\n    import itertools\n    Sz=np.zeros((len(L.dets),)*2)\n    Sp=np.zeros((len(L.dets),)*2,complex)\n    Sp_m=np.zeros((len(L.dets),)*2,complex)\n    for j,dj in enumerate(L.dets):\n        for m in range(5):\n            up=m*2; dn=m*2+1\n            # S+ = sum c+_up c_dn\n            if dn in dj and up not in dj:\n                st,s1=L.ann(dj,dn); st,s2=L.cre(st,up)\n                Sp[L.idx[st],j]+=s1*s2\n    Sm=Sp.conj().T\n    Sz_=np.zeros(len(L.dets))\n    for j,dj in enumerate(L.dets):\n        Sz_[j]=sum(0.5 if (x%2==0) else -0.5 for x in dj)\n    S2=Sm@Sp+np.diag(Sz_)**2+ (Sp*0)\n    S2=Sm@Sp+np.diag(Sz_*(Sz_))+np.diag(Sz_)\n    return S2\nS2=S2op()\ndef states(Dq,B):\n    H=L.oneel(L.cf_matrix(Dq))\n    C=4.7*B; F4=441*C/35; F2=(441*B+5*F4)/9\n    H=H+F2*E2+F4*E4\n    H=(H+H.conj().T)/2\n    # diagonalize in S^2 blocks: project\n    w,v=np.linalg.eigh(H+100*S2)  # shift S2 penalty to separate spins\n    out=[]\n    for i in range(len(w)):\n        s2=np.real(v[:,i].conj()@S2@v[:,i])\n        out.append((w[i],s2))\n    return out\nif __name__=='__main__':\n    res=states(2000,800)\n    for e,s2 in sorted(res)[:20]:\n        print(round(e,1), round(s2,3))\nEOF\npython3 fit.py",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "a2ac147e669408364c636a3f4c3f5a9444bd70e5235ba6e46cd7d1ee8d9e90de",
+     "lines": 53,
+     "code": "import numpy as np, d4lib as L\nfrom scipy.optimize import least_squares\nM_ee_cache={}\nF2_EE=None\ndef ee(F2,F4): return L.ee_ops(F2,F4)\n# precompute ee for unit F2 and unit F4 (linear)\nE2=L.ee_ops(1.0,0.0); E4=L.ee_ops(0.0,1.0)\ndef spectrum(Dq,B,C=None,ratio=4.7):\n    C=ratio*B\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    H=F2*E2+F4*E4+L.oneel(L.cf_matrix(Dq))\n    H=(H+H.conj().T)/2\n    w,v=np.linalg.eigh(H)\n    # total spin S from S^2 operator: use Sz-resolved count: number of unpaired electrons via spin ladder\n    return w,v\n# Spin of each determinant: total Sz=0 for 4 electrons? need S=1 states: Sz=1 subspace (2 up-spin extra)\n# Build S^2 in determinant basis\ndef S2op():\n    import itertools\n    Sz=np.zeros((len(L.dets),)*2)\n    Sp=np.zeros((len(L.dets),)*2,complex)\n    Sp_m=np.zeros((len(L.dets),)*2,complex)\n    for j,dj in enumerate(L.dets):\n        for m in range(5):\n            up=m*2; dn=m*2+1\n            # S+ = sum c+_up c_dn\n            if dn in dj and up not in dj:\n                st,s1=L.ann(dj,dn); st,s2=L.cre(st,up)\n                Sp[L.idx[st],j]+=s1*s2\n    Sm=Sp.conj().T\n    Sz_=np.zeros(len(L.dets))\n    for j,dj in enumerate(L.dets):\n        Sz_[j]=sum(0.5 if (x%2==0) else -0.5 for x in dj)\n    S2=Sm@Sp+np.diag(Sz_)**2+ (Sp*0)\n    S2=Sm@Sp+np.diag(Sz_*(Sz_))+np.diag(Sz_)\n    return S2\nS2=S2op()\ndef states(Dq,B):\n    H=L.oneel(L.cf_matrix(Dq))\n    C=4.7*B; F4=441*C/35; F2=(441*B+5*F4)/9\n    H=H+F2*E2+F4*E4\n    H=(H+H.conj().T)/2\n    # diagonalize in S^2 blocks: project\n    w,v=np.linalg.eigh(H+100*S2)  # shift S2 penalty to separate spins\n    out=[]\n    for i in range(len(w)):\n        s2=np.real(v[:,i].conj()@S2@v[:,i])\n        out.append((w[i],s2))\n    return out\nif __name__=='__main__':\n    res=states(2000,800)\n    for e,s2 in sorted(res)[:20]:\n        print(round(e,1), round(s2,3))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "-59784.0 6.0\n-59784.0 6.0\n-59784.0 6.0\n-59784.0 6.0\n-59784.0 6.0\n-59784.0 6.0\n-59784.0 6.0\n-59784.0 6.0\n-59784.0 6.0\n-59784.0 6.0\n-58056.7 2.0\n-58056.7 2.0\n-58056.7 2.0\n-58056.7 2.0\n-58056.7 2.0\n-58056.7 2.0\n-58056.7 2.0\n-58056.7 2.0\n-58056.7 2.0\n-47937.1 -0.0",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit.py",
+     "line": 13,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H)"
+    },
+    {
+     "script": "fit.py",
+     "line": 44,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H+100*S2)  # shift S2 penalty to separate spins"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-bifa9lgd && cat << 'EOF' > run2.py\nimport numpy as np, fit as Fm, d4lib as L\nfrom scipy.optimize import least_squares\nS2=Fm.S2\nws,vs=np.linalg.eigh(S2)\ndef block(S):\n    P=vs[:, np.abs(ws-S*(S+1))<1e-6]\n    return P\nPtrip=block(1); Pq=block(2); Psing=block(0)\nprint(Ptrip.shape,Pq.shape,Psing.shape)\ndef levels(Dq,B):\n    H=L.oneel(L.cf_matrix(Dq))\n    C=4.7*B; F4=441*C/35; F2=(441*B+5*F4)/9\n    H=H+F2*Fm.E2+F4*Fm.E4\n    H=(H+H.conj().T)/2\n    Ht=Ptrip.conj().T@H@Ptrip\n    w=np.linalg.eigvalsh(Ht)\n    return np.sort(w.real)\n# ground for B=800, Dq=2000\nw=levels(2000,800)\nprint(np.round(w-w[0],1))\nEOF\npython3 run2.py",
+   "scripts": [
+    {
+     "name": "run2.py",
+     "sha256": "ce8c0ff0fd9a448a7966800f4dc45434711cc1124f4fee9977c8bc981046370b",
+     "lines": 20,
+     "code": "import numpy as np, fit as Fm, d4lib as L\nfrom scipy.optimize import least_squares\nS2=Fm.S2\nws,vs=np.linalg.eigh(S2)\ndef block(S):\n    P=vs[:, np.abs(ws-S*(S+1))<1e-6]\n    return P\nPtrip=block(1); Pq=block(2); Psing=block(0)\nprint(Ptrip.shape,Pq.shape,Psing.shape)\ndef levels(Dq,B):\n    H=L.oneel(L.cf_matrix(Dq))\n    C=4.7*B; F4=441*C/35; F2=(441*B+5*F4)/9\n    H=H+F2*Fm.E2+F4*Fm.E4\n    H=(H+H.conj().T)/2\n    Ht=Ptrip.conj().T@H@Ptrip\n    w=np.linalg.eigvalsh(Ht)\n    return np.sort(w.real)\n# ground for B=800, Dq=2000\nw=levels(2000,800)\nprint(np.round(w-w[0],1))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run2.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(210, 135) (210, 25) (210, 50)\n[    0.      0.      0.      0.      0.      0.      0.      0.      0.\n 16931.6 16931.6 16931.6 16931.6 16931.6 16931.6 17937.8 17937.8 17937.8\n 17937.8 17937.8 17937.8 17937.8 17937.8 17937.8 18796.4 18796.4 18796.4\n 18796.4 18796.4 18796.4 18796.4 18796.4 18796.4 20112.7 20112.7 20112.7\n 20917.3 20917.3 20917.3 23497.9 23497.9 23497.9 23497.9 23497.9 23497.9\n 31256.4 31256.4 31256.4 31256.4 31256.4 31256.4 31256.4 31256.4 31256.4\n 33108.  33108.  33108.  33108.  33108.  33108.  33108.  33108.  33108.\n 37351.7 37351.7 37351.7 37351.7 37351.7 37351.7 37351.7 37351.7 37351.7\n 38808.1 38808.1 38808.1 38808.1 38808.1 38808.1 38808.1 38808.1 38808.1\n 41508.5 41508.5 41508.5 41508.5 41508.5 41508.5 42857.5 42857.5 42857.5\n 42857.5 42857.5 42857.5 42857.5 42857.5 42857.5 46109.1 46109.1 46109.1\n 46109.1 46109.1 46109.1 46109.1 46109.1 46109.1 58437.2 58437.2 58437.2\n 58437.2 58437.2 58437.2 58437.2 58437.2 58437.2 61788.  61788.  61788.\n 66656.3 66656.3 66656.3 66656.3 66656.3 66656.3 66656.3 66656.3 66656.3\n 71073.2 71073.2 71073.2 71073.2 71073.2 71073.2 71073.2 71073.2 71073.2]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "run2.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "run2.py",
+     "line": 4,
+     "method": "eigen_solver",
+     "text": "ws,vs=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "run2.py",
+     "line": 16,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(Ht)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-bifa9lgd && cat << 'EOF' > run3.py\nimport numpy as np, itertools\nfrom run2 import levels\nfrom scipy.optimize import least_squares\nobs=np.array([18850,19750,20560.])\ndef distinct(w):\n    out=[]\n    for x in w:\n        if x<1e-6: continue\n        if not out or abs(x-out[-1][0])>1: out.append([x,1])\n        else: out[-1][1]+=1\n    return out\ndef tr(Dq,B):\n    w=levels(Dq,B); return distinct(w-w[0])\n# levels in terms of dimension: compute on grid to find linear behavior; just fit directly\nbest=[]\nfor combo in itertools.combinations(range(6),3):\n    def res(p):\n        Dq,B=p\n        d=tr(Dq,B)\n        return np.array([d[i][0] for i in combo])-obs\n    try:\n        r=least_squares(res,[1500,800],bounds=([300,300],[4000,1500]))\n        best.append((np.sum(r.fun**2),combo,r.x))\n    except Exception as e: pass\nbest.sort(key=lambda t:t[0])\nfor b in best[:5]: print(b)\nEOF\ntimeout 600 python3 run3.py 2>&1 | tail -8",
+   "scripts": [
+    {
+     "name": "run3.py",
+     "sha256": "a62004d58f6ecb624b349ae947e9998ae3227dbcd53e0cc65b2a379cc433f081",
+     "lines": 26,
+     "code": "import numpy as np, itertools\nfrom run2 import levels\nfrom scipy.optimize import least_squares\nobs=np.array([18850,19750,20560.])\ndef distinct(w):\n    out=[]\n    for x in w:\n        if x<1e-6: continue\n        if not out or abs(x-out[-1][0])>1: out.append([x,1])\n        else: out[-1][1]+=1\n    return out\ndef tr(Dq,B):\n    w=levels(Dq,B); return distinct(w-w[0])\n# levels in terms of dimension: compute on grid to find linear behavior; just fit directly\nbest=[]\nfor combo in itertools.combinations(range(6),3):\n    def res(p):\n        Dq,B=p\n        d=tr(Dq,B)\n        return np.array([d[i][0] for i in combo])-obs\n    try:\n        r=least_squares(res,[1500,800],bounds=([300,300],[4000,1500]))\n        best.append((np.sum(r.fun**2),combo,r.x))\n    except Exception as e: pass\nbest.sort(key=lambda t:t[0])\nfor b in best[:5]: print(b)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run3.py",
+     "written_in_step": 4
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": " 58437.2 58437.2 58437.2 58437.2 58437.2 58437.2 61788.  61788.  61788.\n 66656.3 66656.3 66656.3 66656.3 66656.3 66656.3 66656.3 66656.3 66656.3\n 71073.2 71073.2 71073.2 71073.2 71073.2 71073.2 71073.2 71073.2 71073.2]\n(np.float64(3.6198298294433076), (0, 1, 2), array([2176.08832027,  725.22255588]))\n(np.float64(847.9858113702276), (2, 3, 4), array([1985.94397684,  568.65940666]))\n(np.float64(1178.9182734952067), (1, 3, 4), array([2001.70598158,  349.91895118]))\n(np.float64(10759.551067709537), (3, 4, 5), array([1914.06084718,  365.98711556]))\n(np.float64(17106.15746836369), (0, 2, 3), array([2072.85609309,  435.56650236]))",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "run3.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "run3.py",
+     "line": 22,
+     "method": "least_squares",
+     "text": "r=least_squares(res,[1500,800],bounds=([300,300],[4000,1500]))"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 2176.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "B",
+   "value": 725.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "C",
+   "value": 3408.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 5,
+  "n_scripts": 6,
+  "n_failed_steps": 1,
+  "n_values": 3,
+  "n_linked": 2,
+  "n_weak": 0,
+  "source_steps": [
+   4
+  ],
+  "methods": [
+   "least_squares",
+   "eigen_solver"
+  ],
+  "edits_in_place": true
+ }
+}

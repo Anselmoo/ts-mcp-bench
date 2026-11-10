@@ -1,0 +1,1 @@
+cd ~ && pwd && touch test_w && echo ok; df -h /tmp | tail -1

@@ -1,0 +1,1 @@
+cd /tmp/tsbench-home-xehwqch9 2>/dev/null; python3 -c "print('py ok')"; echo test > /tmp/tsbench-home-xehwqch9/t.txt && echo writable || echo notwritable

@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch ~/x 2>&1 && echo homeok; python3 -c "print(1)"

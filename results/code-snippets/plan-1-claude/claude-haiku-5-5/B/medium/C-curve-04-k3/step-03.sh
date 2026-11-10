@@ -1,0 +1,1 @@
+pwd; echo $HOME; for d in . $HOME /var/tmp /dev/shm; do touch $d/x_test 2>/dev/null && echo "writable $d" && rm $d/x_test; done

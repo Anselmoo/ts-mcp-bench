@@ -1,0 +1,1 @@
+cd ~ && touch x && echo ok; echo $TMPDIR; pwd

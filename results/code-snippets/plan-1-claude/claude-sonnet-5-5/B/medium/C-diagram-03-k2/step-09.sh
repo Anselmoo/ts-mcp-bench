@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-l39pr0fd; sed -i 's/xe=x if x>0 else 1e-3/xe=x if x>0 else 0.02/; s/        e=np.trace(P.T@H0@P)\/deg/        e=np.trace(P.T@H0@P)\/deg\n        if x==0: e=ex[np.argmin(abs(ex-e))]/; s/    w,v=np.linalg.eigh(Hx(xe)); H0=Hx(x)/    w,v=np.linalg.eigh(Hx(xe)); H0=Hx(x); ex=np.linalg.eigvalsh(H0)/' run2.py; python3 run2.py

@@ -1,0 +1,1 @@
+which python3; python3 -c "import numpy"; ls /usr/bin | grep -i pip; python3 -m pip --version

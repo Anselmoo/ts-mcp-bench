@@ -1,0 +1,1 @@
+sed -i 's/^nrm = .*/nrm = [np.sqrt(np.sum(fun[i](X,Y,Z)**2*W)) for i in range(5)]/' sym.py && sed -i 's/D\[i,j\]=np.sum(orbs\[i\]\[1\]\*fj\*W)\/nrm\[j\]\/nrm\[i\]\*1.0/D[i,j]=np.sum(orbs[i][1]*fj*W)\/nrm[j]/' sym.py && python3 -B sym.py 960 4300 810

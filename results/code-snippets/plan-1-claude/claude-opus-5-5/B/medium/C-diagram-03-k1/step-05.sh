@@ -1,0 +1,1 @@
+history | tail -0; cat > /dev/null; echo

@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch ~/x 2>&1 && echo home_ok; python3 -c "import sys;print(sys.version)"

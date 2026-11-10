@@ -1,0 +1,1 @@
+mkdir -p /tmp/tsbench-home-xehwqch9/w && cd /tmp/tsbench-home-xehwqch9/w && python3 -c "import numpy, scipy; print(numpy.__version__, scipy.__version__)"

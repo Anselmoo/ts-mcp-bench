@@ -1,0 +1,1 @@
+echo 'Solving for Dq, B, and C in octahedral d² system using given absorption bands: 17500, 25000, 9748 cm⁻1.'

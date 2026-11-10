@@ -1,0 +1,1 @@
+ls -ld /tmp /dev/shm $TMPDIR 2>&1; touch /tmp/x 2>&1; python3 -c "print(1)"

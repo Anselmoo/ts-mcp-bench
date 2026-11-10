@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> 2>/dev/null && touch t && echo ok1; cd /tmp && touch t2 && echo ok2; ls -ld /tmp <SANDBOX_TMP>

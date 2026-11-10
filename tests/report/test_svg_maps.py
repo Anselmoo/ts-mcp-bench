@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 
 from svg_helpers import classes as _classes
@@ -165,3 +166,12 @@ def test_the_seven_report_error_kinds_get_seven_classes_in_the_cost_map() -> Non
     classes = maps._category_classes(cats)
     assert len(set(classes.values())) == 8
     assert classes["other"] != classes["gross"]
+
+
+def test_a_map_takes_the_height_it_is_given():
+    runs = [{"cond": "A", "class": "x", "task": "t", "value": 1.0, "outcome": "correct"}]
+    tall = run_map(runs, [("correct", "correct")], "USD")
+    low = run_map(runs, [("correct", "correct")], "USD", height=200.0)
+    assert '<rect class="tile ok"' in low
+    tile = r'class="tile ok"[^>]* height="([0-9.]+)"'
+    assert float(re.search(tile, tall).group(1)) > 400 > 200 > float(re.search(tile, low).group(1))  # type: ignore[union-attr]

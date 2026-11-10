@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch ~/x_test && echo homeok; python3 -c "import numpy, scipy; print('ok')"

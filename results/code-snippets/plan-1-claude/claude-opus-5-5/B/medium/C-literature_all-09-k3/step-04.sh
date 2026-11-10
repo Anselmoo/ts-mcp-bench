@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>/tmp.wzseEn6RP2; sed -i 's/\*5\*gaunt/*gaunt/' d5.py; python3 d5.py 2>&1 | grep -v Warn

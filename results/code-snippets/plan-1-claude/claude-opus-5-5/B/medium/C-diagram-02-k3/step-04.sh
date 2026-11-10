@@ -1,0 +1,1 @@
+ls <HOME>/.cache/tsbench/; which -a python3 python; ls /usr/bin/python*; for p in /usr/bin/python3*; do $p -c "import numpy,matplotlib;print('$p ok')"; done 2>&1

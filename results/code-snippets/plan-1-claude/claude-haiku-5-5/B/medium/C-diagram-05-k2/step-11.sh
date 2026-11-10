@@ -1,0 +1,1 @@
+sed -i 's|            for _ in range(int(round(mlt))): out.append((Eav,S,g))|            for _ in range(int(round(mlt/(2*S+1)))): out.append((Eav,S,g))|' ts.py && <B_VENV>/bin/python3 ts.py

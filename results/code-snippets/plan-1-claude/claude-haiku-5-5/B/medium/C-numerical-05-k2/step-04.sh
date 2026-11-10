@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch ./t 2>&1 && echo writable; cd /tmp/tsbench-run-fvie5mem 2>/dev/null && pwd && ls

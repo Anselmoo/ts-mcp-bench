@@ -1,0 +1,1 @@
+cd /tmp/tsbench-home-xehwqch9 && echo ok > t.txt && cat t.txt && python3 -c "import numpy, scipy; print(numpy.__version__, scipy.__version__)"

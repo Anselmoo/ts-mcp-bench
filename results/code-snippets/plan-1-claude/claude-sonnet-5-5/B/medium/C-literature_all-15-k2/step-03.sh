@@ -1,0 +1,1 @@
+touch <SANDBOX_TMP>/x && echo ok; touch /dev/shm/x && echo ok2; python3 -c "import sympy,scipy;print(1)"

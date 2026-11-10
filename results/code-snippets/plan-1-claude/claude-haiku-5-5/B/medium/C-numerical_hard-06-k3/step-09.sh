@@ -1,0 +1,1 @@
+touch t.txt && echo writable; pwd

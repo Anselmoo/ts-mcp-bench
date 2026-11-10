@@ -1,0 +1,412 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-literature_all-10-k2.jsonl",
+ "transcript_sha256": "0c3cd49d01dd0f1bb8ddacf512a73d5a4246c4da6f2b1f7aa1cc8911d680f775",
+ "answer": {
+  "Dq": 1816.0,
+  "B": 519.0,
+  "C": 2336.0,
+  "out_of_scope": false,
+  "reason": "Full d6 Tanabe-Sugano-type diagonalization with C/B=4.5, fitted to the 1T1g and 1T2g band positions, gives Dq ≈ 1816 cm^-1 and B ≈ 519 cm^-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy and sympy availability",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy|sympy\" ; python3 -c \"import numpy, sympy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Write setup code for d-shell Hamiltonian",
+   "command": "mkdir -p /w && cat > /w/ligand.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\n\ndef build(nel, F2, F4, Dq, ks=(0,2,4)):\n    # complex d orbitals m=-2..2 index m+2\n    ms=[-2,-1,0,1,2]\n    Fk={0:0.0,2:F2,4:F4}\n    V=np.zeros((5,5,5,5))  # <ab|V|cd> spatial\n    for k in (2,4):\n        C=np.zeros((5,5,5))  # <a|C^k_q|c>, q index q+k\n        Ck={}\n        for q in range(-k,k+1):\n            M=np.zeros((5,5))\n            for ia,ma in enumerate(ms):\n                for ic,mc in enumerate(ms):\n                    if ma-mc!=q: continue  # Gaunt needs ma = mc + q? conj(Y_ma) Y_kq Y_mc -> -ma+q+mc=0\n                    g=float(gaunt(2,k,2,-ma,q,mc))*(-1)**ma\n                    M[ia,ic]=sqrt(4*pi/(2*k+1))*g\n            Ck[q]=M\n        for a in range(5):\n          for b in range(5):\n            for c in range(5):\n              for d in range(5):\n                s=0.0\n                for q in range(-k,k+1):\n                    s+=(-1)**q*Ck[q][a,c]*Ck[-q][b,d]\n                V[a,b,c,d]+=Fk[k]*s\n    # one-body crystal field in complex basis\n    h=np.zeros((5,5),dtype=complex)\n    eg=[np.array([1,0,0,0,0]), np.array([0,0,0,0,0.])]\n    v_eg=[np.eye(5)[2], (np.eye(5)[4]+np.eye(5)[0])/sqrt(2)]\n    v_t2g=[(np.eye(5)[4]-np.eye(5)[0])/(1j*sqrt(2)), (np.eye(5)[3]-np.eye(5)[1])/sqrt(2), (np.eye(5)[3]+np.eye(5)[1])/(1j*sqrt(2))]\n    for v in v_eg: h+=6*Dq*np.outer(v,v.conj())\n    for v in v_t2g: h+=-4*Dq*np.outer(v,v.conj())\n    # fermion space: 10 spin orbitals, index 2*orb+spin\n    n=10\n    dim=2**n\n    def cdag_c(i,j):\n        # c_i^dag c_j on Fock basis\n        M=np.zeros((dim,dim))\n        for s in range(dim):\n            if not (s>>j)&1: continue\n            sign=(-1)**bin(s & ((1<<j)-1)).count('1')\n            s1=s ^ (1<<j)\n            if (s1>>i)&1: continue\n            sign*=(-1)**bin(s1 & ((1<<i)-1)).count('1')\n            s2=s1 | (1<<i)\n            M[s2,s]+=sign\n        return M\n    return V,h,cdag_c,dim\nEOF\necho done",
+   "scripts": [
+    {
+     "name": "ligand.py",
+     "sha256": "4cf86581d4ec1e712db37eef8e90840c1cb3235d5bcf7dab3214de8a367aa188",
+     "lines": 51,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\n\ndef build(nel, F2, F4, Dq, ks=(0,2,4)):\n    # complex d orbitals m=-2..2 index m+2\n    ms=[-2,-1,0,1,2]\n    Fk={0:0.0,2:F2,4:F4}\n    V=np.zeros((5,5,5,5))  # <ab|V|cd> spatial\n    for k in (2,4):\n        C=np.zeros((5,5,5))  # <a|C^k_q|c>, q index q+k\n        Ck={}\n        for q in range(-k,k+1):\n            M=np.zeros((5,5))\n            for ia,ma in enumerate(ms):\n                for ic,mc in enumerate(ms):\n                    if ma-mc!=q: continue  # Gaunt needs ma = mc + q? conj(Y_ma) Y_kq Y_mc -> -ma+q+mc=0\n                    g=float(gaunt(2,k,2,-ma,q,mc))*(-1)**ma\n                    M[ia,ic]=sqrt(4*pi/(2*k+1))*g\n            Ck[q]=M\n        for a in range(5):\n          for b in range(5):\n            for c in range(5):\n              for d in range(5):\n                s=0.0\n                for q in range(-k,k+1):\n                    s+=(-1)**q*Ck[q][a,c]*Ck[-q][b,d]\n                V[a,b,c,d]+=Fk[k]*s\n    # one-body crystal field in complex basis\n    h=np.zeros((5,5),dtype=complex)\n    eg=[np.array([1,0,0,0,0]), np.array([0,0,0,0,0.])]\n    v_eg=[np.eye(5)[2], (np.eye(5)[4]+np.eye(5)[0])/sqrt(2)]\n    v_t2g=[(np.eye(5)[4]-np.eye(5)[0])/(1j*sqrt(2)), (np.eye(5)[3]-np.eye(5)[1])/sqrt(2), (np.eye(5)[3]+np.eye(5)[1])/(1j*sqrt(2))]\n    for v in v_eg: h+=6*Dq*np.outer(v,v.conj())\n    for v in v_t2g: h+=-4*Dq*np.outer(v,v.conj())\n    # fermion space: 10 spin orbitals, index 2*orb+spin\n    n=10\n    dim=2**n\n    def cdag_c(i,j):\n        # c_i^dag c_j on Fock basis\n        M=np.zeros((dim,dim))\n        for s in range(dim):\n            if not (s>>j)&1: continue\n            sign=(-1)**bin(s & ((1<<j)-1)).count('1')\n            s1=s ^ (1<<j)\n            if (s1>>i)&1: continue\n            sign*=(-1)**bin(s1 & ((1<<i)-1)).count('1')\n            s2=s1 | (1<<i)\n            M[s2,s]+=sign\n        return M\n    return V,h,cdag_c,dim\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "mkdir: cannot create directory ‘/w’: Read-only file system\ndone",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "ligand.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))  # <ab|V|cd> spatial"
+    },
+    {
+     "script": "ligand.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "C=np.zeros((5,5,5))  # <a|C^k_q|c>, q index q+k"
+    },
+    {
+     "script": "ligand.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "M[ia,ic]=sqrt(4*pi/(2*k+1))*g"
+    },
+    {
+     "script": "ligand.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "ligand.py",
+     "line": 41,
+     "method": "matrix",
+     "text": "M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 49,
+     "method": "matrix",
+     "text": "M[s2,s]+=sign"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Write d-shell many-electron Hamiltonian code in /tmp",
+   "command": "mkdir -p /tmp/w && cat > /tmp/w/ligand.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\n\nms=[-2,-1,0,1,2]\ndef tensors():\n    Fk={2:1.0,4:1.0}   # coefficients of F2,F4 separately\n    out={}\n    for k in (2,4):\n        Ck={}\n        for q in range(-k,k+1):\n            M=np.zeros((5,5))\n            for ia,ma in enumerate(ms):\n                for ic,mc in enumerate(ms):\n                    if ma-mc!=q: continue\n                    g=float(gaunt(2,k,2,-ma,q,mc))*(-1)**ma\n                    M[ia,ic]=sqrt(4*pi/(2*k+1))*g\n            Ck[q]=M\n        V=np.zeros((5,5,5,5))\n        for a,b,c,d in itertools.product(range(5),repeat=4):\n            s=0.0\n            for q in range(-k,k+1):\n                s+=(-1)**q*Ck[q][a,c]*Ck[-q][b,d]\n            V[a,b,c,d]=s\n        out[k]=V\n    return out\n\nT=tensors()\ndef cf_one_body(Dq):\n    h=np.zeros((5,5),dtype=complex)\n    I=np.eye(5)\n    v_eg=[I[2], (I[4]+I[0])/sqrt(2)]\n    v_t2g=[(I[4]-I[0])/(1j*sqrt(2)), (I[3]-I[1])/sqrt(2), (I[3]+I[1])/(1j*sqrt(2))]\n    for v in v_eg: h+=6*Dq*np.outer(v,v.conj())\n    for v in v_t2g: h+=-4*Dq*np.outer(v,v.conj())\n    return h\n\n# spin orbitals: index = 2*orb + spin (spin 0 up,1 down)\ndef det_basis(nel=6, nso=10):\n    return [sum(1<<i for i in c) for c in itertools.combinations(range(nso),nel)]\n\ndef apply_ops(state, ops):\n    # ops list of (type,i) applied right to left: ops[-1] acts first; type 'c' creation, 'a' annihilation\n    s=state; sign=1\n    for typ,i in reversed(ops):\n        if typ=='c':\n            if (s>>i)&1: return None,0\n            sign*=(-1)**bin(s & ((1<<i)-1)).count('1')\n            s|=(1<<i)\n        else:\n            if not (s>>i)&1: return None,0\n            sign*=(-1)**bin(s & ((1<<i)-1)).count('1')\n            s&=~(1<<i)\n    return s,sign\n\ndef hamiltonian(F2,F4,Dq,basis,h1):\n    idx={s:i for i,s in enumerate(basis)}\n    N=len(basis)\n    H=np.zeros((N,N))\n    # one-body: sum_{ij} h_ij c_i^dag c_j, h in spin-orbital basis\n    h=np.zeros((10,10))\n    for o1 in range(5):\n        for o2 in range(5):\n            for sp in range(2):\n                h[2*o1+sp,2*o2+sp]=h1[o1,o2].real\n    # two-body: 1/2 sum V_abcd c_a^dag c_b^dag c_d c_c, with V = F2*T2 + F4*T4\n    Vfull=F2*T[2]+F4*T[4]\n    for col,s in enumerate(basis):\n        for i in range(10):\n            for j in range(10):\n                if abs(h[i,j])<1e-14: continue\n                ns,sg=apply_ops(s,[('c',i),('a',j)])\n                if ns is None: continue\n                H[idx[ns],col]+=h[i,j]*sg\n        for o1,o2,o3,o4 in itertools.product(range(5),repeat=4):\n            v=Vfull[o1,o2,o3,o4]\n            if abs(v)<1e-12: continue\n            for s1 in range(2):\n              for s2 in range(2):\n                a=2*o1+s1; b=2*o2+s2; c=2*o3+s2; d=2*o4+s1\n                # sum over spins: <ab|V|cd> requires spin(a)=spin(c), spin(b)=spin(d)\n                pass\n            # spin-resolved: a=(o1,s1), b=(o2,s2), c=(o3,s1), d=(o4,s2)\n            for s1 in range(2):\n              for s2 in range(2):\n                a=2*o1+s1; b=2*o2+s2; c=2*o3+s1; d=2*o4+s2\n                ns,sg=apply_ops(s,[('c',a),('c',b),('a',d),('a',c)])\n                if ns is None: continue\n                H[idx[ns],col]+=0.5*v*sg\n    return H\n\ndef S2_matrix(basis):\n    # total S^2 = S_z^2 + (S+S- + S-S+)/2 ; compute via Sz and S+S-\n    idx={s:i for i,s in enumerate(basis)}\n    N=len(basis)\n    Sz=np.zeros(N); S2=np.zeros((N,N))\n    for col,s in enumerate(basis):\n        nup=sum((s>>(2*o))&1 for o in range(5)); ndn=sum((s>>(2*o+1))&1 for o in range(5))\n        Sz[col]=0.5*(nup-ndn)\n        # S- S+ : S+ = sum_o c_up^dag c_dn\n        # S+S- acting: sum over orbitals\n        for o1 in range(5):\n            for o2 in range(5):\n                # S- = sum c_{o1,dn}^dag c_{o1,up} ; S+ = sum c_{o2,up}^dag c_{o2,dn}\n                ns,sg=apply_ops(s,[('c',2*o2),('a',2*o2+1)])  # S+ with same orbital part\n                # full S+ = sum_o (c_{o,up}^dag c_{o,dn}); do all terms\n        pass\n    # construct S+ and S- matrices\n    Sp=np.zeros((N,N)); \n    for col,s in enumerate(basis):\n        for o in range(5):\n            ns,sg=apply_ops(s,[('c',2*o),('a',2*o+1)])\n            if ns is not None: Sp[idx[ns],col]+=sg\n    Sm=Sp.T\n    S2=Sm@Sp + np.diag(Sz**2) + np.diag(Sz)  # S^2 = S-S+ + Sz^2 + Sz\n    return S2, Sz\nEOF\ncd /tmp/w && timeout 600 python3 -c \"\nimport ligand as L, numpy as np\nprint('built tensors')\n\"",
+   "scripts": [
+    {
+     "name": "ligand.py",
+     "sha256": "1718a348b8b168c8546a4571e1263303cde14585a71d49e51d80e0e0d05e8a0f",
+     "lines": 116,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\n\nms=[-2,-1,0,1,2]\ndef tensors():\n    Fk={2:1.0,4:1.0}   # coefficients of F2,F4 separately\n    out={}\n    for k in (2,4):\n        Ck={}\n        for q in range(-k,k+1):\n            M=np.zeros((5,5))\n            for ia,ma in enumerate(ms):\n                for ic,mc in enumerate(ms):\n                    if ma-mc!=q: continue\n                    g=float(gaunt(2,k,2,-ma,q,mc))*(-1)**ma\n                    M[ia,ic]=sqrt(4*pi/(2*k+1))*g\n            Ck[q]=M\n        V=np.zeros((5,5,5,5))\n        for a,b,c,d in itertools.product(range(5),repeat=4):\n            s=0.0\n            for q in range(-k,k+1):\n                s+=(-1)**q*Ck[q][a,c]*Ck[-q][b,d]\n            V[a,b,c,d]=s\n        out[k]=V\n    return out\n\nT=tensors()\ndef cf_one_body(Dq):\n    h=np.zeros((5,5),dtype=complex)\n    I=np.eye(5)\n    v_eg=[I[2], (I[4]+I[0])/sqrt(2)]\n    v_t2g=[(I[4]-I[0])/(1j*sqrt(2)), (I[3]-I[1])/sqrt(2), (I[3]+I[1])/(1j*sqrt(2))]\n    for v in v_eg: h+=6*Dq*np.outer(v,v.conj())\n    for v in v_t2g: h+=-4*Dq*np.outer(v,v.conj())\n    return h\n\n# spin orbitals: index = 2*orb + spin (spin 0 up,1 down)\ndef det_basis(nel=6, nso=10):\n    return [sum(1<<i for i in c) for c in itertools.combinations(range(nso),nel)]\n\ndef apply_ops(state, ops):\n    # ops list of (type,i) applied right to left: ops[-1] acts first; type 'c' creation, 'a' annihilation\n    s=state; sign=1\n    for typ,i in reversed(ops):\n        if typ=='c':\n            if (s>>i)&1: return None,0\n            sign*=(-1)**bin(s & ((1<<i)-1)).count('1')\n            s|=(1<<i)\n        else:\n            if not (s>>i)&1: return None,0\n            sign*=(-1)**bin(s & ((1<<i)-1)).count('1')\n            s&=~(1<<i)\n    return s,sign\n\ndef hamiltonian(F2,F4,Dq,basis,h1):\n    idx={s:i for i,s in enumerate(basis)}\n    N=len(basis)\n    H=np.zeros((N,N))\n    # one-body: sum_{ij} h_ij c_i^dag c_j, h in spin-orbital basis\n    h=np.zeros((10,10))\n    for o1 in range(5):\n        for o2 in range(5):\n            for sp in range(2):\n                h[2*o1+sp,2*o2+sp]=h1[o1,o2].real\n    # two-body: 1/2 sum V_abcd c_a^dag c_b^dag c_d c_c, with V = F2*T2 + F4*T4\n    Vfull=F2*T[2]+F4*T[4]\n    for col,s in enumerate(basis):\n        for i in range(10):\n            for j in range(10):\n                if abs(h[i,j])<1e-14: continue\n                ns,sg=apply_ops(s,[('c',i),('a',j)])\n                if ns is None: continue\n                H[idx[ns],col]+=h[i,j]*sg\n        for o1,o2,o3,o4 in itertools.product(range(5),repeat=4):\n            v=Vfull[o1,o2,o3,o4]\n            if abs(v)<1e-12: continue\n            for s1 in range(2):\n              for s2 in range(2):\n                a=2*o1+s1; b=2*o2+s2; c=2*o3+s2; d=2*o4+s1\n                # sum over spins: <ab|V|cd> requires spin(a)=spin(c), spin(b)=spin(d)\n                pass\n            # spin-resolved: a=(o1,s1), b=(o2,s2), c=(o3,s1), d=(o4,s2)\n            for s1 in range(2):\n              for s2 in range(2):\n                a=2*o1+s1; b=2*o2+s2; c=2*o3+s1; d=2*o4+s2\n                ns,sg=apply_ops(s,[('c',a),('c',b),('a',d),('a',c)])\n                if ns is None: continue\n                H[idx[ns],col]+=0.5*v*sg\n    return H\n\ndef S2_matrix(basis):\n    # total S^2 = S_z^2 + (S+S- + S-S+)/2 ; compute via Sz and S+S-\n    idx={s:i for i,s in enumerate(basis)}\n    N=len(basis)\n    Sz=np.zeros(N); S2=np.zeros((N,N))\n    for col,s in enumerate(basis):\n        nup=sum((s>>(2*o))&1 for o in range(5)); ndn=sum((s>>(2*o+1))&1 for o in range(5))\n        Sz[col]=0.5*(nup-ndn)\n        # S- S+ : S+ = sum_o c_up^dag c_dn\n        # S+S- acting: sum over orbitals\n        for o1 in range(5):\n            for o2 in range(5):\n                # S- = sum c_{o1,dn}^dag c_{o1,up} ; S+ = sum c_{o2,up}^dag c_{o2,dn}\n                ns,sg=apply_ops(s,[('c',2*o2),('a',2*o2+1)])  # S+ with same orbital part\n                # full S+ = sum_o (c_{o,up}^dag c_{o,dn}); do all terms\n        pass\n    # construct S+ and S- matrices\n    Sp=np.zeros((N,N)); \n    for col,s in enumerate(basis):\n        for o in range(5):\n            ns,sg=apply_ops(s,[('c',2*o),('a',2*o+1)])\n            if ns is not None: Sp[idx[ns],col]+=sg\n    Sm=Sp.T\n    S2=Sm@Sp + np.diag(Sz**2) + np.diag(Sz)  # S^2 = S-S+ + Sz^2 + Sz\n    return S2, Sz\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\n/bin/bash: line 240: cd: /tmp/w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "ligand.py",
+     "line": 12,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 17,
+     "method": "matrix",
+     "text": "M[ia,ic]=sqrt(4*pi/(2*k+1))*g"
+    },
+    {
+     "script": "ligand.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "ligand.py",
+     "line": 59,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 61,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 96,
+     "method": "matrix",
+     "text": "Sz=np.zeros(N); S2=np.zeros((N,N))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 109,
+     "method": "matrix",
+     "text": "Sp=np.zeros((N,N));"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find a writable directory",
+   "command": "cd ~ && pwd && touch testfile && echo writable_home; ls -ld /tmp; df -h /tmp | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 'testfile': Read-only file system\ndrwxrwxrwt 32 nobody nogroup 884736 Nov  4 02:02 /tmp\n/dev/vda1       158G   88G   64G  59% /\nShell cwd was reset to /tmp/tsbench-run-s703masf",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Check writability of current run directory",
+   "command": "pwd && touch t && echo ok && ls -la | head",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-run-s703masf\nok\ntotal 876\ndrwx------  3 <USER>  <USER>     4096 Nov  4 02:03 .\ndrwxrwxrwt 32 nobody nogroup 884736 Nov  4 02:02 ..\ncrw-rw-rw-  1 nobody nogroup   1, 3 Nov  3 12:32 .bash_profile\ncrw-rw-rw-  1 nobody nogroup   1, 3 Nov  3 12:32 .bashrc\ndrwxrwxr-x  3 <USER>  <USER>     4096 Nov  4 02:03 .claude\ncrw-rw-rw-  1 nobody nogroup   1, 3 Nov  3 12:32 .gitconfig\ncrw-rw-rw-  1 nobody nogroup   1, 3 Nov  3 12:32 .gitmodules\ncrw-rw-rw-  1 nobody nogroup   1, 3 Nov  3 12:32 .idea\ncrw-rw-rw-  1 nobody nogroup   1, 3 Nov  3 12:32 .mcp.json",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Write many-electron code and sanity check S^2",
+   "command": "rm -f t && cat > ligand.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\n\nms=[-2,-1,0,1,2]\ndef tensors():\n    out={}\n    for k in (2,4):\n        Ck={}\n        for q in range(-k,k+1):\n            M=np.zeros((5,5))\n            for ia,ma in enumerate(ms):\n                for ic,mc in enumerate(ms):\n                    if ma-mc!=q: continue\n                    g=float(gaunt(2,k,2,-ma,q,mc))*(-1)**ma\n                    M[ia,ic]=sqrt(4*pi/(2*k+1))*g\n            Ck[q]=M\n        V=np.zeros((5,5,5,5))\n        for a,b,c,d in itertools.product(range(5),repeat=4):\n            s=0.0\n            for q in range(-k,k+1):\n                s+=(-1)**q*Ck[q][a,c]*Ck[-q][b,d]\n            V[a,b,c,d]=s\n        out[k]=V\n    return out\n\nT=tensors()\ndef cf_one_body(Dq):\n    h=np.zeros((5,5),dtype=complex)\n    I=np.eye(5)\n    v_eg=[I[2], (I[4]+I[0])/sqrt(2)]\n    v_t2g=[(I[4]-I[0])/(1j*sqrt(2)), (I[3]-I[1])/sqrt(2), (I[3]+I[1])/(1j*sqrt(2))]\n    for v in v_eg: h+=6*Dq*np.outer(v,v.conj())\n    for v in v_t2g: h+=-4*Dq*np.outer(v,v.conj())\n    return h\n\ndef det_basis(nel=6, nso=10):\n    return [sum(1<<i for i in c) for c in itertools.combinations(range(nso),nel)]\n\ndef apply_ops(state, ops):\n    s=state; sign=1\n    for typ,i in reversed(ops):\n        if typ=='c':\n            if (s>>i)&1: return None,0\n            sign*=(-1)**bin(s & ((1<<i)-1)).count('1')\n            s|=(1<<i)\n        else:\n            if not (s>>i)&1: return None,0\n            sign*=(-1)**bin(s & ((1<<i)-1)).count('1')\n            s&=~(1<<i)\n    return s,sign\n\ndef hamiltonian(F2,F4,Dq,basis):\n    h1=cf_one_body(Dq)\n    idx={s:i for i,s in enumerate(basis)}\n    N=len(basis)\n    H=np.zeros((N,N))\n    h=np.zeros((10,10))\n    for o1 in range(5):\n        for o2 in range(5):\n            for sp in range(2):\n                h[2*o1+sp,2*o2+sp]=h1[o1,o2].real  # real part; imag parts cancel in cubic set\n    Vfull=F2*T[2]+F4*T[4]\n    for col,s in enumerate(basis):\n        for i in range(10):\n            for j in range(10):\n                if abs(h[i,j])<1e-14: continue\n                ns,sg=apply_ops(s,[('c',i),('a',j)])\n                if ns is None: continue\n                H[idx[ns],col]+=h[i,j]*sg\n        for o1,o2,o3,o4 in itertools.product(range(5),repeat=4):\n            v=Vfull[o1,o2,o3,o4]\n            if abs(v)<1e-12: continue\n            for s1 in range(2):\n              for s2 in range(2):\n                a=2*o1+s1; b=2*o2+s2; c=2*o3+s1; d=2*o4+s2\n                ns,sg=apply_ops(s,[('c',a),('c',b),('a',d),('a',c)])\n                if ns is None: continue\n                H[idx[ns],col]+=0.5*v*sg\n    return H\n\ndef S2_matrix(basis):\n    idx={s:i for i,s in enumerate(basis)}\n    N=len(basis)\n    Sz=np.zeros(N)\n    for col,s in enumerate(basis):\n        nup=sum((s>>(2*o))&1 for o in range(5)); ndn=sum((s>>(2*o+1))&1 for o in range(5))\n        Sz[col]=0.5*(nup-ndn)\n    Sp=np.zeros((N,N))\n    for col,s in enumerate(basis):\n        for o in range(5):\n            ns,sg=apply_ops(s,[('c',2*o),('a',2*o+1)])\n            if ns is not None: Sp[idx[ns],col]+=sg\n    S2=Sp.T@Sp + np.diag(Sz**2) - np.diag(Sz)   # S^2 = S-S+ + Sz^2 + Sz with S-S+ = (S+)^T S+ ; using Sz^2 - Sz? check below\n    return S2, Sz, Sp\nEOF\npython3 -c \"\nimport ligand as L, numpy as np\nprint(L.T[2][2,2,2,2], L.T[4][2,2,2,2])\nb=L.det_basis(6)\nS2,Sz,Sp=L.S2_matrix(b)\nprint(len(b), np.round(np.linalg.eigvalsh(S2)[:5],3))\n\"",
+   "scripts": [
+    {
+     "name": "ligand.py",
+     "sha256": "92d4209e7e74db196a746f5909e7b414867abb16fb7e15f07c09cbcfbb700e7e",
+     "lines": 95,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\n\nms=[-2,-1,0,1,2]\ndef tensors():\n    out={}\n    for k in (2,4):\n        Ck={}\n        for q in range(-k,k+1):\n            M=np.zeros((5,5))\n            for ia,ma in enumerate(ms):\n                for ic,mc in enumerate(ms):\n                    if ma-mc!=q: continue\n                    g=float(gaunt(2,k,2,-ma,q,mc))*(-1)**ma\n                    M[ia,ic]=sqrt(4*pi/(2*k+1))*g\n            Ck[q]=M\n        V=np.zeros((5,5,5,5))\n        for a,b,c,d in itertools.product(range(5),repeat=4):\n            s=0.0\n            for q in range(-k,k+1):\n                s+=(-1)**q*Ck[q][a,c]*Ck[-q][b,d]\n            V[a,b,c,d]=s\n        out[k]=V\n    return out\n\nT=tensors()\ndef cf_one_body(Dq):\n    h=np.zeros((5,5),dtype=complex)\n    I=np.eye(5)\n    v_eg=[I[2], (I[4]+I[0])/sqrt(2)]\n    v_t2g=[(I[4]-I[0])/(1j*sqrt(2)), (I[3]-I[1])/sqrt(2), (I[3]+I[1])/(1j*sqrt(2))]\n    for v in v_eg: h+=6*Dq*np.outer(v,v.conj())\n    for v in v_t2g: h+=-4*Dq*np.outer(v,v.conj())\n    return h\n\ndef det_basis(nel=6, nso=10):\n    return [sum(1<<i for i in c) for c in itertools.combinations(range(nso),nel)]\n\ndef apply_ops(state, ops):\n    s=state; sign=1\n    for typ,i in reversed(ops):\n        if typ=='c':\n            if (s>>i)&1: return None,0\n            sign*=(-1)**bin(s & ((1<<i)-1)).count('1')\n            s|=(1<<i)\n        else:\n            if not (s>>i)&1: return None,0\n            sign*=(-1)**bin(s & ((1<<i)-1)).count('1')\n            s&=~(1<<i)\n    return s,sign\n\ndef hamiltonian(F2,F4,Dq,basis):\n    h1=cf_one_body(Dq)\n    idx={s:i for i,s in enumerate(basis)}\n    N=len(basis)\n    H=np.zeros((N,N))\n    h=np.zeros((10,10))\n    for o1 in range(5):\n        for o2 in range(5):\n            for sp in range(2):\n                h[2*o1+sp,2*o2+sp]=h1[o1,o2].real  # real part; imag parts cancel in cubic set\n    Vfull=F2*T[2]+F4*T[4]\n    for col,s in enumerate(basis):\n        for i in range(10):\n            for j in range(10):\n                if abs(h[i,j])<1e-14: continue\n                ns,sg=apply_ops(s,[('c',i),('a',j)])\n                if ns is None: continue\n                H[idx[ns],col]+=h[i,j]*sg\n        for o1,o2,o3,o4 in itertools.product(range(5),repeat=4):\n            v=Vfull[o1,o2,o3,o4]\n            if abs(v)<1e-12: continue\n            for s1 in range(2):\n              for s2 in range(2):\n                a=2*o1+s1; b=2*o2+s2; c=2*o3+s1; d=2*o4+s2\n                ns,sg=apply_ops(s,[('c',a),('c',b),('a',d),('a',c)])\n                if ns is None: continue\n                H[idx[ns],col]+=0.5*v*sg\n    return H\n\ndef S2_matrix(basis):\n    idx={s:i for i,s in enumerate(basis)}\n    N=len(basis)\n    Sz=np.zeros(N)\n    for col,s in enumerate(basis):\n        nup=sum((s>>(2*o))&1 for o in range(5)); ndn=sum((s>>(2*o+1))&1 for o in range(5))\n        Sz[col]=0.5*(nup-ndn)\n    Sp=np.zeros((N,N))\n    for col,s in enumerate(basis):\n        for o in range(5):\n            ns,sg=apply_ops(s,[('c',2*o),('a',2*o+1)])\n            if ns is not None: Sp[idx[ns],col]+=sg\n    S2=Sp.T@Sp + np.diag(Sz**2) - np.diag(Sz)   # S^2 = S-S+ + Sz^2 + Sz with S-S+ = (S+)^T S+ ; using Sz^2 - Sz? check below\n    return S2, Sz, Sp\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0.08163265306122448 0.08163265306122451\n210 [-0. -0. -0. -0. -0.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "ligand.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 16,
+     "method": "matrix",
+     "text": "M[ia,ic]=sqrt(4*pi/(2*k+1))*g"
+    },
+    {
+     "script": "ligand.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 29,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "ligand.py",
+     "line": 57,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 58,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10))"
+    },
+    {
+     "script": "ligand.py",
+     "line": 89,
+     "method": "matrix",
+     "text": "Sp=np.zeros((N,N))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Check code with free-ion d2 term energies",
+   "command": "cd . && sed -i 's/S2=Sp.T@Sp + np.diag(Sz\\*\\*2) - np.diag(Sz).*/S2=Sp.T@Sp + np.diag(Sz**2) + np.diag(Sz)/' ligand.py && python3 -c \"\nimport ligand as L, numpy as np\n# trace checks\nprint('trace k2 full d-shell', np.trace(L.T[2].reshape(25,25)))\n# d2 free ion test: F2,F4 from B,C with C=4.5B; B=1\nB=1.0; C=4.5\nF4=441*C/35; F2=49*B+7*C\n# Racah check: F4 = 63C/5 ; F2 = 49B+7C\nF4=63*C/5\nb2=L.det_basis(2)\nimport ligand as M\nH=M.hamiltonian(F2,F4,0.0,b2)\nS2,Sz,Sp=M.S2_matrix(b2)\n# restrict to Sz=1 (triplet) and Sz=0 singlets\nev,vec=np.linalg.eigh(H)\nprint('d2 free-ion levels (cm-1 units of B):')\nprint(np.round(ev-ev[0],3))\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "trace k2 full d-shell 1.3877787807814457e-17\nd2 free-ion levels (cm-1 units of B):\n[ 0.   0.   0.   0.   0.   0.   0.   0.   0.   0.   0.   0.   0.   0.\n  0.   0.   0.   0.   0.   0.   0.  14.  14.  14.  14.  14.  15.  15.\n 15.  15.  15.  15.  15.  15.  15.  21.  21.  21.  21.  21.  21.  21.\n 21.  21.  53.5]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Test d2 level dependence on B and C",
+   "command": "python3 -c \"\nimport ligand as M, numpy as np\nb2=M.det_basis(2)\ndef lev(F2,F4):\n    H=M.hamiltonian(F2,F4,0.0,b2); ev=np.linalg.eigvalsh(H); return np.round(ev-ev[0],3)\nfor B,C in [(1,0),(1,4.5),(0,1),(1,1)]:\n    F2=49*B+7*C; F4=63*C/5\n    e=lev(F2,F4)\n    print(B,C, sorted(set(e)))\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1 0 [np.float64(0.0), np.float64(5.0), np.float64(12.0), np.float64(15.0), np.float64(22.0)]\n1 4.5 [np.float64(0.0), np.float64(14.0), np.float64(15.0), np.float64(21.0), np.float64(53.5)]\n0 1 [np.float64(0.0), np.float64(2.0), np.float64(7.0)]\n1 1 [np.float64(0.0), np.float64(7.0), np.float64(14.0), np.float64(15.0), np.float64(29.0)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Compute d6 singlet spectrum vs Dq with degeneracies",
+   "command": "python3 -c \"\nimport ligand as M, numpy as np\nprint('imag max', np.abs(M.cf_one_body(1.0).imag).max())\nb=M.det_basis(6)\nS2,Sz,Sp=M.S2_matrix(b)\n# singlet subspace: S2 eigenvalue 0\nw,v=np.linalg.eigh(S2); Q=v[:,np.abs(w)<1e-8]\nprint('singlet dim', Q.shape[1])\nB=1.0; C=4.5; F2=49*B+7*C; F4=63*C/5\nfor x in [0.0,1.0,2.0,3.0,3.5]:\n    H=M.hamiltonian(F2,F4,x,b)\n    Hs=Q.T@H@Q\n    ev=np.linalg.eigvalsh(Hs)\n    ev=ev-ev[0]\n    vals=np.round(ev,4)\n    u,c=np.unique(vals,return_counts=True)\n    print('x=',x, list(zip(u[:12],c[:12])))\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "imag max 0.0\nsinglet dim 50\nx= 0.0 [(np.float64(0.0), np.int64(13)), (np.float64(2.291), np.int64(9)), (np.float64(7.7864), np.int64(1)), (np.float64(9.5235), np.int64(5)), (np.float64(15.0), np.int64(7)), (np.float64(31.209), np.int64(9)), (np.float64(51.9765), np.int64(5)), (np.float64(78.2136), np.int64(1))]\nx= 1.0 [(np.float64(0.0), np.int64(1)), (np.float64(8.0333), np.int64(3)), (np.float64(14.827), np.int64(3)), (np.float64(18.1804), np.int64(2)), (np.float64(19.1676), np.int64(1)), (np.float64(19.9641), np.int64(3)), (np.float64(22.3041), np.int64(3)), (np.float64(22.6203), np.int64(1)), (np.float64(26.2404), np.int64(3)), (np.float64(27.6611), np.int64(2)), (np.float64(28.8658), np.int64(3)), (np.float64(33.1788), np.int64(1))]\nx= 2.0 [(np.float64(0.0), np.int64(1)), (np.float64(17.4812), np.int64(3)), (np.float64(28.6528), np.int64(3)), (np.float64(37.2537), np.int64(2)), (np.float64(37.3638), np.int64(3)), (np.float64(38.402), np.int64(1)), (np.float64(43.51), np.int64(3)), (np.float64(44.4801), np.int64(1)), (np.float64(46.5178), np.int64(3)), (np.float64(53.6616), np.int64(2)), (np.float64(55.6139), np.int64(3)), (np.float64(59.8945), np.int64(2))]\nx= 3.0 [(np.float64(0.0), np.int64(1)), (np.float64(27.1449), np.int64(3)), (np.float64(40.003), np.int64(3)), (np.float64(56.232), np.int64(3)), (np.float64(56.6993), np.int64(2)), (np.float64(57.9128), np.int64(1)), (np.float64(63.9949), np.int64(3)), (np.float64(64.9344), np.int64(1)), (np.float64(66.2317), np.int64(3)), (np.float64(75.8362), np.int64(2)), (np.float64(80.7689), np.int64(3)), (np.float64(85.8533), np.int64(2))]\nx= 3.5 [(np.float64(0.0), np.int64(1)), (np.float64(32.0181), np.int64(3)), (np.float64(45.3478), np.int64(3)), (np.float64(65.8936), np.int64(3)), (np.float64(66.4949), np.int64(2)), (np.float64(67.7285), np.int64(1)), (np.float64(74.1169), np.int64(3)), (np.float64(74.9942), np.int64(1)), (np.float64(76.0863), np.int64(3)), (np.float64(86.2511), np.int64(2)), (np.float64(92.0982), np.int64(3)), (np.float64(98.7128), np.int64(2))]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Solve Tanabe-Sugano fit for Dq and B",
+   "command": "python3 -c \"\nimport ligand as M, numpy as np\nfrom scipy.optimize import brentq\n\" 2>/dev/null; python3 -c \"\nimport ligand as M, numpy as np\nb=M.det_basis(6)\nS2,Sz,Sp=M.S2_matrix(b)\nw,v=np.linalg.eigh(S2); Q=v[:,np.abs(w)<1e-8]\nB=1.0; C=4.5; F2=49*B+7*C; F4=63*C/5\n# precompute parts linear in Dq: H = H0 + x*Hcf ; Hcf via difference\nH0=M.hamiltonian(F2,F4,0.0,b)\nH1=M.hamiltonian(F2,F4,1.0,b)-H0\nH0s=Q.T@H0@Q; H1s=Q.T@H1@Q\ndef levels(x):\n    ev=np.linalg.eigvalsh(H0s+x*H1s); return ev\ndef tri(x):\n    ev=levels(x)-levels(x)[0]\n    # find triplets: groups of 3 equal values\n    out=[];i=1\n    while i<len(ev)-2:\n        if abs(ev[i]-ev[i+2])<1e-6 and abs(ev[i+1]-ev[i])<1e-6:\n            out.append(ev[i]); i+=3\n        else: i+=1\n    return out\nfor x in [3.0,3.5,4.0]:\n    print(x, np.round(tri(x)[:4],3))\nratio=23529/16611\ndef f(x):\n    t=tri(x); return t[1]/t[0]-ratio\nxs=brentq(f,3.0,4.0,xtol=1e-10)\nt=tri(xs)\nE1=t[0]; E2=t[1]\nprint('x=Dq/B',xs,'E1(B units)',E1,'E2',E2)\nB_fit=16611/E1\nprint('B=',B_fit,'Dq=',xs*B_fit,'10Dq=',10*xs*B_fit,'C=',4.5*B_fit)\nprint('check E2*B', E2*B_fit)\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"<string>\", line 27, in <module>\n    xs=brentq(f,3.0,4.0,xtol=1e-10)\n       ^^^^^^\nNameError: name 'brentq' is not defined\n3.0 [27.145 40.003 56.232 63.995]\n3.5 [32.018 45.348 65.894 74.117]\n4.0 [36.91  50.59  75.63  84.197]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "Solve Tanabe-Sugano fit for Dq and B",
+   "command": "python3 -c \"\nimport ligand as M, numpy as np\nfrom scipy.optimize import brentq\nb=M.det_basis(6)\nS2,Sz,Sp=M.S2_matrix(b)\nw,v=np.linalg.eigh(S2); Q=v[:,np.abs(w)<1e-8]\nB=1.0; C=4.5; F2=49*B+7*C; F4=63*C/5\nH0=M.hamiltonian(F2,F4,0.0,b)\nH1=M.hamiltonian(F2,F4,1.0,b)-H0\nH0s=Q.T@H0@Q; H1s=Q.T@H1@Q\ndef levels(x): return np.linalg.eigvalsh(H0s+x*H1s)\ndef tri(x):\n    ev=levels(x)-levels(x)[0]\n    out=[];i=1\n    while i<len(ev)-2:\n        if abs(ev[i]-ev[i+2])<1e-6 and abs(ev[i+1]-ev[i])<1e-6:\n            out.append(ev[i]); i+=3\n        else: i+=1\n    return out\nratio=23529/16611\nf=lambda x: tri(x)[1]/tri(x)[0]-ratio\nxs=brentq(f,3.0,4.0,xtol=1e-10)\nt=tri(xs); E1,E2=t[0],t[1]\nB_fit=16611/E1\nprint('x=Dq/B',xs,'E1',E1,'E2',E2)\nprint('B=',B_fit,'Dq=',xs*B_fit,'C=',4.5*B_fit,'E2 check',E2*B_fit)\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "x=Dq/B 3.498491047819271 E1 32.0033925560694 E2 45.331877879222205\nB= 519.0387228759516 Dq= 1815.8523254530642 C= 2335.6742529417825 E2 check 23529.000000000095",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [],
+   "produces": [
+    "Dq",
+    "B",
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1816.0,
+   "weak": false,
+   "steps": [
+    10
+   ],
+   "typed_in_steps": [],
+   "source_step": 10
+  },
+  {
+   "path": "B",
+   "value": 519.0,
+   "weak": false,
+   "steps": [
+    10
+   ],
+   "typed_in_steps": [],
+   "source_step": 10
+  },
+  {
+   "path": "C",
+   "value": 2336.0,
+   "weak": false,
+   "steps": [
+    10
+   ],
+   "typed_in_steps": [],
+   "source_step": 10
+  }
+ ],
+ "summary": {
+  "n_steps": 11,
+  "n_scripts": 3,
+  "n_failed_steps": 2,
+  "n_values": 3,
+  "n_linked": 3,
+  "n_weak": 0,
+  "source_steps": [
+   10
+  ],
+  "methods": [
+   "eigen_solver",
+   "typed_table"
+  ],
+  "edits_in_place": true
+ }
+}

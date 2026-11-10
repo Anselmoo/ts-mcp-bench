@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch ./x_test && echo ok; ls -ld /tmp $HOME 2>&1 | head

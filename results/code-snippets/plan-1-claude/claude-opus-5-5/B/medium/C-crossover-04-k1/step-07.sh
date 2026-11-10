@@ -1,0 +1,1 @@
+cd $TMPDIR; echo 'print(brentq(lev,1500,2500,xtol=1e-8))' >> d7.py; python3 d7.py | tail -1

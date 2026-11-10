@@ -1,0 +1,1 @@
+cd $HOME 2>/dev/null && pwd; touch $HOME/x 2>&1; echo; df -h /tmp | tail -1; ls -ld /tmp

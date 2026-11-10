@@ -1,0 +1,1 @@
+pip install numpy sympy matplotlib 2>&1 | tail -1

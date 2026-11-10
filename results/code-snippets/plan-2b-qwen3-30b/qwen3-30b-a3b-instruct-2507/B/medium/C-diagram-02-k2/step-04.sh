@@ -1,0 +1,1 @@
+which python3 || echo "Python3 not found"

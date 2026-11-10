@@ -1,0 +1,1 @@
+echo $TMPDIR; ls -ld /dev/shm /var/tmp 2>&1; touch /dev/shm/x && echo shm

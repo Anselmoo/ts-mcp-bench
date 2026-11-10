@@ -1,0 +1,1 @@
+echo 'Processing d7 octahedral ligand field analysis with given parameters...'

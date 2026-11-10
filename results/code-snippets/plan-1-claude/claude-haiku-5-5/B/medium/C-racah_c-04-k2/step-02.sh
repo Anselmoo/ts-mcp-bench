@@ -1,0 +1,1 @@
+cd ~ && pwd && touch x_test && echo ok; python3 -c "import numpy, scipy; print(numpy.__version__, scipy.__version__)"

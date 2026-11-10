@@ -1,0 +1,1 @@
+sed -i "s/r=apply(ket,\[('a',j),('c',i)\])/r=apply(ket,[('c',i),('a',j)])/" ts.py && grep -n "apply(ket,\[('c',i)" ts.py && python3 t8.py | head -2 && python3 t7.py

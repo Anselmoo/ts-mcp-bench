@@ -1,0 +1,1 @@
+pwd; touch ./x && echo ok; echo $TMPDIR; python3 -c "import sympy,numpy,matplotlib;print(1)"

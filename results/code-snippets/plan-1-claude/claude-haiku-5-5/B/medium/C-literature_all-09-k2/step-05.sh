@@ -1,0 +1,1 @@
+cd /; python3 -c "import os;print(os.getcwd(), os.access('/tmp',os.W_OK), os.path.expanduser('~'))"; touch /tmp/x 2>&1; echo $HOME

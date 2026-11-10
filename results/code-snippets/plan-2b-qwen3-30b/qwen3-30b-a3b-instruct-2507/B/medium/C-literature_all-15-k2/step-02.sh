@@ -1,0 +1,1 @@
+echo 'For octahedral d⁷, the ground term is ⁴T₁g. The first excited state is ⁴T₂g at 8480 cm⁻¹, which corresponds to Dq. Thus, Dq = 8480 cm⁻¹.'

@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-0aouy4os 2>/dev/null && touch t && echo writable; python3 -c "import sys; print(sys.version)"

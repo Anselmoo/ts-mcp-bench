@@ -1,0 +1,764 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-curve-02-k3.jsonl",
+ "transcript_sha256": "f6998480157fa5dbb4d4b04dce93c7e3aec07c29d2d024aa57c7cfc356934899",
+ "answer": {
+  "points": [
+   {
+    "dq_over_b": 1.0,
+    "term": "4T2g",
+    "e_over_b": 10.0
+   },
+   {
+    "dq_over_b": 1.0,
+    "term": "4T1g",
+    "e_over_b": 16.48
+   },
+   {
+    "dq_over_b": 1.0,
+    "term": "2Eg",
+    "e_over_b": 19.15
+   },
+   {
+    "dq_over_b": 2.2,
+    "term": "2Eg",
+    "e_over_b": 19.75
+   },
+   {
+    "dq_over_b": 2.2,
+    "term": "2T1g",
+    "e_over_b": 20.67
+   },
+   {
+    "dq_over_b": 2.2,
+    "term": "4T2g",
+    "e_over_b": 22.0
+   },
+   {
+    "dq_over_b": 3.5,
+    "term": "2Eg",
+    "e_over_b": 20.1
+   },
+   {
+    "dq_over_b": 3.5,
+    "term": "2T1g",
+    "e_over_b": 20.92
+   },
+   {
+    "dq_over_b": 3.5,
+    "term": "2T2g",
+    "e_over_b": 31.34
+   }
+  ],
+  "reason": "Full 120-determinant d3 ligand-field diagonalization (Coulomb F2=49B+7C, F4=12.6C, C/B=4.159; CF one-electron operator 6Dq/-4Dq) with spin and octahedral-irrep assignment by characters, giving the three lowest excited terms above the 4A2g ground term at each Dq/B."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check available Python scientific packages",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy|sympy\" ; python3 --version",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Python 3.14.9",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d3 ligand-field matrices and diagonalize",
+   "command": "mkdir -p /w && cat > /w/d3.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.linalg import expm, eigh\nfrom scipy.spatial.transform import Rotation as Rot\n\nB=1.0; C=3003/722\nF2=49*B+7*C; F4=12.6*C\nms=[-2,-1,0,1,2]\n# orbital ERI tensor (complex Y basis), k=2,4 parts\ndef Vk(k):\n    T=np.zeros((5,5,5,5))\n    for a,m1 in enumerate(ms):\n        for b,m2 in enumerate(ms):\n            for c,m3 in enumerate(ms):\n                for d,m4 in enumerate(ms):\n                    s=0.0\n                    for q in range(-k,k+1):\n                        if abs(q)>2: continue\n                        g1=gaunt(2,k,2,-m1,-q,m3)\n                        if g1==0: continue\n                        g2=gaunt(2,k,2,-m2,q,m4)\n                        s+= float((-1)**(m1+q))*float(g1)*float((-1)**m2)*float(g2)\n                    T[a,b,c,d]=s*4*np.pi/(2*k+1)\n    return T\nV2=Vk(2); V4=Vk(4)\n# spin-orbital index: 2*oi+s, s=0 up, 1 down\nN=10\ndef so(i): return i//2, i%2\ndef create(i,st):\n    if i in st: return None\n    p=sum(1 for x in st if x<i)\n    return ((-1)**p, tuple(sorted(st+(i,))))\ndef annih(i,st):\n    if i not in st: return None\n    p=st.index(i)\n    return ((-1)**p, tuple(x for x in st if x!=i))\n# build Coulomb tensor in spin-orbital basis\nVso={}\nfor i in range(N):\n  for j in range(N):\n    for k in range(N):\n      for l in range(N):\n        mi,si=so(i); mj,sj=so(j); mk,sk=so(k); ml,sl=so(l)\n        if si!=sk or sj!=sl: continue\n        v=F2*V2[mi,mj,mk,ml]+F4*V4[mi,mj,mk,ml]\n        if abs(v)>1e-12: Vso[(i,j,k,l)]=v\ndets=list(itertools.combinations(range(N),3))\nix={d:n for n,d in enumerate(dets)}\nD=len(dets)\nHee=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for (i,j,k,l),v in Vso.items():\n        r=annih(k,st)\n        if r is None: continue\n        s1,st1=r\n        r=annih(l,st1)\n        if r is None: continue\n        s2,st2=r\n        r=create(j,st2)\n        if r is None: continue\n        s3,st3=r\n        r=create(i,st3)\n        if r is None: continue\n        s4,st4=r\n        Hee[ix[st4],n]+=0.5*v*s1*s2*s3*s4\n# one-body operators\ndef onebody(h):\n    M=np.zeros((D,D))\n    for n,st in enumerate(dets):\n        for i in range(N):\n            for j in range(N):\n                if abs(h[i,j])<1e-14: continue\n                r=annih(j,st)\n                if r is None: continue\n                s1,st1=r\n                r=create(i,st1)\n                if r is None: continue\n                s2,st2=r\n                M[ix[st2],n]+=h[i,j]*s1*s2\n    return M\n# orbital projectors (complex basis)\nPeg=np.zeros((5,5)); Pt2=np.zeros((5,5))\nPeg[2,2]=1\nv=np.zeros(5); v[0]=1/np.sqrt(2); v[4]=1/np.sqrt(2)  # (|2>+|-2>)/sqrt2 -> x2-y2\nPeg+=np.outer(v,v)\nPt2=np.eye(5)-Peg\nhorb_cf = 6*Peg-4*Pt2   # coefficient of Dq\nhcf=np.kron(horb_cf,np.eye(2))\nHcf=onebody(hcf)\n# S+ \nhsp=np.zeros((N,N))\nfor oi in range(5): hsp[2*oi,2*oi+1]=1.0\nSp=onebody(hsp)\nSm=Sp.T\nSz=np.diag([sum((0.5 if st_s==0 else -0.5) for st_s in [so(x)[1] for x in st]) for st in dets])\nS2=Sm@Sp+Sz@Sz+Sz\n# rotation matrices for l=2\nLz=np.diag(ms).astype(complex)\nLp=np.zeros((5,5),complex)\nfor a,m in enumerate(ms):\n    if m<2: Lp[a+1,a]=np.sqrt(6-m*(m+1))\nLm=Lp.conj().T\nLy=(Lp-Lm)/(2j)\ndef Dl2(R):\n    al,be,ga=Rot.from_matrix(R).as_euler('zyz')\n    return expm(-1j*al*Lz)@expm(-1j*be*Ly)@expm(-1j*ga*Lz)\ndef Gamma(R):\n    U=np.kron(Dl2(R),np.eye(2))\n    G=np.zeros((D,D),complex)\n    for n,dn in enumerate(dets):\n        for m,dm in enumerate(dets):\n            G[m,n]=np.linalg.det(U[np.ix_(dm,dn)])\n    return G\nclasses=[(1,Rot.identity().as_matrix()),\n (8,Rot.from_rotvec(np.array([1,1,1])/np.sqrt(3)*2*np.pi/3).as_matrix()),\n (3,Rot.from_rotvec([0,0,np.pi]).as_matrix()),\n (6,Rot.from_rotvec([0,0,np.pi/2]).as_matrix()),\n (6,Rot.from_rotvec(np.array([1,1,0])/np.sqrt(2)*np.pi).as_matrix())]\nGs=[Gamma(R) for _,R in classes]\nchartab={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\nsizes=[c for c,_ in classes]\ndef label(Q,S):\n    dimorb=Q.shape[1]//(2*S+1)\n    chis=[np.trace(Q.conj().T@G@Q).real/(2*S+1) for G in Gs]\n    best=None\n    for name,ct in chartab.items():\n        mult=sum(sizes[i]*chis[i]*ct[i] for i in range(5))/24\n        if abs(mult-round(mult))<1e-6 and round(mult)==1: best=name\n    return best, [round(c,3) for c in chis]\ndef spectrum(Dq):\n    H=Hee+Dq*Hcf\n    Mtot=H+1000*S2\n    w,U=eigh(Mtot)\n    out=[]\n    i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1\n        Q=U[:,i:j+1]\n        Ssq=(w[i]/1000.0)  # approx\n        # find S from S2 expectation\n        s2=np.trace(Q.conj().T@S2@Q).real/Q.shape[1]\n        S=(-1+np.sqrt(1+4*s2))/2\n        E=np.trace(Q.conj().T@H@Q).real/Q.shape[1]\n        out.append((S,E,Q))\n        i=j+1\n    return out\nif __name__==\"__main__\":\n    for Dq in [1.0,2.2,3.5]:\n        sp=spectrum(Dq)\n        E0=min(e for S,e,Q in sp)\n        print(\"Dq/B=\",Dq)\n        rows=[]\n        for S,E,Q in sp:\n            lab,ch=label(Q,round(S*2)/2)\n            rows.append((E-E0,int(round(2*S+1)),lab,Q.shape[1]//int(round(2*S+1)),ch))\n        rows.sort()\n        for r in rows: print(\"  E/B=%.4f mult=%d irrep=%s dim=%d chi=%s\"%r)\nEOF\ncd /w && time python3 d3.py",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "3ea39b4170791002acf8de0d6eda739e82755dc93131e21608875eb6d7c5c793",
+     "lines": 158,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.linalg import expm, eigh\nfrom scipy.spatial.transform import Rotation as Rot\n\nB=1.0; C=3003/722\nF2=49*B+7*C; F4=12.6*C\nms=[-2,-1,0,1,2]\n# orbital ERI tensor (complex Y basis), k=2,4 parts\ndef Vk(k):\n    T=np.zeros((5,5,5,5))\n    for a,m1 in enumerate(ms):\n        for b,m2 in enumerate(ms):\n            for c,m3 in enumerate(ms):\n                for d,m4 in enumerate(ms):\n                    s=0.0\n                    for q in range(-k,k+1):\n                        if abs(q)>2: continue\n                        g1=gaunt(2,k,2,-m1,-q,m3)\n                        if g1==0: continue\n                        g2=gaunt(2,k,2,-m2,q,m4)\n                        s+= float((-1)**(m1+q))*float(g1)*float((-1)**m2)*float(g2)\n                    T[a,b,c,d]=s*4*np.pi/(2*k+1)\n    return T\nV2=Vk(2); V4=Vk(4)\n# spin-orbital index: 2*oi+s, s=0 up, 1 down\nN=10\ndef so(i): return i//2, i%2\ndef create(i,st):\n    if i in st: return None\n    p=sum(1 for x in st if x<i)\n    return ((-1)**p, tuple(sorted(st+(i,))))\ndef annih(i,st):\n    if i not in st: return None\n    p=st.index(i)\n    return ((-1)**p, tuple(x for x in st if x!=i))\n# build Coulomb tensor in spin-orbital basis\nVso={}\nfor i in range(N):\n  for j in range(N):\n    for k in range(N):\n      for l in range(N):\n        mi,si=so(i); mj,sj=so(j); mk,sk=so(k); ml,sl=so(l)\n        if si!=sk or sj!=sl: continue\n        v=F2*V2[mi,mj,mk,ml]+F4*V4[mi,mj,mk,ml]\n        if abs(v)>1e-12: Vso[(i,j,k,l)]=v\ndets=list(itertools.combinations(range(N),3))\nix={d:n for n,d in enumerate(dets)}\nD=len(dets)\nHee=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for (i,j,k,l),v in Vso.items():\n        r=annih(k,st)\n        if r is None: continue\n        s1,st1=r\n        r=annih(l,st1)\n        if r is None: continue\n        s2,st2=r\n        r=create(j,st2)\n        if r is None: continue\n        s3,st3=r\n        r=create(i,st3)\n        if r is None: continue\n        s4,st4=r\n        Hee[ix[st4],n]+=0.5*v*s1*s2*s3*s4\n# one-body operators\ndef onebody(h):\n    M=np.zeros((D,D))\n    for n,st in enumerate(dets):\n        for i in range(N):\n            for j in range(N):\n                if abs(h[i,j])<1e-14: continue\n                r=annih(j,st)\n                if r is None: continue\n                s1,st1=r\n                r=create(i,st1)\n                if r is None: continue\n                s2,st2=r\n                M[ix[st2],n]+=h[i,j]*s1*s2\n    return M\n# orbital projectors (complex basis)\nPeg=np.zeros((5,5)); Pt2=np.zeros((5,5))\nPeg[2,2]=1\nv=np.zeros(5); v[0]=1/np.sqrt(2); v[4]=1/np.sqrt(2)  # (|2>+|-2>)/sqrt2 -> x2-y2\nPeg+=np.outer(v,v)\nPt2=np.eye(5)-Peg\nhorb_cf = 6*Peg-4*Pt2   # coefficient of Dq\nhcf=np.kron(horb_cf,np.eye(2))\nHcf=onebody(hcf)\n# S+ \nhsp=np.zeros((N,N))\nfor oi in range(5): hsp[2*oi,2*oi+1]=1.0\nSp=onebody(hsp)\nSm=Sp.T\nSz=np.diag([sum((0.5 if st_s==0 else -0.5) for st_s in [so(x)[1] for x in st]) for st in dets])\nS2=Sm@Sp+Sz@Sz+Sz\n# rotation matrices for l=2\nLz=np.diag(ms).astype(complex)\nLp=np.zeros((5,5),complex)\nfor a,m in enumerate(ms):\n    if m<2: Lp[a+1,a]=np.sqrt(6-m*(m+1))\nLm=Lp.conj().T\nLy=(Lp-Lm)/(2j)\ndef Dl2(R):\n    al,be,ga=Rot.from_matrix(R).as_euler('zyz')\n    return expm(-1j*al*Lz)@expm(-1j*be*Ly)@expm(-1j*ga*Lz)\ndef Gamma(R):\n    U=np.kron(Dl2(R),np.eye(2))\n    G=np.zeros((D,D),complex)\n    for n,dn in enumerate(dets):\n        for m,dm in enumerate(dets):\n            G[m,n]=np.linalg.det(U[np.ix_(dm,dn)])\n    return G\nclasses=[(1,Rot.identity().as_matrix()),\n (8,Rot.from_rotvec(np.array([1,1,1])/np.sqrt(3)*2*np.pi/3).as_matrix()),\n (3,Rot.from_rotvec([0,0,np.pi]).as_matrix()),\n (6,Rot.from_rotvec([0,0,np.pi/2]).as_matrix()),\n (6,Rot.from_rotvec(np.array([1,1,0])/np.sqrt(2)*np.pi).as_matrix())]\nGs=[Gamma(R) for _,R in classes]\nchartab={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\nsizes=[c for c,_ in classes]\ndef label(Q,S):\n    dimorb=Q.shape[1]//(2*S+1)\n    chis=[np.trace(Q.conj().T@G@Q).real/(2*S+1) for G in Gs]\n    best=None\n    for name,ct in chartab.items():\n        mult=sum(sizes[i]*chis[i]*ct[i] for i in range(5))/24\n        if abs(mult-round(mult))<1e-6 and round(mult)==1: best=name\n    return best, [round(c,3) for c in chis]\ndef spectrum(Dq):\n    H=Hee+Dq*Hcf\n    Mtot=H+1000*S2\n    w,U=eigh(Mtot)\n    out=[]\n    i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1\n        Q=U[:,i:j+1]\n        Ssq=(w[i]/1000.0)  # approx\n        # find S from S2 expectation\n        s2=np.trace(Q.conj().T@S2@Q).real/Q.shape[1]\n        S=(-1+np.sqrt(1+4*s2))/2\n        E=np.trace(Q.conj().T@H@Q).real/Q.shape[1]\n        out.append((S,E,Q))\n        i=j+1\n    return out\nif __name__==\"__main__\":\n    for Dq in [1.0,2.2,3.5]:\n        sp=spectrum(Dq)\n        E0=min(e for S,e,Q in sp)\n        print(\"Dq/B=\",Dq)\n        rows=[]\n        for S,E,Q in sp:\n            lab,ch=label(Q,round(S*2)/2)\n            rows.append((E-E0,int(round(2*S+1)),lab,Q.shape[1]//int(round(2*S+1)),ch))\n        rows.sort()\n        for r in rows: print(\"  E/B=%.4f mult=%d irrep=%s dim=%d chi=%s\"%r)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d3.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 321: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "T=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d3.py",
+     "line": 50,
+     "method": "matrix",
+     "text": "Hee=np.zeros((D,D))"
+    },
+    {
+     "script": "d3.py",
+     "line": 68,
+     "method": "matrix",
+     "text": "M=np.zeros((D,D))"
+    },
+    {
+     "script": "d3.py",
+     "line": 82,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5)); Pt2=np.zeros((5,5))"
+    },
+    {
+     "script": "d3.py",
+     "line": 83,
+     "method": "matrix",
+     "text": "Peg[2,2]=1"
+    },
+    {
+     "script": "d3.py",
+     "line": 91,
+     "method": "matrix",
+     "text": "hsp=np.zeros((N,N))"
+    },
+    {
+     "script": "d3.py",
+     "line": 99,
+     "method": "matrix",
+     "text": "Lp=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d3.py",
+     "line": 109,
+     "method": "matrix",
+     "text": "G=np.zeros((D,D),complex)"
+    },
+    {
+     "script": "d3.py",
+     "line": 112,
+     "method": "matrix",
+     "text": "G[m,n]=np.linalg.det(U[np.ix_(dm,dn)])"
+    },
+    {
+     "script": "d3.py",
+     "line": 133,
+     "method": "eigen_solver",
+     "text": "w,U=eigh(Mtot)"
+    },
+    {
+     "script": "d3.py",
+     "line": 149,
+     "method": "typed_table",
+     "text": "for Dq in [1.0,2.2,3.5]:"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Check numpy, scipy, sympy in a writable dir",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && python3 -c \"import numpy, scipy, sympy; print(numpy.__version__, scipy.__version__, sympy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find writable directory and check Python packages",
+   "command": "cd ~ && pwd && touch t.txt && echo ok; python3 -c \"import numpy, scipy, sympy; print(numpy.__version__, scipy.__version__, sympy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 't.txt': Read-only file system\n2.5.4 1.18.1 1.14.0\nShell cwd was reset to /tmp/tsbench-run-vwu_7v4d",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Run d3 Tanabe-Sugano diagonalization via stdin script",
+   "command": "cat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.linalg import expm, eigh\nfrom scipy.spatial.transform import Rotation as Rot\n\nC=3003/722\nF2=49+7*C; F4=12.6*C\nms=[-2,-1,0,1,2]\ndef Vk(k):\n    T=np.zeros((5,5,5,5))\n    for a,m1 in enumerate(ms):\n        for b,m2 in enumerate(ms):\n            for c,m3 in enumerate(ms):\n                for d,m4 in enumerate(ms):\n                    s=0.0\n                    for q in range(-k,k+1):\n                        g1=float(gaunt(2,k,2,-m1,-q,m3))\n                        if g1==0: continue\n                        g2=float(gaunt(2,k,2,-m2,q,m4))\n                        s+= (-1)**((m1+q)%2)*g1*(-1)**(m2%2)*g2\n                    T[a,b,c,d]=s*4*np.pi/(2*k+1)\n    return T\nV2=Vk(2); V4=Vk(4)\nN=10\ndef so(i): return i//2, i%2\ndef create(i,st):\n    if i in st: return None\n    p=sum(1 for x in st if x<i)\n    return ((-1)**p, tuple(sorted(st+(i,))))\ndef annih(i,st):\n    if i not in st: return None\n    p=st.index(i)\n    return ((-1)**p, tuple(x for x in st if x!=i))\nVso={}\nfor i in range(N):\n  for j in range(N):\n    for k in range(N):\n      for l in range(N):\n        mi,si=so(i); mj,sj=so(j); mk,sk=so(k); ml,sl=so(l)\n        if si!=sk or sj!=sl: continue\n        v=F2*V2[mi,mj,mk,ml]+F4*V4[mi,mj,mk,ml]\n        if abs(v)>1e-12: Vso[(i,j,k,l)]=v\ndets=list(itertools.combinations(range(N),3))\nix={d:n for n,d in enumerate(dets)}\nD=len(dets)\nHee=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for (i,j,k,l),v in Vso.items():\n        r=annih(k,st)\n        if r is None: continue\n        s1,st1=r\n        r=annih(l,st1)\n        if r is None: continue\n        s2,st2=r\n        r=create(j,st2)\n        if r is None: continue\n        s3,st3=r\n        r=create(i,st3)\n        if r is None: continue\n        s4,st4=r\n        Hee[ix[st4],n]+=0.5*v*s1*s2*s3*s4\ndef onebody(h):\n    M=np.zeros((D,D))\n    for n,st in enumerate(dets):\n        for i in range(N):\n            for j in range(N):\n                if abs(h[i,j])<1e-14: continue\n                r=annih(j,st)\n                if r is None: continue\n                s1,st1=r\n                r=create(i,st1)\n                if r is None: continue\n                s2,st2=r\n                M[ix[st2],n]+=h[i,j]*s1*s2\n    return M\nPeg=np.zeros((5,5)); Peg[2,2]=1\nv=np.zeros(5); v[0]=1/np.sqrt(2); v[4]=1/np.sqrt(2)\nPeg+=np.outer(v,v)\nPt2=np.eye(5)-Peg\nHcf=onebody(np.kron(6*Peg-4*Pt2,np.eye(2)))\nhsp=np.zeros((N,N))\nfor oi in range(5): hsp[2*oi,2*oi+1]=1.0\nSp=onebody(hsp); Sm=Sp.T\nSz=np.diag([sum((0.5 if so(x)[1]==0 else -0.5) for x in st) for st in dets])\nS2=Sm@Sp+Sz@Sz+Sz\nLz=np.diag(ms).astype(complex)\nLp=np.zeros((5,5),complex)\nfor a,m in enumerate(ms):\n    if m<2: Lp[a+1,a]=np.sqrt(6-m*(m+1))\nLm=Lp.conj().T\nLy=(Lp-Lm)/(2j)\ndef Dl2(R):\n    al,be,ga=Rot.from_matrix(R).as_euler('zyz')\n    return expm(-1j*al*Lz)@expm(-1j*be*Ly)@expm(-1j*ga*Lz)\ndef Gamma(R):\n    U=np.kron(Dl2(R),np.eye(2))\n    G=np.zeros((D,D),complex)\n    for n,dn in enumerate(dets):\n        for m,dm in enumerate(dets):\n            G[m,n]=np.linalg.det(U[np.ix_(dm,dn)])\n    return G\nclasses=[(1,Rot.identity().as_matrix()),\n (8,Rot.from_rotvec(np.array([1,1,1])/np.sqrt(3)*2*np.pi/3).as_matrix()),\n (3,Rot.from_rotvec([0,0,np.pi]).as_matrix()),\n (6,Rot.from_rotvec([0,0,np.pi/2]).as_matrix()),\n (6,Rot.from_rotvec(np.array([1,1,0])/np.sqrt(2)*np.pi).as_matrix())]\nGs=[Gamma(R) for _,R in classes]\nchartab={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\nsizes=[c for c,_ in classes]\ndef label(Q,S):\n    mult_s=int(round(2*S+1))\n    chis=[np.trace(Q.conj().T@G@Q).real/mult_s for G in Gs]\n    res=[]\n    for name,ct in chartab.items():\n        mult=sum(sizes[i]*chis[i]*ct[i] for i in range(5))/24\n        if abs(mult-round(mult))<1e-5 and round(mult)>0: res.append((name,round(mult)))\n    return res, [round(c,3) for c in chis]\ndef spectrum(Dq):\n    H=Hee+Dq*Hcf\n    w,U=eigh(H+1000*S2)\n    out=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1\n        Q=U[:,i:j+1]\n        s2=np.trace(Q.conj().T@S2@Q).real/Q.shape[1]\n        S=(-1+np.sqrt(1+4*s2))/2\n        E=np.trace(Q.conj().T@H@Q).real/Q.shape[1]\n        out.append((S,E,Q)); i=j+1\n    return out\nfor Dq in [1.0,2.2,3.5]:\n    sp=spectrum(Dq)\n    E0=min(e for S,e,Q in sp)\n    print(\"Dq/B=\",Dq)\n    rows=[]\n    for S,E,Q in sp:\n        mult=int(round(2*S+1))\n        lab,ch=label(Q,S)\n        rows.append((E-E0,mult,lab,Q.shape[1]//mult,ch))\n    rows.sort(key=lambda r:r[0])\n    for r in rows: print(\"  E/B=%.4f mult=%d irrep=%s orbdim=%d chi=%s\"%r)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "3fdd1ce3d5e6d66260aef1f2e78da520f48a5e7e7eab6e4e3d250d0d383c33a6",
+     "lines": 141,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.linalg import expm, eigh\nfrom scipy.spatial.transform import Rotation as Rot\n\nC=3003/722\nF2=49+7*C; F4=12.6*C\nms=[-2,-1,0,1,2]\ndef Vk(k):\n    T=np.zeros((5,5,5,5))\n    for a,m1 in enumerate(ms):\n        for b,m2 in enumerate(ms):\n            for c,m3 in enumerate(ms):\n                for d,m4 in enumerate(ms):\n                    s=0.0\n                    for q in range(-k,k+1):\n                        g1=float(gaunt(2,k,2,-m1,-q,m3))\n                        if g1==0: continue\n                        g2=float(gaunt(2,k,2,-m2,q,m4))\n                        s+= (-1)**((m1+q)%2)*g1*(-1)**(m2%2)*g2\n                    T[a,b,c,d]=s*4*np.pi/(2*k+1)\n    return T\nV2=Vk(2); V4=Vk(4)\nN=10\ndef so(i): return i//2, i%2\ndef create(i,st):\n    if i in st: return None\n    p=sum(1 for x in st if x<i)\n    return ((-1)**p, tuple(sorted(st+(i,))))\ndef annih(i,st):\n    if i not in st: return None\n    p=st.index(i)\n    return ((-1)**p, tuple(x for x in st if x!=i))\nVso={}\nfor i in range(N):\n  for j in range(N):\n    for k in range(N):\n      for l in range(N):\n        mi,si=so(i); mj,sj=so(j); mk,sk=so(k); ml,sl=so(l)\n        if si!=sk or sj!=sl: continue\n        v=F2*V2[mi,mj,mk,ml]+F4*V4[mi,mj,mk,ml]\n        if abs(v)>1e-12: Vso[(i,j,k,l)]=v\ndets=list(itertools.combinations(range(N),3))\nix={d:n for n,d in enumerate(dets)}\nD=len(dets)\nHee=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for (i,j,k,l),v in Vso.items():\n        r=annih(k,st)\n        if r is None: continue\n        s1,st1=r\n        r=annih(l,st1)\n        if r is None: continue\n        s2,st2=r\n        r=create(j,st2)\n        if r is None: continue\n        s3,st3=r\n        r=create(i,st3)\n        if r is None: continue\n        s4,st4=r\n        Hee[ix[st4],n]+=0.5*v*s1*s2*s3*s4\ndef onebody(h):\n    M=np.zeros((D,D))\n    for n,st in enumerate(dets):\n        for i in range(N):\n            for j in range(N):\n                if abs(h[i,j])<1e-14: continue\n                r=annih(j,st)\n                if r is None: continue\n                s1,st1=r\n                r=create(i,st1)\n                if r is None: continue\n                s2,st2=r\n                M[ix[st2],n]+=h[i,j]*s1*s2\n    return M\nPeg=np.zeros((5,5)); Peg[2,2]=1\nv=np.zeros(5); v[0]=1/np.sqrt(2); v[4]=1/np.sqrt(2)\nPeg+=np.outer(v,v)\nPt2=np.eye(5)-Peg\nHcf=onebody(np.kron(6*Peg-4*Pt2,np.eye(2)))\nhsp=np.zeros((N,N))\nfor oi in range(5): hsp[2*oi,2*oi+1]=1.0\nSp=onebody(hsp); Sm=Sp.T\nSz=np.diag([sum((0.5 if so(x)[1]==0 else -0.5) for x in st) for st in dets])\nS2=Sm@Sp+Sz@Sz+Sz\nLz=np.diag(ms).astype(complex)\nLp=np.zeros((5,5),complex)\nfor a,m in enumerate(ms):\n    if m<2: Lp[a+1,a]=np.sqrt(6-m*(m+1))\nLm=Lp.conj().T\nLy=(Lp-Lm)/(2j)\ndef Dl2(R):\n    al,be,ga=Rot.from_matrix(R).as_euler('zyz')\n    return expm(-1j*al*Lz)@expm(-1j*be*Ly)@expm(-1j*ga*Lz)\ndef Gamma(R):\n    U=np.kron(Dl2(R),np.eye(2))\n    G=np.zeros((D,D),complex)\n    for n,dn in enumerate(dets):\n        for m,dm in enumerate(dets):\n            G[m,n]=np.linalg.det(U[np.ix_(dm,dn)])\n    return G\nclasses=[(1,Rot.identity().as_matrix()),\n (8,Rot.from_rotvec(np.array([1,1,1])/np.sqrt(3)*2*np.pi/3).as_matrix()),\n (3,Rot.from_rotvec([0,0,np.pi]).as_matrix()),\n (6,Rot.from_rotvec([0,0,np.pi/2]).as_matrix()),\n (6,Rot.from_rotvec(np.array([1,1,0])/np.sqrt(2)*np.pi).as_matrix())]\nGs=[Gamma(R) for _,R in classes]\nchartab={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\nsizes=[c for c,_ in classes]\ndef label(Q,S):\n    mult_s=int(round(2*S+1))\n    chis=[np.trace(Q.conj().T@G@Q).real/mult_s for G in Gs]\n    res=[]\n    for name,ct in chartab.items():\n        mult=sum(sizes[i]*chis[i]*ct[i] for i in range(5))/24\n        if abs(mult-round(mult))<1e-5 and round(mult)>0: res.append((name,round(mult)))\n    return res, [round(c,3) for c in chis]\ndef spectrum(Dq):\n    H=Hee+Dq*Hcf\n    w,U=eigh(H+1000*S2)\n    out=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1\n        Q=U[:,i:j+1]\n        s2=np.trace(Q.conj().T@S2@Q).real/Q.shape[1]\n        S=(-1+np.sqrt(1+4*s2))/2\n        E=np.trace(Q.conj().T@H@Q).real/Q.shape[1]\n        out.append((S,E,Q)); i=j+1\n    return out\nfor Dq in [1.0,2.2,3.5]:\n    sp=spectrum(Dq)\n    E0=min(e for S,e,Q in sp)\n    print(\"Dq/B=\",Dq)\n    rows=[]\n    for S,E,Q in sp:\n        mult=int(round(2*S+1))\n        lab,ch=label(Q,S)\n        rows.append((E-E0,mult,lab,Q.shape[1]//mult,ch))\n    rows.sort(key=lambda r:r[0])\n    for r in rows: print(\"  E/B=%.4f mult=%d irrep=%s orbdim=%d chi=%s\"%r)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "<stdin>:93: UserWarning: Gimbal lock detected. Setting third angle to zero since it is not possible to uniquely determine all angles.\nDq/B= 1.0\n  E/B=0.0000 mult=4 irrep=[('A2', 1)] orbdim=1 chi=[np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(-1.0), np.float64(-1.0)]\n  E/B=10.0000 mult=4 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=16.4792 mult=4 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=19.1483 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(-0.0), np.float64(-0.0)]\n  E/B=20.0702 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=26.0136 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=26.4778 mult=2 irrep=[('A1', 1)] orbdim=1 chi=[np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(1.0)]\n  E/B=28.5208 mult=4 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=29.3388 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=30.2856 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=32.5475 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(0.0), np.float64(0.0)]\n  E/B=35.3487 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=39.8932 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=40.2867 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=46.4778 mult=2 irrep=[('A2', 1)] orbdim=1 chi=[np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(-1.0), np.float64(-1.0)]\n  E/B=46.9112 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(-0.0), np.float64(-0.0)]\n  E/B=47.4239 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=51.7914 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=70.9415 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(0.0), np.float64(0.0)]\n  E/B=72.9634 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\nDq/B= 2.2\n  E/B=0.0000 mult=4 irrep=[('A2', 1)] orbdim=1 chi=[np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(-1.0), np.float64(-1.0)]\n  E/B=19.7450 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(0.0), np.float64(0.0)]\n  E/B=20.6683 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=22.0000 mult=4 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=29.5063 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=31.6541 mult=4 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=38.4778 mult=2 irrep=[('A1', 1)] orbdim=1 chi=[np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(1.0)]\n  E/B=41.5874 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=42.2425 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=44.5544 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(-0.0), np.float64(0.0)]\n  E/B=49.0371 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=49.3459 mult=4 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=56.3700 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=58.4778 mult=2 irrep=[('A2', 1)] orbdim=1 chi=[np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(-1.0), np.float64(-1.0)]\n  E/B=63.6763 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=66.0443 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=69.5278 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(0.0), np.float64(0.0)]\n  E/B=73.7650 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=94.5183 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=95.7212 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(0.0), np.float64(0.0)]\nDq/B= 3.5\n  E/B=0.0000 mult=4 irrep=[('A2', 1)] orbdim=1 chi=[np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(-1.0), np.float64(-1.0)]\n  E/B=20.0990 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(0.0), np.float64(0.0)]\n  E/B=20.9173 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=31.3413 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=35.0000 mult=4 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=45.6822 mult=4 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=51.4778 mult=2 irrep=[('A1', 1)] orbdim=1 chi=[np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(1.0)]\n  E/B=54.8403 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=55.2365 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=57.5523 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(0.0), np.float64(0.0)]\n  E/B=62.6925 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=69.1538 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=71.4778 mult=2 irrep=[('A2', 1)] orbdim=1 chi=[np.float64(1.0), np.float64(1.0), np.float64(1.0), np.float64(-1.0), np.float64(-1.0)]\n  E/B=74.3178 mult=4 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=85.3925 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(0.0), np.float64(-0.0)]\n  E/B=89.6042 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=91.3625 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=98.9387 mult=2 irrep=[('T1', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(-0.0), np.float64(-1.0), np.float64(1.0), np.float64(-1.0)]\n  E/B=119.3286 mult=2 irrep=[('T2', 1)] orbdim=3 chi=[np.float64(3.0), np.float64(0.0), np.float64(-1.0), np.float64(-1.0), np.float64(1.0)]\n  E/B=131.5047 mult=2 irrep=[('E', 1)] orbdim=2 chi=[np.float64(2.0), np.float64(-1.0), np.float64(2.0), np.float64(-0.0), np.float64(-0.0)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "T=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 46,
+     "method": "matrix",
+     "text": "Hee=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 63,
+     "method": "matrix",
+     "text": "M=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 76,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5)); Peg[2,2]=1"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 81,
+     "method": "matrix",
+     "text": "hsp=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 87,
+     "method": "matrix",
+     "text": "Lp=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 97,
+     "method": "matrix",
+     "text": "G=np.zeros((D,D),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 100,
+     "method": "matrix",
+     "text": "G[m,n]=np.linalg.det(U[np.ix_(dm,dn)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 120,
+     "method": "eigen_solver",
+     "text": "w,U=eigh(H+1000*S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 131,
+     "method": "typed_table",
+     "text": "for Dq in [1.0,2.2,3.5]:"
+    }
+   ],
+   "produces": [
+    "points[1].e_over_b",
+    "points[2].e_over_b",
+    "points[3].e_over_b",
+    "points[4].e_over_b",
+    "points[6].e_over_b",
+    "points[7].e_over_b",
+    "points[8].e_over_b"
+   ]
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "No-op placeholder check",
+   "command": "cat << 'EOF' | python3 - 2>/dev/null\nexec(open('/dev/stdin').read()) if False else None\nEOF\necho skip",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "1c0fdaefc1360fbdededd17d46b37142de6437c7eba26a81f8cf216c6b957419",
+     "lines": 1,
+     "code": "exec(open('/dev/stdin').read()) if False else None\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "skip",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Check quartet Coulomb energies against 4P-4F splitting",
+   "command": "cat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.linalg import eigh\nC=3003/722; F2=49+7*C; F4=12.6*C\nms=[-2,-1,0,1,2]\ndef Vk(k):\n    T=np.zeros((5,5,5,5))\n    for a,m1 in enumerate(ms):\n     for b,m2 in enumerate(ms):\n      for c,m3 in enumerate(ms):\n       for d,m4 in enumerate(ms):\n        s=0.0\n        for q in range(-k,k+1):\n            g1=float(gaunt(2,k,2,-m1,-q,m3))\n            if g1==0: continue\n            g2=float(gaunt(2,k,2,-m2,q,m4))\n            s+=(-1)**((m1+q)%2)*g1*(-1)**(m2%2)*g2\n        T[a,b,c,d]=s*4*np.pi/(2*k+1)\n    return T\nV2=Vk(2);V4=Vk(4)\n# check: free-ion F0 part not needed; quick sanity: sum rule\nN=10\ndef so(i): return i//2,i%2\ndef create(i,st):\n    if i in st: return None\n    p=sum(1 for x in st if x<i); return ((-1)**p,tuple(sorted(st+(i,))))\ndef annih(i,st):\n    if i not in st: return None\n    p=st.index(i); return ((-1)**p,tuple(x for x in st if x!=i))\ndets=list(itertools.combinations(range(N),3)); ix={d:n for n,d in enumerate(dets)}; D=len(dets)\ndef build(F2,F4):\n    Vso={}\n    for i,j,k,l in itertools.product(range(N),repeat=4):\n        mi,si=so(i);mj,sj=so(j);mk,sk=so(k);ml,sl=so(l)\n        if si!=sk or sj!=sl: continue\n        v=F2*V2[mi,mj,mk,ml]+F4*V4[mi,mj,mk,ml]\n        if abs(v)>1e-12: Vso[(i,j,k,l)]=v\n    H=np.zeros((D,D))\n    for n,st in enumerate(dets):\n        for (i,j,k,l),v in Vso.items():\n            r=annih(k,st)\n            if r is None: continue\n            s1,st1=r; r=annih(l,st1)\n            if r is None: continue\n            s2,st2=r; r=create(j,st2)\n            if r is None: continue\n            s3,st3=r; r=create(i,st3)\n            if r is None: continue\n            s4,st4=r\n            H[ix[st4],n]+=0.5*v*s1*s2*s3*s4\n    return H\nH=build(F2,F4)\n# quartet M_S=3/2 determinants: all spin up\nqd=[n for n,d in enumerate(dets) if all(so(x)[1]==0 for x in d)]\nprint(\"quartet Coulomb eigen (B=1):\", np.round(np.linalg.eigvalsh(H[np.ix_(qd,qd)]),4))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "4fab683cabc6afd77555e87e57f5033ca25fda8cc43debcdf2edf1fb9e907bb6",
+     "lines": 55,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.linalg import eigh\nC=3003/722; F2=49+7*C; F4=12.6*C\nms=[-2,-1,0,1,2]\ndef Vk(k):\n    T=np.zeros((5,5,5,5))\n    for a,m1 in enumerate(ms):\n     for b,m2 in enumerate(ms):\n      for c,m3 in enumerate(ms):\n       for d,m4 in enumerate(ms):\n        s=0.0\n        for q in range(-k,k+1):\n            g1=float(gaunt(2,k,2,-m1,-q,m3))\n            if g1==0: continue\n            g2=float(gaunt(2,k,2,-m2,q,m4))\n            s+=(-1)**((m1+q)%2)*g1*(-1)**(m2%2)*g2\n        T[a,b,c,d]=s*4*np.pi/(2*k+1)\n    return T\nV2=Vk(2);V4=Vk(4)\n# check: free-ion F0 part not needed; quick sanity: sum rule\nN=10\ndef so(i): return i//2,i%2\ndef create(i,st):\n    if i in st: return None\n    p=sum(1 for x in st if x<i); return ((-1)**p,tuple(sorted(st+(i,))))\ndef annih(i,st):\n    if i not in st: return None\n    p=st.index(i); return ((-1)**p,tuple(x for x in st if x!=i))\ndets=list(itertools.combinations(range(N),3)); ix={d:n for n,d in enumerate(dets)}; D=len(dets)\ndef build(F2,F4):\n    Vso={}\n    for i,j,k,l in itertools.product(range(N),repeat=4):\n        mi,si=so(i);mj,sj=so(j);mk,sk=so(k);ml,sl=so(l)\n        if si!=sk or sj!=sl: continue\n        v=F2*V2[mi,mj,mk,ml]+F4*V4[mi,mj,mk,ml]\n        if abs(v)>1e-12: Vso[(i,j,k,l)]=v\n    H=np.zeros((D,D))\n    for n,st in enumerate(dets):\n        for (i,j,k,l),v in Vso.items():\n            r=annih(k,st)\n            if r is None: continue\n            s1,st1=r; r=annih(l,st1)\n            if r is None: continue\n            s2,st2=r; r=create(j,st2)\n            if r is None: continue\n            s3,st3=r; r=create(i,st3)\n            if r is None: continue\n            s4,st4=r\n            H[ix[st4],n]+=0.5*v*s1*s2*s3*s4\n    return H\nH=build(F2,F4)\n# quartet M_S=3/2 determinants: all spin up\nqd=[n for n,d in enumerate(dets) if all(so(x)[1]==0 for x in d)]\nprint(\"quartet Coulomb eigen (B=1):\", np.round(np.linalg.eigvalsh(H[np.ix_(qd,qd)]),4))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "quartet Coulomb eigen (B=1): [-32.469 -32.469 -32.469 -32.469 -32.469 -32.469 -32.469 -17.469 -17.469\n -17.469]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 7,
+     "method": "matrix",
+     "text": "T=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "H=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 55,
+     "method": "eigen_solver",
+     "text": "print(\"quartet Coulomb eigen (B=1):\", np.round(np.linalg.eigvalsh(H[np.ix_(qd,qd)]),4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Check quartet M_S=3/2 sector energies vs Dq",
+   "command": "cat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.linalg import eigh\nC=3003/722; F2=49+7*C; F4=12.6*C\nms=[-2,-1,0,1,2]\ndef Vk(k):\n    T=np.zeros((5,5,5,5))\n    for a,m1 in enumerate(ms):\n     for b,m2 in enumerate(ms):\n      for c,m3 in enumerate(ms):\n       for d,m4 in enumerate(ms):\n        s=0.0\n        for q in range(-k,k+1):\n            g1=float(gaunt(2,k,2,-m1,-q,m3))\n            if g1==0: continue\n            g2=float(gaunt(2,k,2,-m2,q,m4))\n            s+=(-1)**((m1+q)%2)*g1*(-1)**(m2%2)*g2\n        T[a,b,c,d]=s*4*np.pi/(2*k+1)\n    return T\nV2=Vk(2);V4=Vk(4)\nN=10\ndef so(i): return i//2,i%2\ndef create(i,st):\n    if i in st: return None\n    p=sum(1 for x in st if x<i); return ((-1)**p,tuple(sorted(st+(i,))))\ndef annih(i,st):\n    if i not in st: return None\n    p=st.index(i); return ((-1)**p,tuple(x for x in st if x!=i))\ndets=[d for d in itertools.combinations(range(N),3) if all(so(x)[1]==0 for x in d)]\nix={d:n for n,d in enumerate(dets)}; D=len(dets)\nVso={}\nfor i,j,k,l in itertools.product(range(N),repeat=4):\n    mi,si=so(i);mj,sj=so(j);mk,sk=so(k);ml,sl=so(l)\n    if si!=sk or sj!=sl: continue\n    v=F2*V2[mi,mj,mk,ml]+F4*V4[mi,mj,mk,ml]\n    if abs(v)>1e-12: Vso[(i,j,k,l)]=v\ndef opH(hfun):\n    H=np.zeros((D,D))\n    for n,st in enumerate(dets):\n        for (i,j,k,l),v in Vso.items():\n            pass\n    return H\nHee=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for (i,j,k,l),v in Vso.items():\n        r=annih(k,st)\n        if r is None: continue\n        s1,st1=r; r=annih(l,st1)\n        if r is None: continue\n        s2,st2=r; r=create(j,st2)\n        if r is None: continue\n        s3,st3=r; r=create(i,st3)\n        if r is None: continue\n        s4,st4=r\n        if st4 in ix: Hee[ix[st4],n]+=0.5*v*s1*s2*s3*s4\nPeg=np.zeros((5,5)); Peg[2,2]=1\nv=np.zeros(5); v[0]=v[4]=1/np.sqrt(2); Peg+=np.outer(v,v)\nh=6*Peg-4*(np.eye(5)-Peg)\nHcf=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for i in range(N):\n        for j in range(N):\n            if so(i)[1]!=0 or so(j)[1]!=0: continue\n            if abs(h[so(i)[0],so(j)[0]])<1e-14: continue\n            r=annih(j,st)\n            if r is None: continue\n            s1,st1=r; r=create(i,st1)\n            if r is None: continue\n            s2,st2=r\n            Hcf[ix[st2],n]+=h[so(i)[0],so(j)[0]]*s1*s2\nprint(\"Hcf eig\", np.round(eigh(Hcf)[0],4))\nprint(\"Hee eig\", np.round(eigh(Hee)[0],4))\nfor Dq in [0,1,2.2,3.5]:\n    print(Dq, np.round(eigh(Hee+Dq*Hcf)[0],4))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "c1ede95df6c539050e018ddc7b1551c68927723cb3bec69c58eb2f15bfba8c02",
+     "lines": 74,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.linalg import eigh\nC=3003/722; F2=49+7*C; F4=12.6*C\nms=[-2,-1,0,1,2]\ndef Vk(k):\n    T=np.zeros((5,5,5,5))\n    for a,m1 in enumerate(ms):\n     for b,m2 in enumerate(ms):\n      for c,m3 in enumerate(ms):\n       for d,m4 in enumerate(ms):\n        s=0.0\n        for q in range(-k,k+1):\n            g1=float(gaunt(2,k,2,-m1,-q,m3))\n            if g1==0: continue\n            g2=float(gaunt(2,k,2,-m2,q,m4))\n            s+=(-1)**((m1+q)%2)*g1*(-1)**(m2%2)*g2\n        T[a,b,c,d]=s*4*np.pi/(2*k+1)\n    return T\nV2=Vk(2);V4=Vk(4)\nN=10\ndef so(i): return i//2,i%2\ndef create(i,st):\n    if i in st: return None\n    p=sum(1 for x in st if x<i); return ((-1)**p,tuple(sorted(st+(i,))))\ndef annih(i,st):\n    if i not in st: return None\n    p=st.index(i); return ((-1)**p,tuple(x for x in st if x!=i))\ndets=[d for d in itertools.combinations(range(N),3) if all(so(x)[1]==0 for x in d)]\nix={d:n for n,d in enumerate(dets)}; D=len(dets)\nVso={}\nfor i,j,k,l in itertools.product(range(N),repeat=4):\n    mi,si=so(i);mj,sj=so(j);mk,sk=so(k);ml,sl=so(l)\n    if si!=sk or sj!=sl: continue\n    v=F2*V2[mi,mj,mk,ml]+F4*V4[mi,mj,mk,ml]\n    if abs(v)>1e-12: Vso[(i,j,k,l)]=v\ndef opH(hfun):\n    H=np.zeros((D,D))\n    for n,st in enumerate(dets):\n        for (i,j,k,l),v in Vso.items():\n            pass\n    return H\nHee=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for (i,j,k,l),v in Vso.items():\n        r=annih(k,st)\n        if r is None: continue\n        s1,st1=r; r=annih(l,st1)\n        if r is None: continue\n        s2,st2=r; r=create(j,st2)\n        if r is None: continue\n        s3,st3=r; r=create(i,st3)\n        if r is None: continue\n        s4,st4=r\n        if st4 in ix: Hee[ix[st4],n]+=0.5*v*s1*s2*s3*s4\nPeg=np.zeros((5,5)); Peg[2,2]=1\nv=np.zeros(5); v[0]=v[4]=1/np.sqrt(2); Peg+=np.outer(v,v)\nh=6*Peg-4*(np.eye(5)-Peg)\nHcf=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for i in range(N):\n        for j in range(N):\n            if so(i)[1]!=0 or so(j)[1]!=0: continue\n            if abs(h[so(i)[0],so(j)[0]])<1e-14: continue\n            r=annih(j,st)\n            if r is None: continue\n            s1,st1=r; r=create(i,st1)\n            if r is None: continue\n            s2,st2=r\n            Hcf[ix[st2],n]+=h[so(i)[0],so(j)[0]]*s1*s2\nprint(\"Hcf eig\", np.round(eigh(Hcf)[0],4))\nprint(\"Hee eig\", np.round(eigh(Hee)[0],4))\nfor Dq in [0,1,2.2,3.5]:\n    print(Dq, np.round(eigh(Hee+Dq*Hcf)[0],4))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Hcf eig [-12.  -2.  -2.  -2.  -2.  -2.  -2.   8.   8.   8.]\nHee eig [-32.469 -32.469 -32.469 -32.469 -32.469 -32.469 -32.469 -17.469 -17.469\n -17.469]\n0 [-32.469 -32.469 -32.469 -32.469 -32.469 -32.469 -32.469 -17.469 -17.469\n -17.469]\n1 [-44.469  -34.469  -34.469  -34.469  -27.9898 -27.9898 -27.9898 -15.9482\n -15.9482 -15.9482]\n2.2 [-58.869  -36.869  -36.869  -36.869  -27.2149 -27.2149 -27.2149  -9.5231\n  -9.5231  -9.5231]\n3.5 [-74.469  -39.469  -39.469  -39.469  -28.7868 -28.7868 -28.7868  -0.1512\n  -0.1512  -0.1512]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 7,
+     "method": "matrix",
+     "text": "T=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "H=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "Hee=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 56,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5)); Peg[2,2]=1"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 59,
+     "method": "matrix",
+     "text": "Hcf=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 71,
+     "method": "eigen_solver",
+     "text": "print(\"Hcf eig\", np.round(eigh(Hcf)[0],4))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "eigen_solver",
+     "text": "print(\"Hee eig\", np.round(eigh(Hee)[0],4))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 74,
+     "method": "eigen_solver",
+     "text": "print(Dq, np.round(eigh(Hee+Dq*Hcf)[0],4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Project CF onto 4F and 4P quartet subspaces",
+   "command": "cat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.linalg import eigh\nC=3003/722; F2=49+7*C; F4=12.6*C\nms=[-2,-1,0,1,2]\ndef Vk(k):\n    T=np.zeros((5,5,5,5))\n    for a,m1 in enumerate(ms):\n     for b,m2 in enumerate(ms):\n      for c,m3 in enumerate(ms):\n       for d,m4 in enumerate(ms):\n        s=0.0\n        for q in range(-k,k+1):\n            g1=float(gaunt(2,k,2,-m1,-q,m3))\n            if g1==0: continue\n            g2=float(gaunt(2,k,2,-m2,q,m4))\n            s+=(-1)**((m1+q)%2)*g1*(-1)**(m2%2)*g2\n        T[a,b,c,d]=s*4*np.pi/(2*k+1)\n    return T\nV2=Vk(2);V4=Vk(4)\nN=10\ndef so(i): return i//2,i%2\ndef create(i,st):\n    if i in st: return None\n    p=sum(1 for x in st if x<i); return ((-1)**p,tuple(sorted(st+(i,))))\ndef annih(i,st):\n    if i not in st: return None\n    p=st.index(i); return ((-1)**p,tuple(x for x in st if x!=i))\ndets=[d for d in itertools.combinations(range(N),3) if all(so(x)[1]==0 for x in d)]\nix={d:n for n,d in enumerate(dets)}; D=len(dets)\nVso={}\nfor i,j,k,l in itertools.product(range(N),repeat=4):\n    mi,si=so(i);mj,sj=so(j);mk,sk=so(k);ml,sl=so(l)\n    if si!=sk or sj!=sl: continue\n    v=F2*V2[mi,mj,mk,ml]+F4*V4[mi,mj,mk,ml]\n    if abs(v)>1e-12: Vso[(i,j,k,l)]=v\nHee=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for (i,j,k,l),v in Vso.items():\n        r=annih(k,st)\n        if r is None: continue\n        s1,st1=r; r=annih(l,st1)\n        if r is None: continue\n        s2,st2=r; r=create(j,st2)\n        if r is None: continue\n        s3,st3=r; r=create(i,st3)\n        if r is None: continue\n        s4,st4=r\n        Hee[ix[st4],n]+=0.5*v*s1*s2*s3*s4\nPeg=np.zeros((5,5)); Peg[2,2]=1\nv=np.zeros(5); v[0]=v[4]=1/np.sqrt(2); Peg+=np.outer(v,v)\nh=6*Peg-4*(np.eye(5)-Peg)\nHcf=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for i in range(N):\n        for j in range(N):\n            if so(i)[1]!=0 or so(j)[1]!=0: continue\n            r=annih(j,st)\n            if r is None: continue\n            s1,st1=r; r=create(i,st1)\n            if r is None: continue\n            s2,st2=r\n            Hcf[ix[st2],n]+=h[so(i)[0],so(j)[0]]*s1*s2\nw,U=eigh(Hee)\nprint(\"Coulomb eig\",np.round(w,4))\nPF=U[:,w<-30]; PP=U[:,w>-20]\nprint(\"P_F Hcf P_F eig\",np.round(eigh(PF.T@Hcf@PF)[0],4))\nprint(\"P_P Hcf P_P eig\",np.round(eigh(PP.T@Hcf@PP)[0],4))\nprint(\"Hcf eig\",np.round(eigh(Hcf)[0],4))\nprint(\"Hcf full check symmetric\", np.allclose(Hcf,Hcf.T))\nprint(\"Hee symmetric\", np.allclose(Hee,Hee.T))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "0a5503438e96e9df57aa9f83e330e323cc2e2ebe50b9bf5776db134a73787179",
+     "lines": 71,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.linalg import eigh\nC=3003/722; F2=49+7*C; F4=12.6*C\nms=[-2,-1,0,1,2]\ndef Vk(k):\n    T=np.zeros((5,5,5,5))\n    for a,m1 in enumerate(ms):\n     for b,m2 in enumerate(ms):\n      for c,m3 in enumerate(ms):\n       for d,m4 in enumerate(ms):\n        s=0.0\n        for q in range(-k,k+1):\n            g1=float(gaunt(2,k,2,-m1,-q,m3))\n            if g1==0: continue\n            g2=float(gaunt(2,k,2,-m2,q,m4))\n            s+=(-1)**((m1+q)%2)*g1*(-1)**(m2%2)*g2\n        T[a,b,c,d]=s*4*np.pi/(2*k+1)\n    return T\nV2=Vk(2);V4=Vk(4)\nN=10\ndef so(i): return i//2,i%2\ndef create(i,st):\n    if i in st: return None\n    p=sum(1 for x in st if x<i); return ((-1)**p,tuple(sorted(st+(i,))))\ndef annih(i,st):\n    if i not in st: return None\n    p=st.index(i); return ((-1)**p,tuple(x for x in st if x!=i))\ndets=[d for d in itertools.combinations(range(N),3) if all(so(x)[1]==0 for x in d)]\nix={d:n for n,d in enumerate(dets)}; D=len(dets)\nVso={}\nfor i,j,k,l in itertools.product(range(N),repeat=4):\n    mi,si=so(i);mj,sj=so(j);mk,sk=so(k);ml,sl=so(l)\n    if si!=sk or sj!=sl: continue\n    v=F2*V2[mi,mj,mk,ml]+F4*V4[mi,mj,mk,ml]\n    if abs(v)>1e-12: Vso[(i,j,k,l)]=v\nHee=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for (i,j,k,l),v in Vso.items():\n        r=annih(k,st)\n        if r is None: continue\n        s1,st1=r; r=annih(l,st1)\n        if r is None: continue\n        s2,st2=r; r=create(j,st2)\n        if r is None: continue\n        s3,st3=r; r=create(i,st3)\n        if r is None: continue\n        s4,st4=r\n        Hee[ix[st4],n]+=0.5*v*s1*s2*s3*s4\nPeg=np.zeros((5,5)); Peg[2,2]=1\nv=np.zeros(5); v[0]=v[4]=1/np.sqrt(2); Peg+=np.outer(v,v)\nh=6*Peg-4*(np.eye(5)-Peg)\nHcf=np.zeros((D,D))\nfor n,st in enumerate(dets):\n    for i in range(N):\n        for j in range(N):\n            if so(i)[1]!=0 or so(j)[1]!=0: continue\n            r=annih(j,st)\n            if r is None: continue\n            s1,st1=r; r=create(i,st1)\n            if r is None: continue\n            s2,st2=r\n            Hcf[ix[st2],n]+=h[so(i)[0],so(j)[0]]*s1*s2\nw,U=eigh(Hee)\nprint(\"Coulomb eig\",np.round(w,4))\nPF=U[:,w<-30]; PP=U[:,w>-20]\nprint(\"P_F Hcf P_F eig\",np.round(eigh(PF.T@Hcf@PF)[0],4))\nprint(\"P_P Hcf P_P eig\",np.round(eigh(PP.T@Hcf@PP)[0],4))\nprint(\"Hcf eig\",np.round(eigh(Hcf)[0],4))\nprint(\"Hcf full check symmetric\", np.allclose(Hcf,Hcf.T))\nprint(\"Hee symmetric\", np.allclose(Hee,Hee.T))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Coulomb eig [-32.469 -32.469 -32.469 -32.469 -32.469 -32.469 -32.469 -17.469 -17.469\n -17.469]\nP_F Hcf P_F eig [-12.  -2.  -2.  -2.   6.   6.   6.]\nP_P Hcf P_P eig [-0. -0. -0.]\nHcf eig [-12.  -2.  -2.  -2.  -2.  -2.  -2.   8.   8.   8.]\nHcf full check symmetric True\nHee symmetric True",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 7,
+     "method": "matrix",
+     "text": "T=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 37,
+     "method": "matrix",
+     "text": "Hee=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 50,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5)); Peg[2,2]=1"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 53,
+     "method": "matrix",
+     "text": "Hcf=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "w,U=eigh(Hee)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 67,
+     "method": "eigen_solver",
+     "text": "print(\"P_F Hcf P_F eig\",np.round(eigh(PF.T@Hcf@PF)[0],4))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 68,
+     "method": "eigen_solver",
+     "text": "print(\"P_P Hcf P_P eig\",np.round(eigh(PP.T@Hcf@PP)[0],4))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 69,
+     "method": "eigen_solver",
+     "text": "print(\"Hcf eig\",np.round(eigh(Hcf)[0],4))"
+    }
+   ],
+   "produces": []
+  }
+ ],
+ "values": [
+  {
+   "path": "points[0].dq_over_b",
+   "value": 1.0,
+   "weak": true,
+   "steps": [
+    1,
+    2,
+    4,
+    6,
+    7
+   ],
+   "typed_in_steps": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[0].e_over_b",
+   "value": 10.0,
+   "weak": true,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[1].dq_over_b",
+   "value": 1.0,
+   "weak": true,
+   "steps": [
+    1,
+    2,
+    4,
+    6,
+    7
+   ],
+   "typed_in_steps": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[1].e_over_b",
+   "value": 16.48,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[2].dq_over_b",
+   "value": 1.0,
+   "weak": true,
+   "steps": [
+    1,
+    2,
+    4,
+    6,
+    7
+   ],
+   "typed_in_steps": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[2].e_over_b",
+   "value": 19.15,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[3].dq_over_b",
+   "value": 2.2,
+   "weak": false,
+   "steps": [
+    4,
+    7
+   ],
+   "typed_in_steps": [
+    4,
+    7
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[3].e_over_b",
+   "value": 19.75,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[4].dq_over_b",
+   "value": 2.2,
+   "weak": false,
+   "steps": [
+    4,
+    7
+   ],
+   "typed_in_steps": [
+    4,
+    7
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[4].e_over_b",
+   "value": 20.67,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[5].dq_over_b",
+   "value": 2.2,
+   "weak": false,
+   "steps": [
+    4,
+    7
+   ],
+   "typed_in_steps": [
+    4,
+    7
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[5].e_over_b",
+   "value": 22.0,
+   "weak": true,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[6].dq_over_b",
+   "value": 3.5,
+   "weak": false,
+   "steps": [
+    4,
+    7
+   ],
+   "typed_in_steps": [
+    4,
+    7
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[6].e_over_b",
+   "value": 20.1,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[7].dq_over_b",
+   "value": 3.5,
+   "weak": false,
+   "steps": [
+    4,
+    7
+   ],
+   "typed_in_steps": [
+    4,
+    7
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[7].e_over_b",
+   "value": 20.92,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[8].dq_over_b",
+   "value": 3.5,
+   "weak": false,
+   "steps": [
+    4,
+    7
+   ],
+   "typed_in_steps": [
+    4,
+    7
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[8].e_over_b",
+   "value": 31.34,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  }
+ ],
+ "summary": {
+  "n_steps": 9,
+  "n_scripts": 6,
+  "n_failed_steps": 2,
+  "n_values": 18,
+  "n_linked": 7,
+  "n_weak": 5,
+  "source_steps": [
+   4
+  ],
+  "methods": [
+   "eigen_solver",
+   "typed_table"
+  ],
+  "edits_in_place": false
+ }
+}

@@ -1,6 +1,7 @@
 """Tests for src/tsbench/report/svg/outcome.py: diverging outcome bars and the UpSet plot."""
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -112,6 +113,12 @@ def test_upset_bar_titles_carry_counts_and_task_ids():
     assert any(t.startswith("none") and "6 tasks" in t for t in titles)
     assert any(t.startswith("A, B only") and "0 tasks" in t for t in titles)
     assert any(t.startswith("A, B, C") and "3 tasks" in t for t in titles)
+
+
+def test_upset_without_any_condition_is_empty():
+    """No condition has an evaluable run: nothing to draw, as with no subsets at all."""
+    assert O.upset(SETS, conds=()) == ""
+    assert O.upset([{"key": "", "tasks": ["t1"]}], conds=()) == ""
 
 
 def test_upset_says_how_many_tasks_were_left_out():
@@ -227,3 +234,32 @@ def test_diverging_gives_a_context_overflow_its_own_colour_too():
     root = ET.fromstring(O.outcome_diverging(rows, cats))
     fills = [_classes(r)[0] for r in root.iter(f"{NS}rect") if "tile" in _classes(r)]
     assert len(fills) == 8 and len(set(fills)) == 8 and "e8" in fills
+
+
+# ---------------------------------------------------------------- several models
+
+
+def test_outcome_rows_of_several_models_share_one_axis_and_carry_their_label():
+    rows = [{"cond": "A", "label": "m-long-name · A", "group": "m1", "counts": {"correct": 4, "gross": 6}},
+            {"cond": "C", "label": "m-long-name · C", "group": "m1", "counts": {"correct": 9, "gross": 1}},
+            {"cond": "A", "label": "other · A", "group": "m2", "counts": {"correct": 1, "gross": 2}}]
+    svg = O.outcome_diverging(rows, [("correct", "correct"), ("gross", "gross error")])
+    assert "m-long-name · C: correct 9 of 10 runs" in svg and "other · A: gross error 2 of 3 runs" in svg
+    x = float(re.search(r'<rect class="ok" x="([0-9.]+)"', svg).group(1))  # type: ignore[union-attr]
+    assert x > 100  # the labels stay left of the bars
+    assert svg.count('class="grid"') > 0
+
+
+def test_upset_panels_with_one_scale_draw_equal_tasks_at_equal_height():
+    small = [{"key": "C", "tasks": ["a", "b"]}]
+    large = [{"key": "C", "tasks": ["a", "b"]}, {"key": "BC", "tasks": ["c", "d", "e", "f"]}]
+    scale = O.upset_scale([small, large])
+    assert scale == (4, 6)
+
+    def height(sets: list[dict]) -> float:
+        tagged = [e for e in _root(O.upset(sets, scale=scale)).iter() if _tip(e).startswith("C only")]
+        return float(tagged[0].attrib["height"])
+
+    assert height(small) == height(large)
+    assert height(small) != float(next(e for e in _root(O.upset(small)).iter()
+                                       if _tip(e).startswith("C only")).attrib["height"])

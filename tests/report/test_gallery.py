@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import hashlib
 import json
 import re
 
@@ -319,6 +320,21 @@ def test_reproduce_block_parses_with_the_real_parsers_claude(tmp_path):
     assert str(tmp_path) not in text                                             # no absolute path of this machine
 
 
+def test_reproduce_block_of_a_confirmatory_run_names_its_split_and_doi(tmp_path):
+    """A run of the confirmatory split is redone on that split, with the DOI its manifest recorded."""
+    root = tmp_path / "runs" / "conf"
+    doi = "10.5281/zenodo.23889782"
+    t = _fit_run(root, manifest={"split": "confirmatory", "budget_usd": 3.0,
+                                 "args": {"gateway": False, "split": "confirmatory", "preregistered": doi}})
+    run = {"transcript": t, "root": root, "model": "claude-opus-5-5", "cond": "C", "effort": "medium",
+           "task": "C-closed_form-01", "k": "1"}
+    a = _parse_repro(reproduce.commands(run))["plan"]
+    assert (a.split, a.preregistered, a.task_ids) == ("confirmatory", doi, "C-closed_form-01")
+    plain = {"args": {"gateway": False, "split": "confirmatory"}}
+    text = reproduce.commands(run, plain)
+    assert "--split confirmatory --i-have-preregistered '<DOI>'" in text and "pilot" not in text
+
+
 def test_reproduce_block_gateway(tmp_path):
     root = tmp_path / "runs" / "gw"
     t = _fit_run(root, model="qwen3.5-397b-a17b", cond="A", manifest={"args": {"gateway": True}, "budget_usd": 3.0})
@@ -432,7 +448,7 @@ def test_run_card_clones_hold_links_to_their_sources_until_the_script_replaces_t
     for ids, inner in clones:
         for i in ids.split():
             assert f'href="#{i}"' in inner and f'id="{i}"' in page, i
-    assert re.search(r"\.js\s+\.gallery\s+\.clone\s*>\s*\.dflt\s*\{[^}]*display:\s*none", page)
+    assert re.search(r"\.js\s+\.gallery\s+\.clone\.filled\s*>\s*\.dflt\s*\{[^}]*display:\s*none", page)
 
 
 def test_gallery_figures_follow_the_page_theme_switch_not_only_the_system():
@@ -564,3 +580,139 @@ def test_a_big_raster_image_is_downscaled_when_it_can_still_fit(tmp_path, monkey
     monkeypatch.setattr(gal, "EMBED_LIMIT", 10)
     _, counts = gal.build_html([root], tmp_path / "runs")
     assert len(calls) == 1 and counts["embedded"] >= 1
+
+
+# ---------------------------------------------------------------- no budget: one file with everything
+
+
+def _whole(root: pathlib.Path, out: pathlib.Path, make_figs: bool = True) -> tuple[dict, dict]:
+    return gal.context([root], out, make_figs)
+
+
+def test_without_a_budget_every_image_is_embedded_as_it_is(tmp_path, monkeypatch):
+    root = tmp_path / "runs" / "run"
+    d = _run(root)
+    art = d / "P-diagram-01-k1.artifacts"
+    art.mkdir()
+    (art / "diagram.png").write_bytes(PNG_BYTES)
+    (art / "tiny.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'><script>x</script><rect/></svg>",
+                                  encoding="utf-8")
+    monkeypatch.setattr(gal, "EMBED_LIMIT", 10)
+    monkeypatch.setattr(gal, "_downscale", lambda *a: pytest.fail("no image is shrunk without a budget"))
+    ctx, counts = _whole(root, tmp_path / "runs")
+    cards = [c for t in ctx["image_tasks"] for c in t["cards"]]
+    assert counts["linked"] == 0 and counts["embedded"] == counts["images"] == len(cards) >= 2
+    png = next(c for c in cards if c["name"] == "diagram.png")
+    assert png["link"] is None and base64.b64decode(png["src"].split(",", 1)[1]) == PNG_BYTES
+    assert "script" not in next(c for c in cards if c["name"] == "tiny.svg")["src"]  # sanitised all the same
+
+
+def _index(folder: pathlib.Path, rows: list[tuple[str, pathlib.Path, str]]) -> None:
+    """An image index as results/images holds it: `file` is relative to the folder above `folder`."""
+    with (folder / "run.index.csv").open("w", encoding="utf-8", newline="") as f:
+        out = csv.writer(f)
+        out.writerow(["run_id", "file", "origin", "sha256"])
+        out.writerows([run, file.relative_to(folder.parent).as_posix(), "recovered", sha] for run, file, sha in rows)
+
+
+def _saved_image(images: pathlib.Path, data: bytes) -> pathlib.Path:
+    file = images / "run" / "m" / "B" / "medium" / "P-diagram-01-k1" / "diagram.png"
+    file.parent.mkdir(parents=True)
+    file.write_bytes(data)
+    return file
+
+
+def test_an_image_saved_outside_the_run_folder_comes_from_the_image_index(tmp_path):
+    root = tmp_path / "runs" / "run"
+    _run(root, model="m")
+    images = tmp_path / "images"
+    data = PNG_BYTES + b"recovered"
+    file = _saved_image(images, data)
+    _index(images, [("m/B/medium/P-diagram-01-k1", file, hashlib.sha256(data).hexdigest())])
+    ctx, counts = gal.context([root], tmp_path / "out", False, images=images)
+    cards = [c for t in ctx["image_tasks"] for c in t["cards"]]
+    card = next(c for c in cards if c["source"] == "recovered")
+    assert base64.b64decode(card["src"].split(",", 1)[1]) == data
+    assert card["sha"] == {"text": "recovered", "cls": ""}  # the origin of the index, not the run's own hash claim
+    assert counts["images_by_source"]["recovered"] == 1
+
+
+def test_an_image_of_the_index_that_the_run_already_holds_is_not_shown_twice(tmp_path):
+    root = tmp_path / "runs" / "run"
+    d = _run(root, model="m")
+    art = d / "P-diagram-01-k1.artifacts"
+    art.mkdir()
+    (art / "diagram.png").write_bytes(b"harvested")
+    images = tmp_path / "images"
+    file = _saved_image(images, b"harvested")
+    _index(images, [("m/B/medium/P-diagram-01-k1", file, hashlib.sha256(b"harvested").hexdigest())])
+    assert "recovered" not in gal.context([root], tmp_path / "out", False, images=images)[1]["images_by_source"]
+
+
+def test_an_image_that_differs_from_its_index_entry_stops_the_build(tmp_path):
+    root = tmp_path / "runs" / "run"
+    _run(root, model="m")
+    images = tmp_path / "images"
+    file = _saved_image(images, b"changed")
+    _index(images, [("m/B/medium/P-diagram-01-k1", file, "0" * 64)])
+    with pytest.raises(ValueError, match="diagram.png"):
+        gal.context([root], tmp_path / "out", False, images=images)
+
+
+def test_a_run_set_without_an_image_index_has_only_its_own_images(tmp_path):
+    root = tmp_path / "runs" / "run"
+    _run(root, model="m")
+    plain = gal.context([root], tmp_path / "out", False)[1]["images_by_source"]
+    assert gal.context([root], tmp_path / "out", False, images=tmp_path / "empty")[1]["images_by_source"] == plain
+
+
+def test_without_a_budget_every_figure_is_embedded_and_no_card_links_a_file(tmp_path):
+    root = tmp_path / "runs" / "run"
+    _two_models(root)
+    ctx, counts = _whole(root, tmp_path / "runs")
+    assert counts["figures"] == 4 and counts["figures_embedded"] == 4 and counts["figures_linked"] == 0
+    assert not page.local_links(page.render("gallery.html.j2", **ctx, ctx=ctx))
+
+
+def test_without_a_budget_a_run_has_no_link_to_its_view(tmp_path):
+    root = tmp_path / "runs" / "run"
+    _run(root)
+    view = root / "views" / "m<1>" / "B" / "medium" / "P-diagram-01-k1.html"
+    view.parent.mkdir(parents=True)
+    view.write_text("x", encoding="utf-8")
+    ctx, _ = _whole(root, tmp_path / "runs")
+    assert all(c["head"]["view"] is None for t in ctx["run_tasks"] for c in t["cards"])
+    limited, _ = gal.context([root], tmp_path / "runs", budget=gal.PAGE_BUDGET)
+    assert any(c["head"]["view"] for t in limited["run_tasks"] for c in t["cards"])
+
+
+def test_without_a_budget_no_code_block_is_cut_and_no_entry_left_out(tmp_path, monkeypatch):
+    root = tmp_path / "runs" / "run"
+    _run(root)
+    code = [{"kind": "bash", "path": "x.sh", "call": i, "skeleton": "a" * 30, "exit": 0} for i in range(5)]
+    monkeypatch.setattr(gal, "FILE_CAP", 10)
+    monkeypatch.setattr(gal, "ENTRY_CAP", 2)
+    real = gal.collect_runs
+
+    def with_code(*a, **k):
+        runs = real(*a, **k)
+        runs[0]["code"] = list(code)
+        return runs
+
+    monkeypatch.setattr(gal, "collect_runs", with_code)
+    ctx, _ = gal.context([root], tmp_path / "runs")
+    card = next(c for c in ctx["code_cards"] if c["blocks"])
+    assert card["more"] == 0 and len(card["blocks"]) == 5
+    assert all(b["body"] == "a" * 30 and not b["capped"] for b in card["blocks"])
+
+
+def test_with_a_budget_the_caps_still_hold(tmp_path, monkeypatch):
+    run = {"code": [{"kind": "bash", "path": "x.sh", "call": i, "skeleton": "a" * 30, "exit": 0} for i in range(5)],
+           "code_dir": tmp_path}
+    blocks = gal._code_blocks(run, 2, 10)
+    assert len(blocks) == 2 and all(b["body"] == "a" * 10 and b["capped"] for b in blocks)
+
+
+def test_a_long_inline_svg_stays_with_no_limit():
+    long = "<svg>" + "x" * (gal.MAX_SVG + 1) + "</svg>"
+    assert gal.find_svgs(long) == [] and gal.find_svgs(long, None) == [long]

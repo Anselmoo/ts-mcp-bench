@@ -1,0 +1,515 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-sonnet-5-5/B/medium/C-curve-03-k2.jsonl",
+ "transcript_sha256": "addc68d587c62d28910d07341814a1f22bf5269aabbbc1613f947e907402899a",
+ "answer": {
+  "points": [
+   {
+    "dq_over_b": 1.45,
+    "term": "2Eg",
+    "e_over_b": 7.29
+   },
+   {
+    "dq_over_b": 1.45,
+    "term": "4T2g",
+    "e_over_b": 12.94
+   },
+   {
+    "dq_over_b": 1.45,
+    "term": "2T1g",
+    "e_over_b": 19.28
+   },
+   {
+    "dq_over_b": 2.45,
+    "term": "4T1g(F)",
+    "e_over_b": 2.46
+   },
+   {
+    "dq_over_b": 2.45,
+    "term": "2T1g",
+    "e_over_b": 21.47
+   },
+   {
+    "dq_over_b": 2.45,
+    "term": "2T2g",
+    "e_over_b": 22.44
+   },
+   {
+    "dq_over_b": 3.0,
+    "term": "4T1g(F)",
+    "e_over_b": 7.87
+   },
+   {
+    "dq_over_b": 3.0,
+    "term": "2T1g",
+    "e_over_b": 26.77
+   },
+   {
+    "dq_over_b": 3.0,
+    "term": "2T2g",
+    "e_over_b": 27.82
+   }
+  ],
+  "reason": "I diagonalised the full d7 Coulomb (B=784, C=3699 cm⁻¹, C/B≈4.72) plus octahedral crystal-field Hamiltonian over all 120 determinants and labelled the levels by degeneracy and C4 character. The ground term is 4T1g at Dq/B=1.45 and 2Eg at 2.45 and 3.00, because the spin crossover falls between 1.45 and 2.45."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat > /tmp/a.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nB=784.;C=3699.\nF2=49*B+7*C; F4=63*C/5\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    # <l m1|C^k|l m2> = (-1)^m1 sqrt(5*5)... use gaunt\n    return float((-1)**m1*5*__import__('sympy').sqrt(__import__('sympy').Rational(1,2*k+1))*0+0)\nfrom sympy import sqrt,Rational\nfrom sympy.physics.wigner import wigner_3j\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m1,m1-m2,m2))\nF={0:0,2:F2,4:F4}\n# orbitals spin: index (m,s)\nso=[(m,s) for m in ms for s in (0,1)]\nn=10\ndef V(a,b,cc,d): # <ab|1/r|cd>\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=so[a],so[b],so[cc],so[d]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: return 0\n    t=0\n    for k in (2,4):\n        t+=F[k]/ (1) *c(k,m1,m3)*c(k,m4,m2)*1.0 # c^k(l m1,l m3) c^k(l m4,l m2)\n    return t\n# note <m1|C|m3> convention fine for real result\nVt=np.zeros((n,)*4)\nfor a,b,cc,d in itertools.product(range(n),repeat=4): Vt[a,b,cc,d]=V(a,b,cc,d)\ndef run(Dq):\n    h1=np.zeros((5,5),complex)\n    idx={m:i for i,m in enumerate(ms)}\n    eg=[np.zeros(5),np.zeros(5)]\n    eg[0][idx[0]]=1; eg[1][idx[2]]=eg[1][idx[-2]]=2**-.5\n    P=sum(np.outer(v,v) for v in eg)\n    h1=6*Dq*P-4*Dq*(np.eye(5)-P)\n    h=np.zeros((n,n))\n    for a in range(n):\n        for b in range(n):\n            if so[a][1]==so[b][1]: h[a,b]=h1[idx[so[a][0]],idx[so[b][0]]].real\n    dets=list(itertools.combinations(range(n),7))\n    di={d:i for i,d in enumerate(dets)}\n    H=np.zeros((len(dets),)*2)\n    # build via second quantization\n    def apply(ops,det):\n        # ops list of (type, orb) applied right to left; return (sign,newdet) \n        occ=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in occ: return 0,None\n                p=occ.index(o);sign*=(-1)**p;occ.pop(p)\n            else:\n                if o in occ: return 0,None\n                p=sum(1 for x in occ if x<o);sign*=(-1)**p;occ.insert(p,o)\n        return sign,tuple(occ)\n    for det in dets:\n        j=di[det]\n        for a in range(n):\n            for b in range(n):\n                if h[a,b]!=0:\n                    s,nd=apply([('c',a),('a',b)],det)\n                    if s: H[di[nd],j]+=s*h[a,b]\n        for a,b,cc,d in itertools.product(range(n),repeat=4):\n            v=Vt[a,b,cc,d]\n            if v==0: continue\n            # 1/2 sum <ab|cd> a+_a a+_b a_d a_c\n            s,nd=apply([('c',a),('c',b),('a',d),('a',cc)],det)\n            if s: H[di[nd],j]+=0.5*s*v\n    e=np.linalg.eigvalsh(H)\n    e=e-e[0]\n    # distinct levels\n    L=[];\n    for x in e:\n        if not L or x-L[-1][0]>1e-3*B: L.append([x,1])\n        else: L[-1][1]+=1\n    return [(round(x/B,2),k) for x,k in L[:8]]\nfor D in (1.45,2.45,3.0): print(D,run(D*B))\nE\npython3 /tmp/a.py\n",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "448c1e697afd55c096575458ddc141171ef630c5c1158e4d771ae9ea9d9f28dd",
+     "lines": 74,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nB=784.;C=3699.\nF2=49*B+7*C; F4=63*C/5\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    # <l m1|C^k|l m2> = (-1)^m1 sqrt(5*5)... use gaunt\n    return float((-1)**m1*5*__import__('sympy').sqrt(__import__('sympy').Rational(1,2*k+1))*0+0)\nfrom sympy import sqrt,Rational\nfrom sympy.physics.wigner import wigner_3j\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m1,m1-m2,m2))\nF={0:0,2:F2,4:F4}\n# orbitals spin: index (m,s)\nso=[(m,s) for m in ms for s in (0,1)]\nn=10\ndef V(a,b,cc,d): # <ab|1/r|cd>\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=so[a],so[b],so[cc],so[d]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: return 0\n    t=0\n    for k in (2,4):\n        t+=F[k]/ (1) *c(k,m1,m3)*c(k,m4,m2)*1.0 # c^k(l m1,l m3) c^k(l m4,l m2)\n    return t\n# note <m1|C|m3> convention fine for real result\nVt=np.zeros((n,)*4)\nfor a,b,cc,d in itertools.product(range(n),repeat=4): Vt[a,b,cc,d]=V(a,b,cc,d)\ndef run(Dq):\n    h1=np.zeros((5,5),complex)\n    idx={m:i for i,m in enumerate(ms)}\n    eg=[np.zeros(5),np.zeros(5)]\n    eg[0][idx[0]]=1; eg[1][idx[2]]=eg[1][idx[-2]]=2**-.5\n    P=sum(np.outer(v,v) for v in eg)\n    h1=6*Dq*P-4*Dq*(np.eye(5)-P)\n    h=np.zeros((n,n))\n    for a in range(n):\n        for b in range(n):\n            if so[a][1]==so[b][1]: h[a,b]=h1[idx[so[a][0]],idx[so[b][0]]].real\n    dets=list(itertools.combinations(range(n),7))\n    di={d:i for i,d in enumerate(dets)}\n    H=np.zeros((len(dets),)*2)\n    # build via second quantization\n    def apply(ops,det):\n        # ops list of (type, orb) applied right to left; return (sign,newdet) \n        occ=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in occ: return 0,None\n                p=occ.index(o);sign*=(-1)**p;occ.pop(p)\n            else:\n                if o in occ: return 0,None\n                p=sum(1 for x in occ if x<o);sign*=(-1)**p;occ.insert(p,o)\n        return sign,tuple(occ)\n    for det in dets:\n        j=di[det]\n        for a in range(n):\n            for b in range(n):\n                if h[a,b]!=0:\n                    s,nd=apply([('c',a),('a',b)],det)\n                    if s: H[di[nd],j]+=s*h[a,b]\n        for a,b,cc,d in itertools.product(range(n),repeat=4):\n            v=Vt[a,b,cc,d]\n            if v==0: continue\n            # 1/2 sum <ab|cd> a+_a a+_b a_d a_c\n            s,nd=apply([('c',a),('c',b),('a',d),('a',cc)],det)\n            if s: H[di[nd],j]+=0.5*s*v\n    e=np.linalg.eigvalsh(H)\n    e=e-e[0]\n    # distinct levels\n    L=[];\n    for x in e:\n        if not L or x-L[-1][0]>1e-3*B: L.append([x,1])\n        else: L[-1][1]+=1\n    return [(round(x/B,2),k) for x,k in L[:8]]\nfor D in (1.45,2.45,3.0): print(D,run(D*B))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 0
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 80: /tmp/a.py: Read-only file system\npython3: can't open file '/tmp/a.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 25,
+     "method": "matrix",
+     "text": "Vt=np.zeros((n,)*4)"
+    },
+    {
+     "script": "a.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "h1=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "a.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "h=np.zeros((n,n))"
+    },
+    {
+     "script": "a.py",
+     "line": 66,
+     "method": "eigen_solver",
+     "text": "e=np.linalg.eigvalsh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ 2>/dev/null; pwd; touch x && echo ok; echo $TMPDIR",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 'x': Read-only file system\n<SANDBOX_TMP>\nShell cwd was reset to /tmp/tsbench-run-c4vzvvj6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "touch <SANDBOX_TMP>/x && echo ok; python3 -c \"import sympy,numpy;print(1)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok\n1",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat > <SANDBOX_TMP>/a.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nB=784.;C=3699.\nF={2:49*B+7*C,4:63*C/5}\nms=[-2,-1,0,1,2]\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m1,m1-m2,m2))\nso=[(m,s) for m in ms for s in (0,1)]\nn=10\nVt=np.zeros((n,)*4)\nfor a,b,cc,d in itertools.product(range(n),repeat=4):\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=so[a],so[b],so[cc],so[d]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: continue\n    Vt[a,b,cc,d]=sum(F[k]*c(k,m1,m3)*c(k,m4,m2) for k in (2,4))\ndets=list(itertools.combinations(range(n),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    occ=list(det);sign=1\n    for t,o in reversed(ops):\n        if t=='a':\n            if o not in occ: return 0,None\n            p=occ.index(o);sign*=(-1)**p;occ.pop(p)\n        else:\n            if o in occ: return 0,None\n            p=sum(1 for x in occ if x<o);sign*=(-1)**p;occ.insert(p,o)\n    return sign,tuple(occ)\nH2=np.zeros((120,120));H1=[np.zeros((120,120))]\nidx={m:i for i,m in enumerate(ms)}\neg=[np.zeros(5),np.zeros(5)]\neg[0][idx[0]]=1; eg[1][idx[2]]=eg[1][idx[-2]]=2**-.5\nP=sum(np.outer(v,v) for v in eg)\nh1=10*P-4*np.eye(5)  # per Dq\nh=np.zeros((n,n))\nfor a in range(n):\n    for b in range(n):\n        if so[a][1]==so[b][1]: h[a,b]=h1[idx[so[a][0]],idx[so[b][0]]]\nHc=np.zeros((120,120))\nfor det in dets:\n    j=di[det]\n    for a in range(n):\n        for b in range(n):\n            if h[a,b]!=0:\n                s,nd=apply([('c',a),('a',b)],det)\n                if s: Hc[di[nd],j]+=s*h[a,b]\n    for a,b,cc,d in itertools.product(range(n),repeat=4):\n        v=Vt[a,b,cc,d]\n        if v==0: continue\n        s,nd=apply([('c',a),('c',b),('a',d),('a',cc)],det)\n        if s: H2[di[nd],j]+=0.5*s*v\nfor D in (1.45,2.45,3.0):\n    e=np.linalg.eigvalsh(H2+D*B*Hc); e-=e[0]\n    L=[]\n    for x in e:\n        if not L or x-L[-1][0]>1e-3*B: L.append([x,1])\n        else: L[-1][1]+=1\n    print(D,[(round(x/B,2),k) for x,k in L[:8]])\nE\npython3 <SANDBOX_TMP>/a.py",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "6a69a6a7bff7de187aa1e8fb85110cc21e43d81b373ab105796c214cc869ba48",
+     "lines": 56,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nB=784.;C=3699.\nF={2:49*B+7*C,4:63*C/5}\nms=[-2,-1,0,1,2]\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m1,m1-m2,m2))\nso=[(m,s) for m in ms for s in (0,1)]\nn=10\nVt=np.zeros((n,)*4)\nfor a,b,cc,d in itertools.product(range(n),repeat=4):\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=so[a],so[b],so[cc],so[d]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: continue\n    Vt[a,b,cc,d]=sum(F[k]*c(k,m1,m3)*c(k,m4,m2) for k in (2,4))\ndets=list(itertools.combinations(range(n),7))\ndi={d:i for i,d in enumerate(dets)}\ndef apply(ops,det):\n    occ=list(det);sign=1\n    for t,o in reversed(ops):\n        if t=='a':\n            if o not in occ: return 0,None\n            p=occ.index(o);sign*=(-1)**p;occ.pop(p)\n        else:\n            if o in occ: return 0,None\n            p=sum(1 for x in occ if x<o);sign*=(-1)**p;occ.insert(p,o)\n    return sign,tuple(occ)\nH2=np.zeros((120,120));H1=[np.zeros((120,120))]\nidx={m:i for i,m in enumerate(ms)}\neg=[np.zeros(5),np.zeros(5)]\neg[0][idx[0]]=1; eg[1][idx[2]]=eg[1][idx[-2]]=2**-.5\nP=sum(np.outer(v,v) for v in eg)\nh1=10*P-4*np.eye(5)  # per Dq\nh=np.zeros((n,n))\nfor a in range(n):\n    for b in range(n):\n        if so[a][1]==so[b][1]: h[a,b]=h1[idx[so[a][0]],idx[so[b][0]]]\nHc=np.zeros((120,120))\nfor det in dets:\n    j=di[det]\n    for a in range(n):\n        for b in range(n):\n            if h[a,b]!=0:\n                s,nd=apply([('c',a),('a',b)],det)\n                if s: Hc[di[nd],j]+=s*h[a,b]\n    for a,b,cc,d in itertools.product(range(n),repeat=4):\n        v=Vt[a,b,cc,d]\n        if v==0: continue\n        s,nd=apply([('c',a),('c',b),('a',d),('a',cc)],det)\n        if s: H2[di[nd],j]+=0.5*s*v\nfor D in (1.45,2.45,3.0):\n    e=np.linalg.eigvalsh(H2+D*B*Hc); e-=e[0]\n    L=[]\n    for x in e:\n        if not L or x-L[-1][0]>1e-3*B: L.append([x,1])\n        else: L[-1][1]+=1\n    print(D,[(round(x/B,2),k) for x,k in L[:8]])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1.45 [(np.float64(0.0), 12), (np.float64(7.29), 4), (np.float64(12.94), 12), (np.float64(19.28), 6), (np.float64(20.0), 6), (np.float64(25.04), 6), (np.float64(26.39), 12), (np.float64(27.44), 4)]\n2.45 [(np.float64(0.0), 4), (np.float64(2.46), 12), (np.float64(21.47), 6), (np.float64(22.44), 6), (np.float64(25.0), 12), (np.float64(27.93), 6), (np.float64(38.04), 12), (np.float64(41.01), 6)]\n3.0 [(np.float64(0.0), 4), (np.float64(7.87), 12), (np.float64(26.77), 6), (np.float64(27.82), 6), (np.float64(33.46), 6), (np.float64(35.77), 12), (np.float64(48.41), 6), (np.float64(48.67), 12)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vt=np.zeros((n,)*4)"
+    },
+    {
+     "script": "a.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "H2=np.zeros((120,120));H1=[np.zeros((120,120))]"
+    },
+    {
+     "script": "a.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "h=np.zeros((n,n))"
+    },
+    {
+     "script": "a.py",
+     "line": 37,
+     "method": "matrix",
+     "text": "Hc=np.zeros((120,120))"
+    },
+    {
+     "script": "a.py",
+     "line": 51,
+     "method": "eigen_solver",
+     "text": "e=np.linalg.eigvalsh(H2+D*B*Hc); e-=e[0]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "bash",
+   "description": "",
+   "command": "{\"command\": \"cd <SANDBOX_TMP>; cat >> a.py <<'E'\\nM=np.array([sum(so[o][0] for o in d) for d in dets])\\nR=np.exp(-1j*np.pi/2*M)\\nfor D in (1.45,2.45,3.0):\\n    e,v=np.linalg.eigh(H2+D*B*Hc); e-=e[0]\\n    i=0;out=[]\\n    while i<120 and len(out)<7:\\n        j=i\\n        while j<120 and e[j]-e[i]<1e-3*B: j+=1\\n        V=v[:,i:j]; tr=np.trace(V.conj().T@(R[:,None]*V))\\n        out.append((round(e[i]/B,2),j-i,np.round(tr,2))); i=j\\n    print(D,out)\\nE\\npython3 a.py | tail -3\"}",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": true,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "<tool_use_error>Error: No such tool available: bash. Tool names are case-sensitive: call Bash instead.</tool_use_error>",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd <SANDBOX_TMP>; cat >> a.py <<'E'\nM=np.array([sum(so[o][0] for o in d) for d in dets])\nR=np.exp(-1j*np.pi/2*M)\nfor D in (1.45,2.45,3.0):\n    e,v=np.linalg.eigh(H2+D*B*Hc); e-=e[0]\n    i=0;out=[]\n    while i<120 and len(out)<7:\n        j=i\n        while j<120 and e[j]-e[i]<1e-3*B: j+=1\n        V=v[:,i:j]; tr=np.trace(V.conj().T@(R[:,None]*V))\n        out.append((round(e[i]/B,2),j-i,np.round(tr,2))); i=j\n    print(D,out)\nE\npython3 a.py | tail -3",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "238e529947e009a2058f1e05ee03298c485364f94d375e0d78d582d2ee6251f8",
+     "lines": 11,
+     "code": "M=np.array([sum(so[o][0] for o in d) for d in dets])\nR=np.exp(-1j*np.pi/2*M)\nfor D in (1.45,2.45,3.0):\n    e,v=np.linalg.eigh(H2+D*B*Hc); e-=e[0]\n    i=0;out=[]\n    while i<120 and len(out)<7:\n        j=i\n        while j<120 and e[j]-e[i]<1e-3*B: j+=1\n        V=v[:,i:j]; tr=np.trace(V.conj().T@(R[:,None]*V))\n        out.append((round(e[i]/B,2),j-i,np.round(tr,2))); i=j\n    print(D,out)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1.45 [(np.float64(0.0), 12, np.complex128(4-0j)), (np.float64(7.29), 4, np.complex128(0j)), (np.float64(12.94), 12, np.complex128(-4-0j)), (np.float64(19.28), 6, np.complex128(2-0j)), (np.float64(20.0), 6, np.complex128(-2-0j)), (np.float64(25.04), 6, np.complex128(2-0j)), (np.float64(26.39), 12, np.complex128(4-0j))]\n2.45 [(np.float64(0.0), 4, np.complex128(-0j)), (np.float64(2.46), 12, np.complex128(4-0j)), (np.float64(21.47), 6, np.complex128(2+0j)), (np.float64(22.44), 6, np.complex128(-2+0j)), (np.float64(25.0), 12, np.complex128(-4+0j)), (np.float64(27.93), 6, np.complex128(2-0j)), (np.float64(38.04), 12, np.complex128(4+0j))]\n3.0 [(np.float64(0.0), 4, np.complex128(0j)), (np.float64(7.87), 12, np.complex128(4-0j)), (np.float64(26.77), 6, np.complex128(2-0j)), (np.float64(27.82), 6, np.complex128(-2-0j)), (np.float64(33.46), 6, np.complex128(2-0j)), (np.float64(35.77), 12, np.complex128(-4+0j)), (np.float64(48.41), 6, np.complex128(-2+0j))]\nShell cwd was reset to /tmp/tsbench-run-c4vzvvj6",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 4,
+     "method": "eigen_solver",
+     "text": "e,v=np.linalg.eigh(H2+D*B*Hc); e-=e[0]"
+    }
+   ],
+   "produces": [
+    "points[0].e_over_b",
+    "points[1].e_over_b",
+    "points[2].e_over_b",
+    "points[4].e_over_b",
+    "points[5].e_over_b",
+    "points[6].e_over_b",
+    "points[7].e_over_b",
+    "points[8].e_over_b"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "points[0].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [
+    3,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[0].e_over_b",
+   "value": 7.29,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  },
+  {
+   "path": "points[1].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [
+    3,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[1].e_over_b",
+   "value": 12.94,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  },
+  {
+   "path": "points[2].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [
+    3,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[2].e_over_b",
+   "value": 19.28,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  },
+  {
+   "path": "points[3].dq_over_b",
+   "value": 2.45,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [
+    3,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[3].e_over_b",
+   "value": 2.46,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [
+    3,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[4].dq_over_b",
+   "value": 2.45,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [
+    3,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[4].e_over_b",
+   "value": 21.47,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  },
+  {
+   "path": "points[5].dq_over_b",
+   "value": 2.45,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [
+    3,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[5].e_over_b",
+   "value": 22.44,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  },
+  {
+   "path": "points[6].dq_over_b",
+   "value": 3.0,
+   "weak": true,
+   "steps": [
+    0,
+    3,
+    5
+   ],
+   "typed_in_steps": [
+    0,
+    3,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[6].e_over_b",
+   "value": 7.87,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  },
+  {
+   "path": "points[7].dq_over_b",
+   "value": 3.0,
+   "weak": true,
+   "steps": [
+    0,
+    3,
+    5
+   ],
+   "typed_in_steps": [
+    0,
+    3,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[7].e_over_b",
+   "value": 26.77,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  },
+  {
+   "path": "points[8].dq_over_b",
+   "value": 3.0,
+   "weak": true,
+   "steps": [
+    0,
+    3,
+    5
+   ],
+   "typed_in_steps": [
+    0,
+    3,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[8].e_over_b",
+   "value": 27.82,
+   "weak": false,
+   "steps": [
+    3,
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  }
+ ],
+ "summary": {
+  "n_steps": 6,
+  "n_scripts": 3,
+  "n_failed_steps": 2,
+  "n_values": 18,
+  "n_linked": 8,
+  "n_weak": 3,
+  "source_steps": [
+   5
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": true
+ }
+}

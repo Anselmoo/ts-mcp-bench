@@ -1,0 +1,1 @@
+pwd; touch x && echo writable; rm -f x; ls

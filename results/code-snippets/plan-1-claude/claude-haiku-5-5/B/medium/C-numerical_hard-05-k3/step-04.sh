@@ -1,0 +1,1 @@
+mkdir -p /tmp/tsbench-run-mf4e1uw_/w && cd /tmp/tsbench-run-mf4e1uw_/w && pwd && touch t && echo ok

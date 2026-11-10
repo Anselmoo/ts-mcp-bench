@@ -1,0 +1,1 @@
+cd /tmp && python3 -c "print('hi')"; ls -ld /tmp ~ 2>&1; echo $HOME; touch /tmp/t 2>&1; python3 -c "import tempfile;print(tempfile.gettempdir())"

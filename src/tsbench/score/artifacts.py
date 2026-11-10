@@ -32,8 +32,10 @@ CALLS = "calls.json"
 CACHE_BYTES = 512 * 1024 * 1024  # file size of the transcripts a `TranscriptCache` keeps parsed
 EXCERPT = 400
 _HEREDOC_RE = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
-_REDIRECT_RE = re.compile(r">>?\s*(['\"]?)([^\s'\"<>|;&]+)\1")
+_REDIRECT_RE = re.compile(r"(?<![02-9&>])>>?\s*(['\"]?)([^\s'\"<>|;&]+)\1")  # stdout (>, 1>) only: not 2>, &>
 _TEE_RE = re.compile(r"\btee\s+(?:-a\s+)?(['\"]?)([^\s'\"<>|;&]+)\1")
+_QUOTED_OR_SEPARATOR = re.compile(r"""'[^']*'|"[^"]*"|(?P<sep>\|\||&&|\||;|(?<![>&])&(?!>))""")
+_WRITER_RE = re.compile(r"\s*[({]*\s*(?:(?:then|do|else)\s+)?(?:\S*/)?(?P<name>cat|tee)\b")
 _EXIT_RE = re.compile(r"(?:^|\n)\s*(?:Exit code|exit code|exit status|Exit status)[: ]+(-?\d+)")
 _MIME_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp",
              "image/svg+xml": "svg"}
@@ -104,12 +106,39 @@ def code_dir_of(transcript) -> pathlib.Path:
             else t.with_name(t.name + ".code"))
 
 
+def _commands_of_line(line: str) -> list[tuple[int, int, str]]:
+    """The commands of one shell line as (start, end, the separator after it); a quoted separator does not count."""
+    out, start = [], 0
+    for m in _QUOTED_OR_SEPARATOR.finditer(line):
+        if m.group("sep"):
+            out.append((start, m.start(), m.group("sep")))
+            start = m.end()
+    return [*out, (start, len(line), "")]
+
+
+def _heredoc_target(line: str, at: int) -> str | None:
+    """The file the heredoc that starts at offset `at` of the line is written to: a stdout redirect or a tee of its own
+    `cat` or `tee` command, or the tee that command pipes into. A redirect of another command on the line is not one."""
+    commands = _commands_of_line(line)
+    i = next(i for i, (_, end, _) in enumerate(commands) if at < end)
+    start, end, sep = commands[i]
+    own = line[start:end]
+    if not _WRITER_RE.match(own):
+        return None
+    m = _REDIRECT_RE.search(own) or _TEE_RE.search(own)  # never a target that starts with & (>&2 is a stream)
+    if m is None and sep == "|":
+        following = line[commands[i + 1][0]:commands[i + 1][1]]
+        writer = _WRITER_RE.match(following)
+        m = _TEE_RE.search(following) if writer and writer["name"] == "tee" else None
+    return m.group(2) if m else None
+
+
 def split_heredocs(command: str) -> tuple[list[dict], str]:
     """Split the heredocs out of a shell command.
 
     Returns ([{name, body, lines}], skeleton): `name` is the file the heredoc is redirected to (cat > x.py <<'EOF',
-    cat <<'EOF' > x.py, tee x.py <<EOF) or None; `skeleton` is the command with every body replaced by a one-line
-    marker. A heredoc without its terminator takes the rest of the command."""
+    cat <<'EOF' > x.py, tee x.py <<EOF, cat <<EOF | tee x.py) or None; `skeleton` is the command with every body
+    replaced by a one-line marker. A heredoc without its terminator takes the rest of the command."""
     lines = command.split("\n")
     out: list[dict] = []
     skel: list[str] = []
@@ -118,13 +147,11 @@ def split_heredocs(command: str) -> tuple[list[dict], str]:
         line = lines[i]
         skel.append(line)
         i += 1
-        pending = [(m.group(1) == "-", m.group(3)) for m in _HEREDOC_RE.finditer(line)]
-        if not pending:
+        found = list(_HEREDOC_RE.finditer(line))
+        if not found:
             continue
-        target = None
-        m = (_REDIRECT_RE.search(line) or _TEE_RE.search(line)) if re.search(r"\b(?:cat|tee)\b", line) else None
-        if m and not m.group(2).startswith("&"):
-            target = m.group(2)
+        pending = [(m.group(1) == "-", m.group(3)) for m in found]
+        target = _heredoc_target(line, found[0].start())
         first_python = bool(re.search(r"\bpython[0-9.]*\b", line))
         for strip_tabs, delim in pending:
             body: list[str] = []

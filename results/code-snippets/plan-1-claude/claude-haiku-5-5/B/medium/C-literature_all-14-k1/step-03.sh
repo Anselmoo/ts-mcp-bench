@@ -1,0 +1,1 @@
+mkdir -p /tmp/tsbench-run-711ytt10/w && cd /tmp/tsbench-run-711ytt10/w && pwd && touch t && echo ok

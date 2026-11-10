@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; echo $HOME; touch $HOME/x 2>&1 && echo writable; python3 -c "print('py ok')"

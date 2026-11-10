@@ -1,0 +1,1 @@
+pwd; touch ./t.txt && echo writable_cwd; echo $HOME; touch ~/t.txt && echo home_ok

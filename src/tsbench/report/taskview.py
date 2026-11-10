@@ -16,7 +16,7 @@ import re
 from collections.abc import Callable, Collection, Sequence
 
 from tsbench.report import literature, science
-from tsbench.report.base import as_number, is_true
+from tsbench.report.base import as_number, is_true, solved
 from tsbench.report.svg.base import fixed, round_half_up
 
 __all__ = ["CLASS_DEFINITIONS", "class_tolerance", "run_anchor", "shown_run", "tasks_view"]
@@ -232,7 +232,7 @@ def shown_run(rs: list[dict]) -> dict:
     most runs are correct, else a wrong one. The cell shows the answer of this one run, never a mix or an average of
     runs. `rs` holds at least one run."""
     ordered = sorted(rs, key=_k)
-    ok = science._solved(ordered)
+    ok = solved(ordered)
     return next(r for r in ordered if is_true(r.get("correct")) == ok)
 
 
@@ -271,7 +271,7 @@ def _answers(task: dict, by_task: dict, conds: Sequence[str], label_of: Callable
         rs = sorted(by_task.get((c, task["id"]), []), key=_k)
         if not rs:
             continue
-        ok = science._solved(rs)
+        ok = solved(rs)
         shown = shown_run(rs)
         # the category names the runs on the side of the verdict: the wrong runs of a task that is not solved
         side = [r for r in rs if is_true(r.get("correct")) == ok]

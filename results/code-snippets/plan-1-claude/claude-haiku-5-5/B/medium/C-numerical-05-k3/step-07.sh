@@ -1,0 +1,1 @@
+mkdir -p /dev/shm/ldw && cd /dev/shm/ldw && echo ok && pwd

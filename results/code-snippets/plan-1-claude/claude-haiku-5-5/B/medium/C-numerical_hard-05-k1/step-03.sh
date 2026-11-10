@@ -1,0 +1,1 @@
+cd /; python3 -c "print(1)"; echo $HOME; touch /dev/null && echo ok

@@ -64,3 +64,11 @@ def test_no_template_formats_a_number_with_a_half_to_even_format():
     names = [n for n in page.ENV.list_templates() if n.endswith(".j2")]
     hits = [n for n in names if "| format" in page._LOADER.get_source(page.ENV, n)[0].replace("|format", "| format")]
     assert hits == []
+
+
+def test_local_links_names_every_src_and_href_to_a_file_beside_the_page():
+    markup = ('<a href="#x"></a><a href="https://doi.org/1"></a><img src="data:image/png;base64,AA">'
+              '<a href="run/a.png"></a><img src=\'../b.svg\'><image xlink:href="c.png"/>'
+              '<script>var a=\'<a href="d.png">\'</script><style>a[href="e.png"]{}</style>'
+              '<pre>&lt;img src=&quot;f.png&quot;&gt;</pre>')
+    assert page.local_links(markup) == ["../b.svg", "c.png", "run/a.png"]

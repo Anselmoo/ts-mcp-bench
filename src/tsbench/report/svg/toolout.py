@@ -6,6 +6,8 @@ right column, joined by a straight leader that crosses no other tool circle and 
 returned no text (image only) are not drawn; a note under the figure lists them.
 
 The packing is the one of `pack.py` (a port of d3-hierarchy's `pack`), so the same input gives the same drawing.
+
+`tool_rows` is the figure of several models: one line per model and tool on one axis.
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ from dataclasses import dataclass
 from . import base
 from .pack import _absolute, _lcg, _Node, _pack_children
 
-__all__ = ["tool_output"]
+__all__ = ["tool_output", "tool_rows"]
 
 _SIDE = 230.0  # room for the labels at each side of a full figure (the root circle then has a diameter of 500 px)
 _SIDE_HALF = 120.0  # the same in a half figure
@@ -284,3 +286,56 @@ def tool_output(runs: Sequence[dict], *, width: float = base.FULL_W) -> str:
             body.append(base.text(8, h, ln, "start", "mut", base.SMALL_PX))
         h += 4
     return base.figure(w, math.ceil(h), "Characters of text returned by tool calls, by condition, tool and run", body)
+
+
+_ROW = 20.0  # one tool of one model
+_BAR = 11.0
+_ROWS_TOP = 22.0
+
+
+def tool_rows(models: Sequence[tuple[str, Sequence[dict]]], *, width: float = base.FULL_W) -> str:
+    """Characters of text the tools returned, one line per model and tool on one linear axis: a bar in the colour of the
+    condition, then "753k chars · 184 calls". `models` `[(name, runs)]`, `runs` as for `tool_output`. Every model has
+    the line of every tool that any model called; a tool it did not call says `no call`. Returns "" without a call."""
+    totals: dict[tuple[str, str, str], list[int]] = {}
+    for name, runs in models:
+        for r in runs:
+            for c in r["calls"]:
+                rec = totals.setdefault((name, str(r["cond"]), str(c["tool"])), [0, 0])
+                rec[0] += int(c["chars"])
+                rec[1] += 1
+    if not totals:
+        return ""
+    rank = {c: i for i, c in enumerate(base.CONDS)}
+    tools = sorted({(cd, tl) for _, cd, tl in totals}, key=lambda t: (rank.get(t[0], len(rank)), t[1]))
+    w = float(width)
+    names = [n for n, _ in models]
+    name_col = min(max(base.text_width(n) for n in names) + 12, w * 0.3)
+    tool_col = max(base.text_width(f"{cd} · {tl}", base.SMALL_PX) for cd, tl in tools) + 12
+    x0 = name_col + tool_col
+    x1 = w - base.text_width("1.4M chars · 1000 calls", base.SMALL_PX) - 12
+    peak = max(v[0] for v in totals.values()) or 1
+    sx = base.Linear(0.0, float(peak), x0, x1)
+    band = len(tools) * _ROW
+    axis_y = _ROWS_TOP + len(names) * band
+    out = [base.legend([(c, c) for c in base.CONDS if any(cd == c for cd, _ in tools)], x0, 14)[0],
+           base.axis_bottom(sx, base.nice_ticks(0, peak, 5), axis_y, x0, x1, "characters of text returned",
+                            lambda v: _kchars(int(v)), grid_to=_ROWS_TOP)]
+    for i, name in enumerate(names):
+        y0 = _ROWS_TOP + i * band
+        if i:
+            out.append(base.line(0, y0, w, y0, "grid"))
+        out.append(base.text(0, y0 + band / 2 + base.TEXT_PX * 0.35, base.fit(name, name_col - 6), "start", "b"))
+        for j, (cd, tl) in enumerate(tools):
+            cy = y0 + (j + 0.5) * _ROW
+            ty = cy + base.SMALL_PX * 0.35
+            out.append(base.text(name_col, ty, f"{cd} · {tl}", "start", "", base.SMALL_PX))
+            rec = totals.get((name, cd, tl))
+            if rec is None:
+                out.append(base.text(x0 + 4, ty, "no call", "start", "mut", base.SMALL_PX))
+                continue
+            stats = f"{base.plural(rec[0], 'char', shown=_kchars(rec[0]))} · {base.plural(rec[1], 'call')}"
+            tip = f"{name} · {cd} · {tl}: {base.number(rec[0])} characters returned in {base.plural(rec[1], 'call')}"
+            out.append(base.rect(x0, cy - _BAR / 2, sx(rec[0]) - x0, _BAR, f"c-{cd}", tip))
+            out.append(base.text(sx(rec[0]) + 6, ty, stats, "start", "mut", base.SMALL_PX))
+    return base.figure(w, axis_y + 12 + 2 * base.TEXT_PX + 8, "Characters of text returned per model and tool", out)

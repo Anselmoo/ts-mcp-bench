@@ -1,0 +1,1 @@
+sed -i 's/\*5\*gaunt/*gaunt/' d5.py && python3 d5.py && python3 fit.py

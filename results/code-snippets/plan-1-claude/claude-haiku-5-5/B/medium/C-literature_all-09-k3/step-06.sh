@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-amsbib04 2>/dev/null && touch t && echo ok; pwd

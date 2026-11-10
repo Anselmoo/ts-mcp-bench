@@ -1,0 +1,254 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-opus-5-5/B/medium/C-crossover-01-k1.jsonl",
+ "transcript_sha256": "c7f91cc863d6ef9d22d74f36bd0b11823e6cd4109840b14bd227cee36753ce5d",
+ "answer": {
+  "Dq": 1675.0,
+  "B": 706.0,
+  "C": 2734.0,
+  "out_of_scope": false,
+  "reason": "Full d4 ligand-field diagonalization gives the 5E/3T1 ground-state crossing at Dq ≈ 1675 cm^-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "pip list 2>/dev/null | grep -i -E \"sympy|numpy|scipy\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(Bash completed with no output)",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "python3 -c \"import numpy,sympy;print('ok')\"; pip install numpy sympy 2>&1 | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok\n/bin/bash: line 1: pip: command not found",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat << 'EOF' > /tmp/d4.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nB,C=706.,2734.\nF2=B+C/7; F4=C/35\nFk={0:0.0,2:49*F2,4:441*F4}\nms=[-2,-1,0,1,2]\ndef ck(k,m,mp):\n    return float((-1)**m*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m,m-mp,mp))\n# spin orbitals (m,s)\nso=[(m,s) for m in ms for s in (0,1)]\nn=len(so)\ndef g(a,b,c,d): # <ab|1/r|cd>\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=so[a],so[b],so[c],so[d]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: return 0.\n    return sum(ck(k,m1,m3)*ck(k,m4,m2)*Fk[k] for k in (2,4))\nG=np.zeros((n,)*4)\nfor a,b,c,d in itertools.product(range(n),repeat=4): G[a,b,c,d]=g(a,b,c,d)\ndef V1(Dq):\n    h=np.zeros((n,n))\n    for i,(m,s) in enumerate(so):\n        for j,(mp,sp) in enumerate(so):\n            if s!=sp: continue\n            if m==mp: h[i,j]={0:6,1:-4,-1:-4,2:1,-2:1}[m]*Dq\n            if abs(m-mp)==4: h[i,j]=5*Dq\n    return h\ndets=list(itertools.combinations(range(n),4))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef apply_ops(det,ann,cre):\n    # returns sign,newdet for c^+_cre... a_ann...  ops applied: annihilate list then create list\n    l=list(det); sgn=1\n    for a in ann:\n        if a not in l: return 0,None\n        p=l.index(a); sgn*=(-1)**p; l.pop(p)\n    for c in cre:\n        if c in l: return 0,None\n        l.insert(0,c)\n    # sort with sign\n    arr=l[:]; \n    for i in range(len(arr)):\n        for j in range(len(arr)-1-i):\n            if arr[j]>arr[j+1]: arr[j],arr[j+1]=arr[j+1],arr[j]; sgn=-sgn\n    return sgn,tuple(arr)\nH2=np.zeros((N,N))\nfor i,d in enumerate(dets):\n    for a,b in itertools.combinations(range(n),2):\n        if a not in d or b not in d: continue\n        for c in range(n):\n            for e in range(n):\n                if c==e: continue\n                val=G[c,e,a,b]\n                if abs(val)<1e-12: continue\n                # 1/2 sum c+ e+ b a  over ordered pairs a,b -> pairs both orders gives factor; use unordered a<b with (G[c,e,a,b]-...)?\n                s,nd=apply_ops(d,[a,b],[e,c])  # a_a then a_b... sequence: a_b a_a? careful\n                if s: H2[idx[nd],i]+=s*val\nH1=lambda Dq: None\ndef H1m(Dq):\n    h=V1(Dq); M=np.zeros((N,N))\n    for i,d in enumerate(dets):\n        for a in d:\n            for c in range(n):\n                if abs(h[c,a])<1e-12: continue\n                s,nd=apply_ops(d,[a],[c])\n                if s: M[idx[nd],i]+=s*h[c,a]\n    return M\nprint(np.allclose(H2,H2.T))\nSz=np.array([sum(1 if so[k][1] else -1 for k in d)/2 for d in dets])\nnp.save('/tmp/H2.npy',H2)\n# Free ion check\nw=np.linalg.eigvalsh(H2); u=np.unique(np.round(w-w.min(),3)); print(u[:10]/B)\ndef gap(Dq):\n    M=H2+H1m(Dq)\n    # Sz=2 block -> quintet lowest; Sz=1 block lowest triplet (excluding quintets)\n    i2=np.where(Sz==2)[0]; e5=np.linalg.eigvalsh(M[np.ix_(i2,i2)]).min()\n    i1=np.where(Sz==1)[0]; w1=np.linalg.eigvalsh(M[np.ix_(i1,i1)])\n    # remove quintet values: quintet energies from Sz=2 block\n    q=np.linalg.eigvalsh(M[np.ix_(i2,i2)])\n    w1=list(w1)\n    for x in q:\n        k=np.argmin(np.abs(np.array(w1)-x)); w1.pop(k)\n    return min(w1)-e5\nfor Dq in [1500,2000,2500,3000]: print(Dq,gap(Dq))\nlo,hi=1000,4000\nfor _ in range(50):\n    mid=(lo+hi)/2\n    if gap(mid)>0: lo=mid\n    else: hi=mid\nprint(mid)\nEOF\npython3 /tmp/d4.py",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "0917a9c3fdf96d63b7df49082ccbfc9cba31347e2adcb7635f5f6207ae16c951",
+     "lines": 88,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nB,C=706.,2734.\nF2=B+C/7; F4=C/35\nFk={0:0.0,2:49*F2,4:441*F4}\nms=[-2,-1,0,1,2]\ndef ck(k,m,mp):\n    return float((-1)**m*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m,m-mp,mp))\n# spin orbitals (m,s)\nso=[(m,s) for m in ms for s in (0,1)]\nn=len(so)\ndef g(a,b,c,d): # <ab|1/r|cd>\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=so[a],so[b],so[c],so[d]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: return 0.\n    return sum(ck(k,m1,m3)*ck(k,m4,m2)*Fk[k] for k in (2,4))\nG=np.zeros((n,)*4)\nfor a,b,c,d in itertools.product(range(n),repeat=4): G[a,b,c,d]=g(a,b,c,d)\ndef V1(Dq):\n    h=np.zeros((n,n))\n    for i,(m,s) in enumerate(so):\n        for j,(mp,sp) in enumerate(so):\n            if s!=sp: continue\n            if m==mp: h[i,j]={0:6,1:-4,-1:-4,2:1,-2:1}[m]*Dq\n            if abs(m-mp)==4: h[i,j]=5*Dq\n    return h\ndets=list(itertools.combinations(range(n),4))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef apply_ops(det,ann,cre):\n    # returns sign,newdet for c^+_cre... a_ann...  ops applied: annihilate list then create list\n    l=list(det); sgn=1\n    for a in ann:\n        if a not in l: return 0,None\n        p=l.index(a); sgn*=(-1)**p; l.pop(p)\n    for c in cre:\n        if c in l: return 0,None\n        l.insert(0,c)\n    # sort with sign\n    arr=l[:]; \n    for i in range(len(arr)):\n        for j in range(len(arr)-1-i):\n            if arr[j]>arr[j+1]: arr[j],arr[j+1]=arr[j+1],arr[j]; sgn=-sgn\n    return sgn,tuple(arr)\nH2=np.zeros((N,N))\nfor i,d in enumerate(dets):\n    for a,b in itertools.combinations(range(n),2):\n        if a not in d or b not in d: continue\n        for c in range(n):\n            for e in range(n):\n                if c==e: continue\n                val=G[c,e,a,b]\n                if abs(val)<1e-12: continue\n                # 1/2 sum c+ e+ b a  over ordered pairs a,b -> pairs both orders gives factor; use unordered a<b with (G[c,e,a,b]-...)?\n                s,nd=apply_ops(d,[a,b],[e,c])  # a_a then a_b... sequence: a_b a_a? careful\n                if s: H2[idx[nd],i]+=s*val\nH1=lambda Dq: None\ndef H1m(Dq):\n    h=V1(Dq); M=np.zeros((N,N))\n    for i,d in enumerate(dets):\n        for a in d:\n            for c in range(n):\n                if abs(h[c,a])<1e-12: continue\n                s,nd=apply_ops(d,[a],[c])\n                if s: M[idx[nd],i]+=s*h[c,a]\n    return M\nprint(np.allclose(H2,H2.T))\nSz=np.array([sum(1 if so[k][1] else -1 for k in d)/2 for d in dets])\nnp.save('/tmp/H2.npy',H2)\n# Free ion check\nw=np.linalg.eigvalsh(H2); u=np.unique(np.round(w-w.min(),3)); print(u[:10]/B)\ndef gap(Dq):\n    M=H2+H1m(Dq)\n    # Sz=2 block -> quintet lowest; Sz=1 block lowest triplet (excluding quintets)\n    i2=np.where(Sz==2)[0]; e5=np.linalg.eigvalsh(M[np.ix_(i2,i2)]).min()\n    i1=np.where(Sz==1)[0]; w1=np.linalg.eigvalsh(M[np.ix_(i1,i1)])\n    # remove quintet values: quintet energies from Sz=2 block\n    q=np.linalg.eigvalsh(M[np.ix_(i2,i2)])\n    w1=list(w1)\n    for x in q:\n        k=np.argmin(np.abs(np.array(w1)-x)); w1.pop(k)\n    return min(w1)-e5\nfor Dq in [1500,2000,2500,3000]: print(Dq,gap(Dq))\nlo,hi=1000,4000\nfor _ in range(50):\n    mid=(lo+hi)/2\n    if gap(mid)>0: lo=mid\n    else: hi=mid\nprint(mid)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d4.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 91: /tmp/d4.py: Read-only file system\npython3: can't open file '/tmp/d4.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 16,
+     "method": "matrix",
+     "text": "G=np.zeros((n,)*4)"
+    },
+    {
+     "script": "d4.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "h=np.zeros((n,n))"
+    },
+    {
+     "script": "d4.py",
+     "line": 44,
+     "method": "matrix",
+     "text": "H2=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 58,
+     "method": "matrix",
+     "text": "h=V1(Dq); M=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 70,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(H2); u=np.unique(np.round(w-w.min(),3)); print(u[:10]/B)"
+    },
+    {
+     "script": "d4.py",
+     "line": 74,
+     "method": "eigen_solver",
+     "text": "i2=np.where(Sz==2)[0]; e5=np.linalg.eigvalsh(M[np.ix_(i2,i2)]).min()"
+    },
+    {
+     "script": "d4.py",
+     "line": 75,
+     "method": "eigen_solver",
+     "text": "i1=np.where(Sz==1)[0]; w1=np.linalg.eigvalsh(M[np.ix_(i1,i1)])"
+    },
+    {
+     "script": "d4.py",
+     "line": 77,
+     "method": "eigen_solver",
+     "text": "q=np.linalg.eigvalsh(M[np.ix_(i2,i2)])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ 2>/dev/null || cd $(mktemp -d); pwd; touch x && echo writable",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 'x': Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nB,C=706.,2734.\nF2=B+C/7; F4=C/35\nFk={2:49*F2,4:441*F4}\nms=[-2,-1,0,1,2]\ncc={}\ndef ck(k,m,mp):\n    key=(k,m,mp)\n    if key not in cc: cc[key]=float((-1)**m*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m,m-mp,mp))\n    return cc[key]\nso=[(m,s) for m in ms for s in (0,1)]\nn=len(so)\nG=np.zeros((n,)*4)\nfor a,b,c,d in itertools.product(range(n),repeat=4):\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=so[a],so[b],so[c],so[d]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: continue\n    G[a,b,c,d]=sum(ck(k,m1,m3)*ck(k,m4,m2)*Fk[k] for k in (2,4))\ndef V1(Dq):\n    h=np.zeros((n,n))\n    for i,(m,s) in enumerate(so):\n        for j,(mp,sp) in enumerate(so):\n            if s!=sp: continue\n            if m==mp: h[i,j]={0:6,1:-4,-1:-4,2:1,-2:1}[m]*Dq\n            if abs(m-mp)==4: h[i,j]=5*Dq\n    return h\ndets=list(itertools.combinations(range(n),4))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef apply_ops(det,ann,cre):\n    l=list(det); sgn=1\n    for a in ann:\n        if a not in l: return 0,None\n        p=l.index(a); sgn*=(-1)**p; l.pop(p)\n    for c in cre:\n        if c in l: return 0,None\n        l.insert(0,c)\n    arr=l[:]\n    for i in range(len(arr)):\n        for j in range(len(arr)-1-i):\n            if arr[j]>arr[j+1]: arr[j],arr[j+1]=arr[j+1],arr[j]; sgn=-sgn\n    return sgn,tuple(arr)\nH2=np.zeros((N,N))\nfor i,d in enumerate(dets):\n    for a,b in itertools.combinations(d,2):\n        for c in range(n):\n            for e in range(n):\n                val=G[c,e,a,b]\n                if c==e or abs(val)<1e-12: continue\n                s,nd=apply_ops(d,[a,b],[e,c])\n                if s: H2[idx[nd],i]+=s*val\nh1=V1(1.0); M1=np.zeros((N,N))\nfor i,d in enumerate(dets):\n    for a in d:\n        for c in range(n):\n            if abs(h1[c,a])<1e-12: continue\n            s,nd=apply_ops(d,[a],[c])\n            if s: M1[idx[nd],i]+=s*h1[c,a]\nprint(np.allclose(H2,H2.T))\nw=np.linalg.eigvalsh(H2); print(np.unique(np.round(w-w.min(),2)))\nprint(\"expected 3H:\",(21*B+4*C-(0)) )\nSz=np.array([sum(1 if so[k][1] else -1 for k in d)/2 for d in dets])\ni2=np.where(Sz==2)[0]; i1=np.where(Sz==1)[0]\ndef gap(Dq):\n    M=H2+Dq*M1\n    q=np.linalg.eigvalsh(M[np.ix_(i2,i2)])\n    w1=list(np.linalg.eigvalsh(M[np.ix_(i1,i1)]))\n    for x in q:\n        k=np.argmin(np.abs(np.array(w1)-x)); w1.pop(k)\n    return min(w1)-q.min()\nfor Dq in [1500,2000,2500,3000]: print(Dq,gap(Dq))\nlo,hi=500,5000\nfor _ in range(50):\n    mid=(lo+hi)/2\n    if gap(mid)>0: lo=mid\n    else: hi=mid\nprint(mid)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "2c8613f71641d312b62663fd1b264f9183d13835b45745a0ed78acaf8b3e3fcb",
+     "lines": 77,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nB,C=706.,2734.\nF2=B+C/7; F4=C/35\nFk={2:49*F2,4:441*F4}\nms=[-2,-1,0,1,2]\ncc={}\ndef ck(k,m,mp):\n    key=(k,m,mp)\n    if key not in cc: cc[key]=float((-1)**m*5*wigner_3j(2,k,2,0,0,0)*wigner_3j(2,k,2,-m,m-mp,mp))\n    return cc[key]\nso=[(m,s) for m in ms for s in (0,1)]\nn=len(so)\nG=np.zeros((n,)*4)\nfor a,b,c,d in itertools.product(range(n),repeat=4):\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=so[a],so[b],so[c],so[d]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: continue\n    G[a,b,c,d]=sum(ck(k,m1,m3)*ck(k,m4,m2)*Fk[k] for k in (2,4))\ndef V1(Dq):\n    h=np.zeros((n,n))\n    for i,(m,s) in enumerate(so):\n        for j,(mp,sp) in enumerate(so):\n            if s!=sp: continue\n            if m==mp: h[i,j]={0:6,1:-4,-1:-4,2:1,-2:1}[m]*Dq\n            if abs(m-mp)==4: h[i,j]=5*Dq\n    return h\ndets=list(itertools.combinations(range(n),4))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef apply_ops(det,ann,cre):\n    l=list(det); sgn=1\n    for a in ann:\n        if a not in l: return 0,None\n        p=l.index(a); sgn*=(-1)**p; l.pop(p)\n    for c in cre:\n        if c in l: return 0,None\n        l.insert(0,c)\n    arr=l[:]\n    for i in range(len(arr)):\n        for j in range(len(arr)-1-i):\n            if arr[j]>arr[j+1]: arr[j],arr[j+1]=arr[j+1],arr[j]; sgn=-sgn\n    return sgn,tuple(arr)\nH2=np.zeros((N,N))\nfor i,d in enumerate(dets):\n    for a,b in itertools.combinations(d,2):\n        for c in range(n):\n            for e in range(n):\n                val=G[c,e,a,b]\n                if c==e or abs(val)<1e-12: continue\n                s,nd=apply_ops(d,[a,b],[e,c])\n                if s: H2[idx[nd],i]+=s*val\nh1=V1(1.0); M1=np.zeros((N,N))\nfor i,d in enumerate(dets):\n    for a in d:\n        for c in range(n):\n            if abs(h1[c,a])<1e-12: continue\n            s,nd=apply_ops(d,[a],[c])\n            if s: M1[idx[nd],i]+=s*h1[c,a]\nprint(np.allclose(H2,H2.T))\nw=np.linalg.eigvalsh(H2); print(np.unique(np.round(w-w.min(),2)))\nprint(\"expected 3H:\",(21*B+4*C-(0)) )\nSz=np.array([sum(1 if so[k][1] else -1 for k in d)/2 for d in dets])\ni2=np.where(Sz==2)[0]; i1=np.where(Sz==1)[0]\ndef gap(Dq):\n    M=H2+Dq*M1\n    q=np.linalg.eigvalsh(M[np.ix_(i2,i2)])\n    w1=list(np.linalg.eigvalsh(M[np.ix_(i1,i1)]))\n    for x in q:\n        k=np.argmin(np.abs(np.array(w1)-x)); w1.pop(k)\n    return min(w1)-q.min()\nfor Dq in [1500,2000,2500,3000]: print(Dq,gap(Dq))\nlo,hi=500,5000\nfor _ in range(50):\n    mid=(lo+hi)/2\n    if gap(mid)>0: lo=mid\n    else: hi=mid\nprint(mid)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "True\n[    0.   13760.   15429.77 15823.45 17290.   20640.   21838.53 22232.\n 25431.98 27088.59 31230.   36842.55 37236.23 41763.47 56281.41 73020.02]\nexpected 3H: 25762.0\n1500 1674.089256471554\n2000 -3120.883040066059\n2500 -7974.954094350942\n3000 -12865.54335977992\n1675.4945239148856",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "G=np.zeros((n,)*4)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "h=np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H2=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "h1=V1(1.0); M1=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 60,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(H2); print(np.unique(np.round(w-w.min(),2)))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 66,
+     "method": "eigen_solver",
+     "text": "q=np.linalg.eigvalsh(M[np.ix_(i2,i2)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 67,
+     "method": "eigen_solver",
+     "text": "w1=list(np.linalg.eigvalsh(M[np.ix_(i1,i1)]))"
+    }
+   ],
+   "produces": [
+    "Dq"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1675.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "B",
+   "value": 706.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 2734.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 5,
+  "n_scripts": 2,
+  "n_failed_steps": 2,
+  "n_values": 3,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   4
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

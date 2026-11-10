@@ -1,0 +1,1 @@
+cd /dev/shm && ls; find / -name m.npz 2>/dev/null | head

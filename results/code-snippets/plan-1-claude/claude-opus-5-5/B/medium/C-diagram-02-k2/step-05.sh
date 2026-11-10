@@ -1,0 +1,1 @@
+cd $TMPDIR && history | tail -0; echo ok

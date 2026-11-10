@@ -94,6 +94,31 @@ def test_a_resumed_run_set_reads_the_earlier_sessions_too(tmp_path):
     assert m["sessions"] == 2
 
 
+def _budget_stop(path):
+    """A run set stopped by its budget with 22 of 1485 runs left, then resumed with a larger budget to the end."""
+    first = {**MAN, "finished": True, "stopped_by_budget": True, "stop": None, "interrupted": False,
+             "counts": {"planned": 1485, "done": 1463, "skipped": 0, "aborted": 0, "not_run_budget": 22,
+                        "not_run_quota": 0}}
+    last = {**MAN, "finished": True, "stopped_by_budget": False, "stop": None, "interrupted": False,
+            "counts": {"planned": 1485, "done": 22, "skipped": 1463, "aborted": 0, "not_run_budget": 0,
+                       "not_run_quota": 0}}
+    d = _mk(path, [_row()], last)
+    (d / "MANIFEST.prev-20261024T110000000000Z.json").write_text(json.dumps(first), encoding="utf-8")
+    return d
+
+
+def test_the_runs_not_started_are_those_of_the_last_session(tmp_path):
+    m = dash.read_manifest(_budget_stop(tmp_path / "set-b"))
+    assert m["counts"] == {"planned": 1485, "done": 1485, "skipped": 0, "aborted": 0, "not_run_budget": 0,
+                           "not_run_quota": 0}
+    assert m["stopped_by_budget"] is False and m["sessions"] == 2
+
+
+def test_a_resumed_manifest_keeps_how_the_earlier_sessions_ended(tmp_path):
+    m = dash.read_manifest(_budget_stop(tmp_path / "set-b"))
+    assert m["earlier_sessions"] == [{"interrupted": False, "stop": None, "stopped_by_budget": True}]
+
+
 def test_a_run_set_without_a_prev_manifest_has_the_plain_manifest(tmp_path):
     d = _mk(tmp_path / "set-p", [_row()], MAN)
     assert dash.read_manifest(d) == MAN
@@ -637,6 +662,97 @@ def test_task_tables_group_tasks_by_class_with_a_count_row(tmp_path):
     assert [c["state"] for c in cls["rows"][0]["cells"]] == ["wrong", "wrong", "correct"]
 
 
+def _grid_rows(tmp_path, rows, tasks=TASKS):
+    return dash.collect([_mk(tmp_path / "set-g", rows, MAN)], tmp_path / "r.html", tasks, score_missing=False)
+
+
+def test_the_grid_heads_and_cells_use_one_model_order_when_it_is_not_the_sorted_order(tmp_path):
+    """model_key puts sonnet before opus, the alphabet the other way round: a head must stand over its own cells."""
+    models = ("claude-opus-5-5", "claude-haiku-5-5", "claude-sonnet-5-5")
+    rows = [_row(model=m, cond=c, correct=m == "claude-opus-5-5" and c == "C") for m in models for c in "ABC"]
+    html = dash.build_html(_grid_rows(tmp_path, rows), "T")
+    table = re.search(r'<table class="grid">(.*?)</table>', html, flags=re.S).group(1)
+    head = re.findall(r'<th colspan="(\d+)">([^<]+)</th>', table)
+    assert head == [("3", "claude-haiku-5-5"), ("3", "claude-sonnet-5-5"), ("3", "claude-opus-5-5")]
+    titles = re.findall(r'<td class="g-(\w+)[^"]*" title="[^"]*· (claude-[a-z0-9-]+) · (\w)', table)
+    under = [m for n, m in ((int(n), m) for n, m in head) for _ in range(n)]
+    assert [t[1] for t in titles] == under
+    assert [t[0] for t in titles].index("correct") == 8 and titles[8][1:] == ("claude-opus-5-5", "C")
+
+
+@pytest.mark.parametrize(("marks", "state", "label"), [
+    ([True, True, True], "correct", "3/3"), ([True, True, False], "correct", "2/3"),
+    ([True, False, False], "wrong", "1/3"), ([False, False, False], "wrong", "0/3")])
+def test_a_grid_cell_takes_the_majority_of_its_runs_as_the_report_does(tmp_path, marks, state, label):
+    rows = [_row(cond="A", correct=ok, k_index=str(k)) for k, ok in enumerate(marks, 1)]
+    (cell,) = dash.context(_grid_rows(tmp_path, rows))["grid"]["classes"][0]["rows"][0]["cells"]
+    assert (cell["state"], cell["label"]) == (state, label)
+
+
+def test_a_tie_of_the_evaluable_runs_is_no_majority(tmp_path):
+    rows = [_row(cond="A", correct=True, k_index="1"), _row(cond="A", correct=False, k_index="2")]
+    (cell,) = dash.context(_grid_rows(tmp_path, rows))["grid"]["classes"][0]["rows"][0]["cells"]
+    assert (cell["state"], cell["label"]) == ("wrong", "1/2")
+
+
+def test_a_run_that_is_not_evaluable_is_not_counted_in_the_majority_of_a_grid_cell(tmp_path):
+    rows = [dict(_row(cond="A", correct=False, k_index="1"), evaluable="False"),
+            _row(cond="A", correct=True, k_index="2"), _row(cond="A", correct=True, k_index="3")]
+    cols = [*COLS, "evaluable"]
+    d = tmp_path / "set-n"
+    d.mkdir()
+    with open(d / "scores.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, cols, restval="True")
+        w.writeheader()
+        w.writerows(rows)
+    data = dash.collect([d], tmp_path / "r.html", TASKS, score_missing=False)
+    (cell,) = dash.context(data)["grid"]["classes"][0]["rows"][0]["cells"]
+    assert (cell["state"], cell["label"]) == ("correct", "2/2")
+
+
+def test_a_grid_cell_without_a_majority_shows_the_harness_when_a_run_stopped(tmp_path):
+    rows = [_row(cond="A", correct=False, k_index="1", has_result="False", result_subtype="error_max_turns"),
+            _row(cond="A", correct=False, k_index="2"), _row(cond="A", correct=True, k_index="3")]
+    (cell,) = dash.context(_grid_rows(tmp_path, rows))["grid"]["classes"][0]["rows"][0]["cells"]
+    assert cell["state"] == "harness"
+
+
+def test_the_grid_states_its_rule(tmp_path):
+    html = dash.build_html(_grid_rows(tmp_path, [_row(cond="A")]), "T")
+    assert "more than half of its evaluable runs are correct" in _section(html, "by-task")
+
+
+FIT = {"required": ["Dq", "B"], "reference": {"Dq": 1200.5, "B": 700.0, "C": None}}
+
+
+@pytest.mark.parametrize(("record", "schema", "reference"), [
+    ({"answer_schema": "fit", **FIT}, "Dq, B", "Dq=1200.5, B=700.0"),
+    ({"answer_schema": "fit", "required": [], "reference": {"Dq": None}, "expect_out_of_scope": True},
+     "out_of_scope", "out of scope"),
+    ({"answer_schema": "curve", "required": [], "reference": {"Dq": None, "B": None, "C": None},
+      "reference_curve": [{"dq_over_b": x, "term": t, "e_over_b": 1.0} for x in (1.0, 2.0) for t in ("a", "b", "c")]},
+     "points (dq_over_b, term, e_over_b)", "6 energies E/B at 2 Dq/B points"),
+    ({"answer_schema": "batch", "required": ["values"], "reference": {"values": [{"input": 1, "result": 2}] * 8}},
+     "values (input, result)", "8 computed values"),
+    ({"answer_schema": "pairing", "required": [], "reference": {"nodes": [1, 2, 3], "edges": [1, 2]}},
+     "nodes, edges", "3 term nodes, 2 shared-term edges"),
+    ({"answer_schema": "diagram", "required": [], "reference": {"grid": [0.0] * 9, "levels": [[1.0] * 6] * 9}},
+     "points (levels), image_path, image_sha256", "9 Dq/B points x 6 levels"),
+])
+def test_the_asked_table_states_the_schema_and_reference_of_each_answer_kind(record, schema, reference):
+    task = {"id": "t", "class": "c", "prompt": "p", **record}
+    row = dash._tasks({"rows": [{"task_id": "t", "_task": task}], "tasks": {"t": task}})[0]
+    assert (row["schema"], row["reference"]) == (schema, reference)
+
+
+def test_no_confirmatory_task_falls_back_to_the_schema_of_a_fit_answer():
+    tasks = dash.load_tasks("confirmatory")
+    rows = dash._tasks({"rows": [{"task_id": t, "_task": x} for t, x in tasks.items()], "tasks": tasks})
+    curve = [r for r in rows if r["class"] == "curve"]
+    assert len(curve) == 4 and all("Dq, B" not in r["schema"] and "none" not in r["reference"] for r in curve)
+    assert {r["reference"] for r in curve} == {"9 energies E/B at 3 Dq/B points"}
+
+
 def test_hero_percentages_round_a_half_up(tmp_path, monkeypatch):
     rows = [_row(model="m1", cond="A", correct=True)]
     data = dash.collect([_mk(tmp_path / "set-a", rows, MAN)], tmp_path / "r.html", TASKS, score_missing=False)
@@ -650,3 +766,78 @@ def test_dashboard_numbers_round_a_half_up():
     assert [dash._fmt(x) for x in (3466.5, 3325.5, 26.5, 27.5, 2.5, 3.5)] == [
         "3,467", "3,326", "27", "28", "3", "4"]
     assert dash._fmt(0.125, 2) == "0.13" and dash._fmt(1234.5, 0) == "1,235" and dash._fmt(None) == ""
+
+
+# ---------------------------------------------------------------- the confirmatory split
+DOI = "10.5281/zenodo.23889782"
+CTASKS = {"C-x-01": {**TASKS["P-x-01"], "id": "C-x-01", "split": "confirmatory"}}
+HYP = {"k_layers": {"primary": 1, "h1": 1, "h4": 0},
+       "primary": [{"name": "H2_m<1>", "n": 1, "p": 1.0, "mean_diff": 0.0, "ci": [0.0, 0.0], "p_holm": 1.0,
+                    "family": "primary"}],
+       "secondary": [{"name": "H1_m<1>", "n": 1, "p": 1.0, "mean_diff": 0.0, "ci": [0.0, 0.0], "family": "secondary"},
+                     {"name": "H2_m<1>_mcnemar", "n": 1, "p": 1.0, "b": 0, "c": 0, "family": "secondary"}],
+       "efficiency": []}
+
+
+def _text(markup: str) -> str:
+    markup = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", " ", markup, flags=re.S)
+    return " ".join(re.sub(r"<[^>]+>", " ", markup).split())
+
+
+def _confirmatory_set(tmp_path, hyp=True):
+    d = _mk(tmp_path / "set-c", [_row(task="C-x-01", cond=c) for c in "ABC"], {**MAN, "split": "confirmatory"})
+    if hyp:
+        (d / "hypotheses.json").write_text(json.dumps(HYP), encoding="utf-8")
+    return d
+
+
+def test_load_tasks_reads_the_chosen_split(monkeypatch):
+    import tsbench.tasks as T
+    seen = []
+    monkeypatch.setattr(T, "load", lambda split: seen.append(split) or [{"id": "a", "split": "pilot"},
+                                                                       {"id": "b", "split": "confirmatory"}])
+    assert set(dash.load_tasks("confirmatory")) == {"b"} and seen == ["confirmatory"]
+    assert set(dash.load_tasks()) == {"a"}
+
+
+def test_a_confirmatory_dashboard_names_its_split_and_doi_and_says_nothing_of_a_pilot(tmp_path):
+    out = tmp_path / "out" / "r.html"
+    data = dash.collect([_confirmatory_set(tmp_path)], out, CTASKS, score_missing=False)
+    markup = dash.build_html(data, "T", split="confirmatory", doi=DOI)
+    stamp = re.search(r'<p class="stamp">(.*?)</p>', markup)[1]
+    assert stamp.startswith("confirmatory split · preregistered " + DOI + " · 1 task")
+    text = _text(markup)
+    assert "pilot" not in text.lower() and "not preregistered" not in text and "no hypothesis is tested" not in text
+    assert f"confirmatory split, preregistered ({DOI})" in text
+    assert "What was asked: 1 confirmatory task" in text
+
+
+def test_a_confirmatory_dashboard_shows_the_preregistered_tests(tmp_path):
+    out = tmp_path / "out" / "r.html"
+    data = dash.collect([_confirmatory_set(tmp_path)], out, CTASKS, score_missing=False)
+    markup = dash.build_html(data, "T", split="confirmatory", doi=DOI)
+    sec = re.search(r'<section id="prereg".*?</section>', markup, flags=re.S)[0]
+    assert "Preregistered tests" in sec and "m&lt;1&gt;" in sec and "m<1>" not in sec
+    assert sec.count("<tr>") == 1 + 1 + 1 + 1 + 1 + 1  # three tables: a header row and one row each
+    no_file = dash.collect([_confirmatory_set(tmp_path / "x", hyp=False)], out, CTASKS, score_missing=False)
+    assert 'id="prereg"' not in dash.build_html(no_file, "T", split="confirmatory", doi=DOI)
+
+
+def test_a_pilot_dashboard_keeps_its_wording_and_shows_no_tests(tmp_path):
+    d = _mk(tmp_path / "set-a", [_row(cond=c) for c in "ABC"], MAN)
+    (d / "hypotheses.json").write_text(json.dumps(HYP), encoding="utf-8")
+    markup = _render([d], tmp_path)
+    assert "pilot split, not preregistered" in markup and 'id="prereg"' not in markup
+    assert re.search(r'<p class="stamp">pilot split · 1 task', markup)
+
+
+def test_cli_refuses_the_confirmatory_split_without_a_doi(tmp_path, monkeypatch, capsys):
+    d = _confirmatory_set(tmp_path)
+    monkeypatch.setattr(dash, "load_tasks", lambda split="pilot": CTASKS if split == "confirmatory" else TASKS)
+    out = tmp_path / "site" / "dash.html"
+    assert dash.main(["--runs", str(d), "--out", str(out)]) == 2  # the run set records the confirmatory split
+    assert dash.main(["--runs", str(d), "--out", str(out), "--split", "confirmatory"]) == 2
+    assert "--i-have-preregistered" in capsys.readouterr().err and not out.exists()
+    assert dash.main(["--runs", str(d), "--out", str(out), "--split", "confirmatory",
+                      "--i-have-preregistered", DOI]) == 0
+    assert "confirmatory split · preregistered" in out.read_text(encoding="utf-8")

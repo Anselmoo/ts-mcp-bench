@@ -1,0 +1,109 @@
+import numpy as np, itertools
+from sympy.physics.wigner import wigner_3j
+l=2
+orbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]
+N=len(orbs)
+W={}
+def w3(*a):
+    if a not in W: W[a]=float(wigner_3j(*a))
+    return W[a]
+def ck(k,ma,mc,q):
+    if ma-mc!=q: return 0.0
+    return (-1)**(l-ma)*w3(l,k,l,-ma,q,mc)*(-1)**l*(2*l+1)*w3(l,k,l,0,0,0)
+ang={k:np.zeros((N,N,N,N)) for k in (0,2,4)}
+for a,(ma,sa) in enumerate(orbs):
+ for b,(mb,sb) in enumerate(orbs):
+  for c,(mc,sc) in enumerate(orbs):
+   for d,(md,sd) in enumerate(orbs):
+    if sa!=sc or sb!=sd: continue
+    for k in (0,2,4):
+        t=0.0
+        for q in range(-k,k+1):
+            t+=(-1)**q*ck(k,ma,mc,-q)*ck(k,mb,md,q)
+        ang[k][a,b,c,d]=t
+allst=list(itertools.combinations(range(N),5))
+# Ms=+1/2 subspace: 3 up, 2 down
+def Ms(s): return sum(0.5 if o%2==0 else -0.5 for o in s)
+states=[s for s in allst if abs(Ms(s)-0.5)<1e-9]
+idx={s:i for i,s in enumerate(states)}
+def apply_ops(occ,ops):
+    occ=list(occ); sign=1
+    for t,o in reversed(ops):
+        if t=='a':
+            if o not in occ: return None,0
+            p=occ.index(o); sign*=(-1)**p; occ.pop(p)
+        else:
+            if o in occ: return None,0
+            p=sum(1 for x in occ if x<o); sign*=(-1)**p; occ.insert(p,o)
+    return tuple(sorted(occ)),sign
+terms=[]
+for a in range(N):
+ for b in range(N):
+  for c in range(N):
+   for d in range(N):
+    v=[ang[k][a,b,c,d] for k in (0,2,4)]
+    if max(abs(x) for x in v)<1e-12: continue
+    if a==b or c==d: continue
+    terms.append((a,b,c,d,v))
+D=len(states)
+M2=np.zeros((D,D)); M4=np.zeros((D,D))
+for i,s in enumerate(states):
+    for (a,b,c,d,v) in terms:
+        nocc,sg=apply_ops(s,[('c',a),('c',b),('a',d),('a',c)])
+        if nocc is None: continue
+        M2[idx[nocc],i]+=0.5*v[1]*sg
+        M4[idx[nocc],i]+=0.5*v[2]*sg
+v0=np.zeros(5); v0[2]=1
+v2=np.zeros(5); v2[4]=1/np.sqrt(2); v2[0]=1/np.sqrt(2)
+Peg=np.outer(v0,v0)+np.outer(v2,v2)
+hI=np.zeros((N,N)); hP=np.zeros((N,N))
+for a,(ma,sa) in enumerate(orbs):
+ for b,(mb,sb) in enumerate(orbs):
+  if sa==sb:
+    hI[a,b]=(1 if ma==mb else 0); hP[a,b]=Peg[ma+2,mb+2]
+def op1(h):
+    R=np.zeros((D,D))
+    for i,s in enumerate(states):
+        for a in range(N):
+          for b in range(N):
+            if abs(h[a,b])<1e-14: continue
+            nocc,sg=apply_ops(s,[('c',a),('a',b)])
+            if nocc is None: continue
+            R[idx[nocc],i]+=h[a,b]*sg
+    return R
+OI=op1(hI); OP=op1(hP)
+# S+ then S-: S2 = S- S+ + Sz^2 + Sz; within Ms=1/2 subspace, S2 = Sp^T Sp restricted? need Sp from Ms=-1/2 space -> use full
+# compute S2 using full space
+Sp_full=[]
+def S2_matrix():
+    allidx={s:i for i,s in enumerate(allst)}
+    n=len(allst)
+    Sp=np.zeros((n,n)); Sz=np.zeros(n)
+    for i,s in enumerate(allst): Sz[i]=Ms(s)
+    for m in range(-2,3):
+        up=orbs.index((m,0.5)); dn=orbs.index((m,-0.5))
+        for i,s in enumerate(allst):
+            nocc,sg=apply_ops(s,[('c',up),('a',dn)])
+            if nocc is None: continue
+            Sp[allidx[nocc],i]+=sg
+    # restrict S2 = Sp^T Sp + Sz^2 + Sz acting on Ms=1/2 states
+    S2full=Sp.T@Sp+np.diag(Sz**2+Sz)
+    ii=[allidx[s] for s in states]
+    return S2full[np.ix_(ii,ii)]
+S2=S2_matrix()
+print("D",D, "S2 diag sample", np.round(np.diag(S2)[:3],3))
+def doublets(Dq,B,C=None):
+    if C is None: C=4.4*B
+    F4=C*441/35.0; F2=(441*B+5*F4)/9.0
+    H=F2*M2+F4*M4-4*Dq*OI+10*Dq*OP
+    # diagonalize H + eps*S2 to separate
+    w,v=np.linalg.eigh(H+1e-2*S2)
+    E=[]
+    for k in range(D):
+        s2=v[:,k]@S2@v[:,k]
+        if abs(s2-0.75)<1e-6: E.append(v[:,k]@H@v[:,k])
+    return np.sort(np.array(E))
+E=doublets(0.0,1.0)
+print("free ion doublets:",len(E), "expected 2D(x3)? count doublets in d5 =", 2*(5)+ 0)
+E=doublets(1000.0,1.0)
+print(np.round(E-E[0],1))

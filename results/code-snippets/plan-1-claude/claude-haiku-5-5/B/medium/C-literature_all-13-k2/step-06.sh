@@ -1,0 +1,1 @@
+python3 -c "import scipy.special as s; print([x for x in dir(s) if 'sph' in x])"

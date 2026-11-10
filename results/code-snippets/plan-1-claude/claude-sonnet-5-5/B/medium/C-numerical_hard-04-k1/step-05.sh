@@ -1,0 +1,1 @@
+for d in /dev/shm /var/tmp . ; do touch $d/x 2>/dev/null && echo $d ok; done

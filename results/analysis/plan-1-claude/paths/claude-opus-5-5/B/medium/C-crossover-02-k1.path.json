@@ -1,0 +1,242 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-opus-5-5/B/medium/C-crossover-02-k1.jsonl",
+ "transcript_sha256": "8cebe5fc62d1b7d0b07bebb169a7982180551c8869d2eea152222b2e6b336000",
+ "answer": {
+  "Dq": 1792.0,
+  "B": 621.0,
+  "C": 2851.0,
+  "out_of_scope": false,
+  "reason": "Full d5 diagonalization gives the 6A1g/2T2g crossover at Dq ≈ 1792 cm^-1 (simple diagonal estimate (15B+10C)/20 = 1891)."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d5.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB,C=621.,2851.\nF4=C/35; F2=B+5*F4; F0=0\nFk={0:0,2:F2*49,4:F4*441}\nml=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    # c^k(l m1, l m2) for l=2\n    return float(gaunt(2,k,2,-m1,m1-m2,m2)*(-1)**m1*np.sqrt(4*np.pi/(2*k+1))*5)\n# check normalisation: c^k(lm,l'm') = sqrt(4pi/(2k+1)) * int Y*lm Ykq Yl'm'\ncache={}\ndef c(k,a,b):\n    if (k,a,b) not in cache: cache[(k,a,b)]=ck(k,a,b)\n    return cache[(k,a,b)]\ndef eri(a,b,cc,d): # <ab|1/r|cd>, orbitals (m,s)\n    if a[1]!=cc[1] or b[1]!=d[1]: return 0\n    if a[0]+b[0]!=cc[0]+d[0]: return 0\n    return sum(c(k,a[0],cc[0])*c(k,d[0],b[0])*Fk[k] for k in (2,4))\nso=[(m,s) for m in ml for s in (1,-1)]\ndets=list(itertools.combinations(range(10),5))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\n# octahedral one-electron in real basis -> complex: Dq*(6 for eg, -4 t2); V4 operator: <m|V|m'>\nV=np.zeros((5,5))\n# standard: <0|V|0>=6Dq, <±1|V|±1>=-4Dq, <±2|V|±2>=Dq, <2|V|-2>=5Dq\ndef Voct(Dq):\n    M=np.zeros((5,5));d={-2:0,-1:1,0:2,1:3,2:4}\n    M[2,2]=6*Dq;M[1,1]=M[3,3]=-4*Dq;M[0,0]=M[4,4]=Dq;M[0,4]=M[4,0]=5*Dq\n    return M\ndef build(Dq):\n    H=np.zeros((N,N));Vm=Voct(Dq)\n    for i,d in enumerate(dets):\n        for j,e in enumerate(dets):\n            if j<i: continue\n            diff1=[x for x in d if x not in e]; diff2=[x for x in e if x not in d]\n            if len(diff1)>2: continue\n            val=0\n            def sign(det,p,q):\n                # bring p to front order... use generic: replace\n                pass\n            if len(diff1)==0:\n                for p in d: val+=Vm[so[p][0]+2,so[p][0]+2]\n                for a in range(5):\n                    for b in range(a+1,5):\n                        p,q=so[d[a]],so[d[b]]\n                        val+=eri(p,q,p,q)-eri(p,q,q,p)\n            else:\n                # compute phase by permutation\n                ld=list(d); \n                # replace diff1 with diff2 in place, sort, count parity\n                rep=ld[:]\n                for x,y in zip(diff1,diff2): rep[rep.index(x)]=y\n                perm=np.argsort(rep); \n                # parity of sorting rep\n                par=0;r=rep[:]\n                for a in range(len(r)):\n                    for b in range(a+1,len(r)):\n                        if r[a]>r[b]: par+=1\n                ph=(-1)**par\n                if len(diff1)==1:\n                    p,q=so[diff1[0]],so[diff2[0]]\n                    if p[1]==q[1]: val+=Vm[p[0]+2,q[0]+2]\n                    for r_ in d:\n                        if r_==diff1[0]: continue\n                        rr=so[r_]\n                        val+=eri(p,rr,q,rr)-eri(p,rr,rr,q)\n                else:\n                    p1,p2=so[diff1[0]],so[diff1[1]];q1,q2=so[diff2[0]],so[diff2[1]]\n                    val+=eri(p1,p2,q1,q2)-eri(p1,p2,q2,q1)\n                val*=ph\n            H[i,j]=val;H[j,i]=val\n    return H\nMs=np.array([sum(so[p][1] for p in d)/2 for d in dets])\ndef gap(Dq):\n    H=build(Dq)\n    s5=Ms==2.5; s05=Ms==0.5; s15=Ms==1.5\n    e6=np.linalg.eigvalsh(H[np.ix_(s5,s5)])[0]\n    e2=np.linalg.eigvalsh(H[np.ix_(s05,s05)])[0]\n    return e6,e2\nfor Dq in [0,1000,1500,2000]:\n    print(Dq,gap(Dq))\nf=lambda Dq: (lambda a:a[1]-a[0])(gap(Dq))\nprint(brentq(f,1000,3000,xtol=1e-6))\nEOF\npython3 /tmp/d5.py\n",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "99a4c82945b76e8b5c0e1ac276c17dae3d0742ea2ef647823ea51f150b8725bd",
+     "lines": 84,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB,C=621.,2851.\nF4=C/35; F2=B+5*F4; F0=0\nFk={0:0,2:F2*49,4:F4*441}\nml=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    # c^k(l m1, l m2) for l=2\n    return float(gaunt(2,k,2,-m1,m1-m2,m2)*(-1)**m1*np.sqrt(4*np.pi/(2*k+1))*5)\n# check normalisation: c^k(lm,l'm') = sqrt(4pi/(2k+1)) * int Y*lm Ykq Yl'm'\ncache={}\ndef c(k,a,b):\n    if (k,a,b) not in cache: cache[(k,a,b)]=ck(k,a,b)\n    return cache[(k,a,b)]\ndef eri(a,b,cc,d): # <ab|1/r|cd>, orbitals (m,s)\n    if a[1]!=cc[1] or b[1]!=d[1]: return 0\n    if a[0]+b[0]!=cc[0]+d[0]: return 0\n    return sum(c(k,a[0],cc[0])*c(k,d[0],b[0])*Fk[k] for k in (2,4))\nso=[(m,s) for m in ml for s in (1,-1)]\ndets=list(itertools.combinations(range(10),5))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\n# octahedral one-electron in real basis -> complex: Dq*(6 for eg, -4 t2); V4 operator: <m|V|m'>\nV=np.zeros((5,5))\n# standard: <0|V|0>=6Dq, <±1|V|±1>=-4Dq, <±2|V|±2>=Dq, <2|V|-2>=5Dq\ndef Voct(Dq):\n    M=np.zeros((5,5));d={-2:0,-1:1,0:2,1:3,2:4}\n    M[2,2]=6*Dq;M[1,1]=M[3,3]=-4*Dq;M[0,0]=M[4,4]=Dq;M[0,4]=M[4,0]=5*Dq\n    return M\ndef build(Dq):\n    H=np.zeros((N,N));Vm=Voct(Dq)\n    for i,d in enumerate(dets):\n        for j,e in enumerate(dets):\n            if j<i: continue\n            diff1=[x for x in d if x not in e]; diff2=[x for x in e if x not in d]\n            if len(diff1)>2: continue\n            val=0\n            def sign(det,p,q):\n                # bring p to front order... use generic: replace\n                pass\n            if len(diff1)==0:\n                for p in d: val+=Vm[so[p][0]+2,so[p][0]+2]\n                for a in range(5):\n                    for b in range(a+1,5):\n                        p,q=so[d[a]],so[d[b]]\n                        val+=eri(p,q,p,q)-eri(p,q,q,p)\n            else:\n                # compute phase by permutation\n                ld=list(d); \n                # replace diff1 with diff2 in place, sort, count parity\n                rep=ld[:]\n                for x,y in zip(diff1,diff2): rep[rep.index(x)]=y\n                perm=np.argsort(rep); \n                # parity of sorting rep\n                par=0;r=rep[:]\n                for a in range(len(r)):\n                    for b in range(a+1,len(r)):\n                        if r[a]>r[b]: par+=1\n                ph=(-1)**par\n                if len(diff1)==1:\n                    p,q=so[diff1[0]],so[diff2[0]]\n                    if p[1]==q[1]: val+=Vm[p[0]+2,q[0]+2]\n                    for r_ in d:\n                        if r_==diff1[0]: continue\n                        rr=so[r_]\n                        val+=eri(p,rr,q,rr)-eri(p,rr,rr,q)\n                else:\n                    p1,p2=so[diff1[0]],so[diff1[1]];q1,q2=so[diff2[0]],so[diff2[1]]\n                    val+=eri(p1,p2,q1,q2)-eri(p1,p2,q2,q1)\n                val*=ph\n            H[i,j]=val;H[j,i]=val\n    return H\nMs=np.array([sum(so[p][1] for p in d)/2 for d in dets])\ndef gap(Dq):\n    H=build(Dq)\n    s5=Ms==2.5; s05=Ms==0.5; s15=Ms==1.5\n    e6=np.linalg.eigvalsh(H[np.ix_(s5,s5)])[0]\n    e2=np.linalg.eigvalsh(H[np.ix_(s05,s05)])[0]\n    return e6,e2\nfor Dq in [0,1000,1500,2000]:\n    print(Dq,gap(Dq))\nf=lambda Dq: (lambda a:a[1]-a[0])(gap(Dq))\nprint(brentq(f,1000,3000,xtol=1e-6))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d5.py",
+     "written_in_step": 0
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 90: /tmp/d5.py: Read-only file system\npython3: can't open file '/tmp/d5.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 25,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5))"
+    },
+    {
+     "script": "d5.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5));d={-2:0,-1:1,0:2,1:3,2:4}"
+    },
+    {
+     "script": "d5.py",
+     "line": 29,
+     "method": "matrix",
+     "text": "M[2,2]=6*Dq;M[1,1]=M[3,3]=-4*Dq;M[0,0]=M[4,4]=Dq;M[0,4]=M[4,0]=5*Dq"
+    },
+    {
+     "script": "d5.py",
+     "line": 32,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N));Vm=Voct(Dq)"
+    },
+    {
+     "script": "d5.py",
+     "line": 72,
+     "method": "matrix",
+     "text": "H[i,j]=val;H[j,i]=val"
+    },
+    {
+     "script": "d5.py",
+     "line": 78,
+     "method": "eigen_solver",
+     "text": "e6=np.linalg.eigvalsh(H[np.ix_(s5,s5)])[0]"
+    },
+    {
+     "script": "d5.py",
+     "line": 79,
+     "method": "eigen_solver",
+     "text": "e2=np.linalg.eigvalsh(H[np.ix_(s05,s05)])[0]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ 2>/dev/null || cd .; sed -n '1,200p' /dev/null; python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB,C=621.,2851.\nF4=C/35; F2=B+5*F4\nFk={2:F2*49,4:F4*441}\ncache={}\ndef c(k,m1,m2):\n    key=(k,m1,m2)\n    if key not in cache:\n        cache[key]=float(gaunt(2,k,2,-m1,m1-m2,m2)*(-1)**m1*np.sqrt(4*np.pi/(2*k+1)))\n    return cache[key]\ndef eri(a,b,cc,d):\n    if a[1]!=cc[1] or b[1]!=d[1] or a[0]+b[0]!=cc[0]+d[0]: return 0\n    return sum(c(k,a[0],cc[0])*c(k,d[0],b[0])*Fk[k] for k in (2,4))\nso=[(m,s) for m in range(-2,3) for s in (1,-1)]\ndef Voct(Dq):\n    M=np.zeros((5,5));M[2,2]=6*Dq;M[1,1]=M[3,3]=-4*Dq;M[0,0]=M[4,4]=Dq;M[0,4]=M[4,0]=5*Dq;return M\ndef build(dets,Dq):\n    N=len(dets);H=np.zeros((N,N));Vm=Voct(Dq)\n    for i,d in enumerate(dets):\n        for j in range(i,N):\n            e=dets[j]\n            d1=[x for x in d if x not in e]; d2=[x for x in e if x not in d]\n            if len(d1)>2: continue\n            val=0\n            if not d1:\n                for p in d: val+=Vm[so[p][0]+2,so[p][0]+2]\n                for a in range(5):\n                    for b in range(a+1,5):\n                        p,q=so[d[a]],so[d[b]];val+=eri(p,q,p,q)-eri(p,q,q,p)\n            else:\n                rep=list(d)\n                for x,y in zip(d1,d2): rep[rep.index(x)]=y\n                par=sum(1 for a in range(5) for b in range(a+1,5) if rep[a]>rep[b])\n                if len(d1)==1:\n                    p,q=so[d1[0]],so[d2[0]]\n                    if p[1]==q[1]: val+=Vm[p[0]+2,q[0]+2]\n                    for r in d:\n                        if r!=d1[0]: rr=so[r];val+=eri(p,rr,q,rr)-eri(p,rr,rr,q)\n                else:\n                    p1,p2=so[d1[0]],so[d1[1]];q1,q2=so[d2[0]],so[d2[1]]\n                    val+=eri(p1,p2,q1,q2)-eri(p1,p2,q2,q1)\n                val*=(-1)**par\n            H[i,j]=H[j,i]=val\n    return H\nalld=list(itertools.combinations(range(10),5))\nMs=lambda d: sum(so[p][1] for p in d)/2\nD5=[d for d in alld if Ms(d)==2.5]; D05=[d for d in alld if Ms(d)==0.5]\ndef lev(Dq):\n    return np.linalg.eigvalsh(build(D5,Dq))[0], np.linalg.eigvalsh(build(D05,Dq))\ne6,ev=lev(0); print(sorted(set(np.round(ev-e6,1)))[:6], 10*B+5*C)\nf=lambda Dq:(lambda a:a[1][0]-a[0])(lev(Dq))\nx=brentq(f,1500,2500,xtol=1e-4);print(x)\ne6,ev=lev(x);print(np.round(ev[:8]-e6,2))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "c266cb7eea9343d76fe8995060bfab511a80d7ac8b468942ee255d7d36890324",
+     "lines": 55,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB,C=621.,2851.\nF4=C/35; F2=B+5*F4\nFk={2:F2*49,4:F4*441}\ncache={}\ndef c(k,m1,m2):\n    key=(k,m1,m2)\n    if key not in cache:\n        cache[key]=float(gaunt(2,k,2,-m1,m1-m2,m2)*(-1)**m1*np.sqrt(4*np.pi/(2*k+1)))\n    return cache[key]\ndef eri(a,b,cc,d):\n    if a[1]!=cc[1] or b[1]!=d[1] or a[0]+b[0]!=cc[0]+d[0]: return 0\n    return sum(c(k,a[0],cc[0])*c(k,d[0],b[0])*Fk[k] for k in (2,4))\nso=[(m,s) for m in range(-2,3) for s in (1,-1)]\ndef Voct(Dq):\n    M=np.zeros((5,5));M[2,2]=6*Dq;M[1,1]=M[3,3]=-4*Dq;M[0,0]=M[4,4]=Dq;M[0,4]=M[4,0]=5*Dq;return M\ndef build(dets,Dq):\n    N=len(dets);H=np.zeros((N,N));Vm=Voct(Dq)\n    for i,d in enumerate(dets):\n        for j in range(i,N):\n            e=dets[j]\n            d1=[x for x in d if x not in e]; d2=[x for x in e if x not in d]\n            if len(d1)>2: continue\n            val=0\n            if not d1:\n                for p in d: val+=Vm[so[p][0]+2,so[p][0]+2]\n                for a in range(5):\n                    for b in range(a+1,5):\n                        p,q=so[d[a]],so[d[b]];val+=eri(p,q,p,q)-eri(p,q,q,p)\n            else:\n                rep=list(d)\n                for x,y in zip(d1,d2): rep[rep.index(x)]=y\n                par=sum(1 for a in range(5) for b in range(a+1,5) if rep[a]>rep[b])\n                if len(d1)==1:\n                    p,q=so[d1[0]],so[d2[0]]\n                    if p[1]==q[1]: val+=Vm[p[0]+2,q[0]+2]\n                    for r in d:\n                        if r!=d1[0]: rr=so[r];val+=eri(p,rr,q,rr)-eri(p,rr,rr,q)\n                else:\n                    p1,p2=so[d1[0]],so[d1[1]];q1,q2=so[d2[0]],so[d2[1]]\n                    val+=eri(p1,p2,q1,q2)-eri(p1,p2,q2,q1)\n                val*=(-1)**par\n            H[i,j]=H[j,i]=val\n    return H\nalld=list(itertools.combinations(range(10),5))\nMs=lambda d: sum(so[p][1] for p in d)/2\nD5=[d for d in alld if Ms(d)==2.5]; D05=[d for d in alld if Ms(d)==0.5]\ndef lev(Dq):\n    return np.linalg.eigvalsh(build(D5,Dq))[0], np.linalg.eigvalsh(build(D05,Dq))\ne6,ev=lev(0); print(sorted(set(np.round(ev-e6,1)))[:6], 10*B+5*C)\nf=lambda Dq:(lambda a:a[1][0]-a[0])(lev(Dq))\nx=brentq(f,1500,2500,xtol=1e-4);print(x)\ne6,ev=lev(x);print(np.round(ev[:8]-e6,2))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[np.float64(0.0), np.float64(20465.0), np.float64(24304.0), np.float64(24812.0), np.float64(29639.0), np.float64(33619.0)] 20465.0\n1750.0005750000068\n[   0.    807.47  807.47  807.47 5362.66 5362.66 5362.66 9750.4 ]\nShell cwd was reset to /tmp/tsbench-run-_dckl7z8",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5));M[2,2]=6*Dq;M[1,1]=M[3,3]=-4*Dq;M[0,0]=M[4,4]=Dq;M[0,4]=M[4,0]=5*Dq;return M"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "N=len(dets);H=np.zeros((N,N));Vm=Voct(Dq)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 45,
+     "method": "matrix",
+     "text": "H[i,j]=H[j,i]=val"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 51,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(build(D5,Dq))[0], np.linalg.eigvalsh(build(D05,Dq))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp/tsbench-run-_dckl7z8; python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB,C=621.,2851.\nF4=C/35; F2=B+5*F4\nFk={2:F2*49,4:F4*441}\ncache={}\ndef c(k,m1,m2):\n    key=(k,m1,m2)\n    if key not in cache:\n        cache[key]=float(gaunt(2,k,2,-m1,m1-m2,m2)*(-1)**m1*np.sqrt(4*np.pi/(2*k+1)))\n    return cache[key]\ndef eri(a,b,cc,d):\n    if a[1]!=cc[1] or b[1]!=d[1] or a[0]+b[0]!=cc[0]+d[0]: return 0\n    return sum(c(k,a[0],cc[0])*c(k,d[0],b[0])*Fk[k] for k in (2,4))\nso=[(m,s) for m in range(-2,3) for s in (1,-1)]\ndef Voct(Dq):\n    M=np.zeros((5,5));M[2,2]=6*Dq;M[1,1]=M[3,3]=-4*Dq;M[0,0]=M[4,4]=Dq;M[0,4]=M[4,0]=5*Dq;return M\ndef build(dets,Dq):\n    N=len(dets);H=np.zeros((N,N));Vm=Voct(Dq)\n    for i,d in enumerate(dets):\n        for j in range(i,N):\n            e=dets[j]\n            d1=[x for x in d if x not in e]; d2=[x for x in e if x not in d]\n            if len(d1)>2: continue\n            val=0\n            if not d1:\n                for p in d: val+=Vm[so[p][0]+2,so[p][0]+2]\n                for a in range(5):\n                    for b in range(a+1,5):\n                        p,q=so[d[a]],so[d[b]];val+=eri(p,q,p,q)-eri(p,q,q,p)\n            else:\n                rep=list(d)\n                for x,y in zip(d1,d2): rep[rep.index(x)]=y\n                par=sum(1 for a in range(5) for b in range(a+1,5) if rep[a]>rep[b])\n                if len(d1)==1:\n                    p,q=so[d1[0]],so[d2[0]]\n                    if p[1]==q[1]: val+=Vm[p[0]+2,q[0]+2]\n                    for r in d:\n                        if r!=d1[0]: rr=so[r];val+=eri(p,rr,q,rr)-eri(p,rr,rr,q)\n                else:\n                    p1,p2=so[d1[0]],so[d1[1]];q1,q2=so[d2[0]],so[d2[1]]\n                    val+=eri(p1,p2,q1,q2)-eri(p1,p2,q2,q1)\n                val*=(-1)**par\n            H[i,j]=H[j,i]=val\n    return H\nalld=list(itertools.combinations(range(10),5))\nMs=lambda d: sum(so[p][1] for p in d)/2\nD5=[d for d in alld if Ms(d)==2.5]; D05=[d for d in alld if Ms(d)==0.5]; D15=[d for d in alld if Ms(d)==1.5]\ndef f(Dq):\n    e6=np.linalg.eigvalsh(build(D5,Dq))[0]\n    e4=np.linalg.eigvalsh(build(D15,Dq))\n    e2=np.linalg.eigvalsh(build(D05,Dq))\n    # remove sextet component: drop one eigenvalue closest to e6\n    k=np.argmin(abs(e2-e6)); e2=np.delete(e2,k)\n    k4=np.argmin(abs(e4-e6)); e4=np.delete(e4,k4)\n    return min(e2.min(),e4.min())-e6, e4.min()-e6\nfor D in [1500,1700,1800,1900]: print(D,f(D))\nx=brentq(lambda D:f(D)[0],1500,2000,xtol=1e-4);print(x)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "752ae1e721ac63e3c633ab91c350ed8f9b8da12763140b8b8da74882eeea136f",
+     "lines": 59,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB,C=621.,2851.\nF4=C/35; F2=B+5*F4\nFk={2:F2*49,4:F4*441}\ncache={}\ndef c(k,m1,m2):\n    key=(k,m1,m2)\n    if key not in cache:\n        cache[key]=float(gaunt(2,k,2,-m1,m1-m2,m2)*(-1)**m1*np.sqrt(4*np.pi/(2*k+1)))\n    return cache[key]\ndef eri(a,b,cc,d):\n    if a[1]!=cc[1] or b[1]!=d[1] or a[0]+b[0]!=cc[0]+d[0]: return 0\n    return sum(c(k,a[0],cc[0])*c(k,d[0],b[0])*Fk[k] for k in (2,4))\nso=[(m,s) for m in range(-2,3) for s in (1,-1)]\ndef Voct(Dq):\n    M=np.zeros((5,5));M[2,2]=6*Dq;M[1,1]=M[3,3]=-4*Dq;M[0,0]=M[4,4]=Dq;M[0,4]=M[4,0]=5*Dq;return M\ndef build(dets,Dq):\n    N=len(dets);H=np.zeros((N,N));Vm=Voct(Dq)\n    for i,d in enumerate(dets):\n        for j in range(i,N):\n            e=dets[j]\n            d1=[x for x in d if x not in e]; d2=[x for x in e if x not in d]\n            if len(d1)>2: continue\n            val=0\n            if not d1:\n                for p in d: val+=Vm[so[p][0]+2,so[p][0]+2]\n                for a in range(5):\n                    for b in range(a+1,5):\n                        p,q=so[d[a]],so[d[b]];val+=eri(p,q,p,q)-eri(p,q,q,p)\n            else:\n                rep=list(d)\n                for x,y in zip(d1,d2): rep[rep.index(x)]=y\n                par=sum(1 for a in range(5) for b in range(a+1,5) if rep[a]>rep[b])\n                if len(d1)==1:\n                    p,q=so[d1[0]],so[d2[0]]\n                    if p[1]==q[1]: val+=Vm[p[0]+2,q[0]+2]\n                    for r in d:\n                        if r!=d1[0]: rr=so[r];val+=eri(p,rr,q,rr)-eri(p,rr,rr,q)\n                else:\n                    p1,p2=so[d1[0]],so[d1[1]];q1,q2=so[d2[0]],so[d2[1]]\n                    val+=eri(p1,p2,q1,q2)-eri(p1,p2,q2,q1)\n                val*=(-1)**par\n            H[i,j]=H[j,i]=val\n    return H\nalld=list(itertools.combinations(range(10),5))\nMs=lambda d: sum(so[p][1] for p in d)/2\nD5=[d for d in alld if Ms(d)==2.5]; D05=[d for d in alld if Ms(d)==0.5]; D15=[d for d in alld if Ms(d)==1.5]\ndef f(Dq):\n    e6=np.linalg.eigvalsh(build(D5,Dq))[0]\n    e4=np.linalg.eigvalsh(build(D15,Dq))\n    e2=np.linalg.eigvalsh(build(D05,Dq))\n    # remove sextet component: drop one eigenvalue closest to e6\n    k=np.argmin(abs(e2-e6)); e2=np.delete(e2,k)\n    k4=np.argmin(abs(e4-e6)); e4=np.delete(e4,k4)\n    return min(e2.min(),e4.min())-e6, e4.min()-e6\nfor D in [1500,1700,1800,1900]: print(D,f(D))\nx=brentq(lambda D:f(D)[0],1500,2000,xtol=1e-4);print(x)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1500 (np.float64(5620.762634553852), np.float64(7809.053227549492))\n1700 (np.float64(1772.7945516944164), np.float64(5852.903775825274))\n1800 (np.float64(-159.02394087574794), np.float64(4872.016534169314))\n1900 (np.float64(-2095.3275517299044), np.float64(3889.5723306290383))\n1791.7772778790218",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5));M[2,2]=6*Dq;M[1,1]=M[3,3]=-4*Dq;M[0,0]=M[4,4]=Dq;M[0,4]=M[4,0]=5*Dq;return M"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "N=len(dets);H=np.zeros((N,N));Vm=Voct(Dq)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 45,
+     "method": "matrix",
+     "text": "H[i,j]=H[j,i]=val"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 51,
+     "method": "eigen_solver",
+     "text": "e6=np.linalg.eigvalsh(build(D5,Dq))[0]"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "eigen_solver",
+     "text": "e4=np.linalg.eigvalsh(build(D15,Dq))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 53,
+     "method": "eigen_solver",
+     "text": "e2=np.linalg.eigvalsh(build(D05,Dq))"
+    }
+   ],
+   "produces": []
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1792.0,
+   "weak": false,
+   "steps": [
+    2
+   ],
+   "typed_in_steps": [
+    2
+   ],
+   "source_step": null
+  },
+  {
+   "path": "B",
+   "value": 621.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 2851.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 3,
+  "n_scripts": 3,
+  "n_failed_steps": 1,
+  "n_values": 3,
+  "n_linked": 0,
+  "n_weak": 0,
+  "source_steps": [],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

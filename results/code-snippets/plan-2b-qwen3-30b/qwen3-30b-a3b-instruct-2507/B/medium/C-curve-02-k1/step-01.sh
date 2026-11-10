@@ -1,0 +1,1 @@
+echo 'Calculating ligand-field terms for octahedral d3 ion with B=722 cm⁻¹, C=3003 cm⁻¹...'

@@ -1,0 +1,1 @@
+sed -i 's/return float((-1)\*\*m\*5\*gaunt(2,k,2,-m,m-mp,mp))/return float((-1)**m*np.sqrt(4*np.pi\/(2*k+1))*gaunt(2,k,2,-m,m-mp,mp))/' a.py; grep -n "def c" -A1 a.py; python3 a.py 2>&1 | grep -v cache; sha256sum diagram.png

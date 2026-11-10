@@ -1,0 +1,1 @@
+sed -i 's/^N=20/N=10/' run.py && python3 run.py

@@ -1,0 +1,1 @@
+python3 -c "import numpy, scipy, sympy; print(numpy.__version__, scipy.__version__, sympy.__version__)" 2>&1; which python3; pip --version 2>&1 | head -1

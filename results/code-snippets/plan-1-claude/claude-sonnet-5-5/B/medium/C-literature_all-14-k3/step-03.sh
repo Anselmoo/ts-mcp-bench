@@ -1,0 +1,1 @@
+cd /dev/shm 2>/dev/null && pwd; touch x && echo writable; df . | tail -1; ls -ld /var/tmp /workspace 2>&1

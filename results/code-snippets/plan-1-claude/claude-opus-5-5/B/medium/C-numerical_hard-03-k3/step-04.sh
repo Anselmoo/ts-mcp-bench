@@ -1,0 +1,1 @@
+cd $TMPDIR && touch a && echo ok; cd /dev/shm && touch a && echo ok2

@@ -1,0 +1,466 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-crossover-02-k3.jsonl",
+ "transcript_sha256": "47d38abe47cba5fc067f65a04f6f6c6b85c5e205eedc0b9414fbb0470b93618a",
+ "answer": {
+  "Dq": 1792.0,
+  "B": 621.0,
+  "C": 2851.0,
+  "out_of_scope": false,
+  "reason": "Full d5 Oh diagonalisation with Racah B and C gives the sextet-doublet crossover at Dq ≈ 1792 cm^-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy, sympy, scipy availability",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|sympy|scipy\" ; python3 -c \"import numpy, sympy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p /w && cat > /w/d5.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\nfrom scipy.optimize import brentq\nfrom functools import lru_cache\n\nB, C = 621.0, 2851.0\nF2 = 49*B + 7*C\nF4 = 63*C/5\nFk = {0:0.0, 2:F2, 4:F4}\nms = list(range(-2,3))\n\n@lru_cache(None)\ndef G(m1,m2,m3,k,l=2):  # gaunt for (l,k,l) with m's\n    return float(gaunt(l,k,l,m1,m2,m3))\n\ndef V2(m1,m2,m3,m4):\n    # <m1 m2|1/r12|m3 m4>\n    tot=0.0\n    if m1+m2!=m3+m4: return 0.0\n    for k in (0,2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            if abs(m1-m3+0)>2*0 and False: pass\n            if abs(-m1-q)>2 or abs(m3)>2 or abs(-m2+q)>2 : pass\n            # electron1: (-1)^(m1+q) G(-m1,-q,m3); electron2: (-1)^m2 G(-m2,q,m4)\n            if abs(-m1)>2 or abs(-q)>k or abs(m3)>2: continue\n            if abs(-m2)>2 or abs(q)>k or abs(m4)>2: continue\n            g1=float(gaunt(2,k,2,-m1,-q,m3)) if abs(-q)<=k and abs(-m1+(-q)*0)<=2 else 0.0\n            g2=float(gaunt(2,k,2,-m2,q,m4)) if abs(q)<=k else 0.0\n            s+= (-1)**(m1+q) * g1 * (-1)**m2 * g2\n        tot += Fk[k]*4*pi/(2*k+1)*s\n    return tot\n\n# one-electron cubic field operator: Y40 + sqrt(5/14)(Y44+Y4-4)\nfrom sympy import Integer\ndef Ymat(q):\n    M=np.zeros((5,5))\n    for i,m1 in enumerate(ms):\n        for j,m2 in enumerate(ms):\n            if m1 - m2 != q*0 and -m1+q+m2 !=0: continue\n            M[i,j]=(-1)**m1*float(gaunt(2,4,2,-m1,q,m2))\n    return M\n# complex; build full operator with complex entries\ndef Yc(q):\n    M=np.zeros((5,5),dtype=complex)\n    for i,m1 in enumerate(ms):\n        for j,m2 in enumerate(ms):\n            if -m1+q+m2!=0: continue\n            M[i,j]=(-1)**m1*float(gaunt(2,4,2,-m1,q,m2))\n    return M\nOp = Yc(0) + sqrt(5/14)*(Yc(4)+Yc(-4))\nw,U = np.linalg.eigh(Op)\nprint(\"cubic eigenvalues (Y40 ref):\", np.round(w,4))\n# t2g = lower triplet, eg = upper doublet; scale: h = a*Op with t2g->-4Dq, eg->+6Dq\n# Use Op eigen: low triplet value t, high doublet value e: a*(e-t)=10 Dq ; choose shift so barycenter 0\nt = w[0]; e = w[-1]\n# Build one-electron matrix h(Dq) = Dq*(c1*Op + c0*I)\nc1 = 10.0/(e-t)\nc0 = -4 - c1*t   # so t2g: c1*t+c0=-4 ; eg: c1*e+c0 = 6\nprint(\"check t2g,eg:\", c1*w[0]+c0, c1*w[-1]+c0)\nHcf_unit = c1*Op + c0*np.eye(5)  # multiply by Dq\n\n# Fock space\nnorb=10\ndef idx(orb,s): return 2*orb+s  # s=0 up,1 down\n# spin orbital list\nso=[(ms[i//2] if False else ms[(i)//2], (i)%2) for i in range(10)]\nN=10\ndim=2**N\ndef occ_states(n):\n    return [s for s in range(dim) if bin(s).count('1')==n]\nsts=occ_states(5)\npos={s:i for i,s in enumerate(sts)}\nD=len(sts)\ndef cdag_c(a,b):\n    # c_a^dag c_b on basis of N=5 states\n    M=np.zeros((D,D))\n    for s in sts:\n        if not (s>>b)&1: continue\n        s1 = s ^ (1<<b)\n        sign = (-1)**bin(s1 & ((1<<b)-1)).count('1')\n        if (s1>>a)&1: continue\n        s2 = s1 | (1<<a)\n        sign *= (-1)**bin(s2 & ((1<<a)-1)).count('1')\n        M[pos[s2],pos[s]] += sign\n    return M\n# one-body\nHcf = np.zeros((D,D),dtype=complex)  # per unit Dq\nHee = np.zeros((D,D))\n# prebuild c†a c_b\nCC={}\nfor a in range(N):\n    for b in range(N):\n        CC[(a,b)] = cdag_c(a,b)\nfor a in range(N):\n    for b in range(N):\n        ma,sa=ms[a//2],a%2; mb,sb=ms[b//2],b%2\n        if sa!=sb: continue\n        Hcf += Hcf_unit[a//2, b//2] * CC[(a,b)]\n# two-body: 1/2 sum <ab|V|cd> c†_a c†_b c_d c_c\ndef cdcd(a,b,c,d):\n    # c†_a c†_b c_d c_c = c†_a (c†_b c_d) c_c\n    # compute as product of matrices\n    return CC[(a,b)]  # placeholder\nVsum = np.zeros((D,D))\n# use product: c†_a c†_b c_d c_c = (c†_a c_c)(c†_b c_d) - delta_bc c†_a c_d\nfor a in range(N):\n  for b in range(N):\n    for c in range(N):\n      for d in range(N):\n        ma,sa=ms[a//2],a%2; mb,sb=ms[b//2],b%2\n        mc,sc=ms[c//2],c%2; md,sd=ms[d//2],d%2\n        if sa!=sc or sb!=sd: continue\n        v = V2(ma,mb,mc,md)\n        if abs(v)<1e-12: continue\n        # c†_a c†_b c_d c_c\n        if b==c:\n            # c†_a c†_b c_d c_c with b==c : c†_b c_d c_c... use normal product\n            pass\n        M = CC[(a,c)] @ CC[(b,d)]\n        # careful: c†_a c†_b c_d c_c = c†_a (c†_b c_d) c_c  -> reorder via anticommutation\n        # Use the identity: c†_a c†_b c_d c_c = c†_a (δ_bc - c_c c†_b) c_d... simpler build directly:\n        Vsum += 0.5*v*(CDAG(a,b,c,d) if False else 0)\nEOF\necho",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "017e4d1b618fbfc94cc1b82e95ca27cc8d1a99ee46a09d84951dbffb958d82b3",
+     "lines": 124,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\nfrom scipy.optimize import brentq\nfrom functools import lru_cache\n\nB, C = 621.0, 2851.0\nF2 = 49*B + 7*C\nF4 = 63*C/5\nFk = {0:0.0, 2:F2, 4:F4}\nms = list(range(-2,3))\n\n@lru_cache(None)\ndef G(m1,m2,m3,k,l=2):  # gaunt for (l,k,l) with m's\n    return float(gaunt(l,k,l,m1,m2,m3))\n\ndef V2(m1,m2,m3,m4):\n    # <m1 m2|1/r12|m3 m4>\n    tot=0.0\n    if m1+m2!=m3+m4: return 0.0\n    for k in (0,2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            if abs(m1-m3+0)>2*0 and False: pass\n            if abs(-m1-q)>2 or abs(m3)>2 or abs(-m2+q)>2 : pass\n            # electron1: (-1)^(m1+q) G(-m1,-q,m3); electron2: (-1)^m2 G(-m2,q,m4)\n            if abs(-m1)>2 or abs(-q)>k or abs(m3)>2: continue\n            if abs(-m2)>2 or abs(q)>k or abs(m4)>2: continue\n            g1=float(gaunt(2,k,2,-m1,-q,m3)) if abs(-q)<=k and abs(-m1+(-q)*0)<=2 else 0.0\n            g2=float(gaunt(2,k,2,-m2,q,m4)) if abs(q)<=k else 0.0\n            s+= (-1)**(m1+q) * g1 * (-1)**m2 * g2\n        tot += Fk[k]*4*pi/(2*k+1)*s\n    return tot\n\n# one-electron cubic field operator: Y40 + sqrt(5/14)(Y44+Y4-4)\nfrom sympy import Integer\ndef Ymat(q):\n    M=np.zeros((5,5))\n    for i,m1 in enumerate(ms):\n        for j,m2 in enumerate(ms):\n            if m1 - m2 != q*0 and -m1+q+m2 !=0: continue\n            M[i,j]=(-1)**m1*float(gaunt(2,4,2,-m1,q,m2))\n    return M\n# complex; build full operator with complex entries\ndef Yc(q):\n    M=np.zeros((5,5),dtype=complex)\n    for i,m1 in enumerate(ms):\n        for j,m2 in enumerate(ms):\n            if -m1+q+m2!=0: continue\n            M[i,j]=(-1)**m1*float(gaunt(2,4,2,-m1,q,m2))\n    return M\nOp = Yc(0) + sqrt(5/14)*(Yc(4)+Yc(-4))\nw,U = np.linalg.eigh(Op)\nprint(\"cubic eigenvalues (Y40 ref):\", np.round(w,4))\n# t2g = lower triplet, eg = upper doublet; scale: h = a*Op with t2g->-4Dq, eg->+6Dq\n# Use Op eigen: low triplet value t, high doublet value e: a*(e-t)=10 Dq ; choose shift so barycenter 0\nt = w[0]; e = w[-1]\n# Build one-electron matrix h(Dq) = Dq*(c1*Op + c0*I)\nc1 = 10.0/(e-t)\nc0 = -4 - c1*t   # so t2g: c1*t+c0=-4 ; eg: c1*e+c0 = 6\nprint(\"check t2g,eg:\", c1*w[0]+c0, c1*w[-1]+c0)\nHcf_unit = c1*Op + c0*np.eye(5)  # multiply by Dq\n\n# Fock space\nnorb=10\ndef idx(orb,s): return 2*orb+s  # s=0 up,1 down\n# spin orbital list\nso=[(ms[i//2] if False else ms[(i)//2], (i)%2) for i in range(10)]\nN=10\ndim=2**N\ndef occ_states(n):\n    return [s for s in range(dim) if bin(s).count('1')==n]\nsts=occ_states(5)\npos={s:i for i,s in enumerate(sts)}\nD=len(sts)\ndef cdag_c(a,b):\n    # c_a^dag c_b on basis of N=5 states\n    M=np.zeros((D,D))\n    for s in sts:\n        if not (s>>b)&1: continue\n        s1 = s ^ (1<<b)\n        sign = (-1)**bin(s1 & ((1<<b)-1)).count('1')\n        if (s1>>a)&1: continue\n        s2 = s1 | (1<<a)\n        sign *= (-1)**bin(s2 & ((1<<a)-1)).count('1')\n        M[pos[s2],pos[s]] += sign\n    return M\n# one-body\nHcf = np.zeros((D,D),dtype=complex)  # per unit Dq\nHee = np.zeros((D,D))\n# prebuild c†a c_b\nCC={}\nfor a in range(N):\n    for b in range(N):\n        CC[(a,b)] = cdag_c(a,b)\nfor a in range(N):\n    for b in range(N):\n        ma,sa=ms[a//2],a%2; mb,sb=ms[b//2],b%2\n        if sa!=sb: continue\n        Hcf += Hcf_unit[a//2, b//2] * CC[(a,b)]\n# two-body: 1/2 sum <ab|V|cd> c†_a c†_b c_d c_c\ndef cdcd(a,b,c,d):\n    # c†_a c†_b c_d c_c = c†_a (c†_b c_d) c_c\n    # compute as product of matrices\n    return CC[(a,b)]  # placeholder\nVsum = np.zeros((D,D))\n# use product: c†_a c†_b c_d c_c = (c†_a c_c)(c†_b c_d) - delta_bc c†_a c_d\nfor a in range(N):\n  for b in range(N):\n    for c in range(N):\n      for d in range(N):\n        ma,sa=ms[a//2],a%2; mb,sb=ms[b//2],b%2\n        mc,sc=ms[c//2],c%2; md,sd=ms[d//2],d%2\n        if sa!=sc or sb!=sd: continue\n        v = V2(ma,mb,mc,md)\n        if abs(v)<1e-12: continue\n        # c†_a c†_b c_d c_c\n        if b==c:\n            # c†_a c†_b c_d c_c with b==c : c†_b c_d c_c... use normal product\n            pass\n        M = CC[(a,c)] @ CC[(b,d)]\n        # careful: c†_a c†_b c_d c_c = c†_a (c†_b c_d) c_c  -> reorder via anticommutation\n        # Use the identity: c†_a c†_b c_d c_c = c†_a (δ_bc - c_c c†_b) c_d... simpler build directly:\n        Vsum += 0.5*v*(CDAG(a,b,c,d) if False else 0)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "mkdir: cannot create directory ‘/w’: Read-only file system",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "d5.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "M[i,j]=(-1)**m1*float(gaunt(2,4,2,-m1,q,m2))"
+    },
+    {
+     "script": "d5.py",
+     "line": 46,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "d5.py",
+     "line": 50,
+     "method": "matrix",
+     "text": "M[i,j]=(-1)**m1*float(gaunt(2,4,2,-m1,q,m2))"
+    },
+    {
+     "script": "d5.py",
+     "line": 53,
+     "method": "eigen_solver",
+     "text": "w,U = np.linalg.eigh(Op)"
+    },
+    {
+     "script": "d5.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "M=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 89,
+     "method": "matrix",
+     "text": "Hcf = np.zeros((D,D),dtype=complex)  # per unit Dq"
+    },
+    {
+     "script": "d5.py",
+     "line": 90,
+     "method": "matrix",
+     "text": "Hee = np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 106,
+     "method": "matrix",
+     "text": "Vsum = np.zeros((D,D))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d5 Fock-space Hamiltonian and check level energies",
+   "command": "mkdir -p /tmp/w && cat > /tmp/w/d5.py << 'EOF'\nimport numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\nfrom scipy.optimize import brentq\n\nB, C = 621.0, 2851.0\nF2 = 49*B + 7*C\nF4 = 63*C/5\nFk = {0:0.0, 2:F2, 4:F4}\nms = [-2,-1,0,1,2]\nN = 10; dim = 2**N\n\ndef g(l1,l2,l3,m1,m2,m3):\n    if abs(m1)>l1 or abs(m2)>l2 or abs(m3)>l3: return 0.0\n    return float(gaunt(l1,l2,l3,m1,m2,m3))\n\ndef V2(m1,m2,m3,m4):\n    if m1+m2!=m3+m4: return 0.0\n    tot=0.0\n    for k in (0,2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            g1=g(2,k,2,-m1,-q,m3)\n            g2=g(2,k,2,-m2,q,m4)\n            s += (-1)**(m1+q) * g1 * (-1)**m2 * g2\n        tot += Fk[k]*4*pi/(2*k+1)*s\n    return tot\n\ndef Yc(q):\n    M=np.zeros((5,5),dtype=complex)\n    for i,m1 in enumerate(ms):\n        for j,m2 in enumerate(ms):\n            if -m1+q+m2!=0: continue\n            M[i,j]=(-1)**m1*g(2,4,2,-m1,q,m2)\n    return M\nOp = Yc(0) + sqrt(5/14)*(Yc(4)+Yc(-4))\nw = np.linalg.eigvalsh(Op)\nt, e = w[0], w[-1]\nc1 = 10.0/(e-t); c0 = -4 - c1*t\nh1 = c1*Op + c0*np.eye(5)\nprint(\"t2g/eg check:\", np.round(np.diag(np.real(h1)),3) if np.allclose(h1,np.diag(np.diag(h1))) else np.round(np.linalg.eigvalsh(h1),3))\n\n# fermion ops over 10 spin-orbitals, index a = 2*orb + spin  (spin 0=up,1=down)\ndef cop(a):\n    M=np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>a)&1:\n            sign=(-1)**bin(s & ((1<<a)-1)).count('1')\n            M[s ^ (1<<a), s] = sign\n    return M\nC_ = [cop(a) for a in range(N)]\nCd = [m.T.copy() for m in C_]\n# number conserving sector N=5\nsel=[s for s in range(dim) if bin(s).count('1')==5]\ndef restrict(M): return M[np.ix_(sel,sel)]\nCd5=[restrict(m) for m in Cd]; C5=[restrict(m) for m in C_]\nD=len(sel)\norb = lambda a: a//2; spn = lambda a: a%2\n# one-body operator per Dq unit\nH1 = np.zeros((D,D),dtype=complex)\nfor a in range(N):\n  for b in range(N):\n    if spn(a)!=spn(b): continue\n    H1 += h1[orb(a),orb(b)] * (Cd5[a] @ C5[b])\n# two-body\nH2 = np.zeros((D,D))\nfor a in range(N):\n for b in range(N):\n  for c in range(N):\n   for d in range(N):\n    if spn(a)!=spn(c) or spn(b)!=spn(d): continue\n    v = V2(ms[orb(a)],ms[orb(b)],ms[orb(c)],ms[orb(d)])\n    if abs(v)<1e-12: continue\n    H2 += 0.5*v * (Cd5[a] @ Cd5[b] @ C5[d] @ C5[c])\n# S^2\nSp = sum(Cd5[2*o] @ C5[2*o+1] for o in range(5))\nSz = 0.5*sum(Cd5[2*o]@C5[2*o]-Cd5[2*o+1]@C5[2*o+1] for o in range(5))\nS2 = Sz@Sz + 0.5*(Sp@Sp.T + Sp.T@Sp)\nprint(\"H2 hermitian:\", np.allclose(H2,H2.T))\nmu=1e5\ndef levels(Dq):\n    H = Dq*H1 + H2\n    ev, vec = np.linalg.eigh(H + mu*S2)\n    # classify by S\n    out={}\n    for val,v in zip(ev,vec.T):\n        S2v = np.real(v.conj()@S2@v)\n        S = round((-1+np.sqrt(1+4*S2v))/2*2)/2\n        E = val - mu*S2v\n        out.setdefault(S,[]).append(E)\n    return {k:min(v) for k,v in out.items()}\nfor Dq in [0,500,1000,2000]:\n    print(Dq, {k:round(v,1) for k,v in levels(Dq).items()})\nEOF\ncd /tmp/w && python3 d5.py",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "d8c648192a2f025bee1fb54116374bb4b05f6af3536cee8a4f271289510daa0d",
+     "lines": 93,
+     "code": "import numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\nfrom scipy.optimize import brentq\n\nB, C = 621.0, 2851.0\nF2 = 49*B + 7*C\nF4 = 63*C/5\nFk = {0:0.0, 2:F2, 4:F4}\nms = [-2,-1,0,1,2]\nN = 10; dim = 2**N\n\ndef g(l1,l2,l3,m1,m2,m3):\n    if abs(m1)>l1 or abs(m2)>l2 or abs(m3)>l3: return 0.0\n    return float(gaunt(l1,l2,l3,m1,m2,m3))\n\ndef V2(m1,m2,m3,m4):\n    if m1+m2!=m3+m4: return 0.0\n    tot=0.0\n    for k in (0,2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            g1=g(2,k,2,-m1,-q,m3)\n            g2=g(2,k,2,-m2,q,m4)\n            s += (-1)**(m1+q) * g1 * (-1)**m2 * g2\n        tot += Fk[k]*4*pi/(2*k+1)*s\n    return tot\n\ndef Yc(q):\n    M=np.zeros((5,5),dtype=complex)\n    for i,m1 in enumerate(ms):\n        for j,m2 in enumerate(ms):\n            if -m1+q+m2!=0: continue\n            M[i,j]=(-1)**m1*g(2,4,2,-m1,q,m2)\n    return M\nOp = Yc(0) + sqrt(5/14)*(Yc(4)+Yc(-4))\nw = np.linalg.eigvalsh(Op)\nt, e = w[0], w[-1]\nc1 = 10.0/(e-t); c0 = -4 - c1*t\nh1 = c1*Op + c0*np.eye(5)\nprint(\"t2g/eg check:\", np.round(np.diag(np.real(h1)),3) if np.allclose(h1,np.diag(np.diag(h1))) else np.round(np.linalg.eigvalsh(h1),3))\n\n# fermion ops over 10 spin-orbitals, index a = 2*orb + spin  (spin 0=up,1=down)\ndef cop(a):\n    M=np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>a)&1:\n            sign=(-1)**bin(s & ((1<<a)-1)).count('1')\n            M[s ^ (1<<a), s] = sign\n    return M\nC_ = [cop(a) for a in range(N)]\nCd = [m.T.copy() for m in C_]\n# number conserving sector N=5\nsel=[s for s in range(dim) if bin(s).count('1')==5]\ndef restrict(M): return M[np.ix_(sel,sel)]\nCd5=[restrict(m) for m in Cd]; C5=[restrict(m) for m in C_]\nD=len(sel)\norb = lambda a: a//2; spn = lambda a: a%2\n# one-body operator per Dq unit\nH1 = np.zeros((D,D),dtype=complex)\nfor a in range(N):\n  for b in range(N):\n    if spn(a)!=spn(b): continue\n    H1 += h1[orb(a),orb(b)] * (Cd5[a] @ C5[b])\n# two-body\nH2 = np.zeros((D,D))\nfor a in range(N):\n for b in range(N):\n  for c in range(N):\n   for d in range(N):\n    if spn(a)!=spn(c) or spn(b)!=spn(d): continue\n    v = V2(ms[orb(a)],ms[orb(b)],ms[orb(c)],ms[orb(d)])\n    if abs(v)<1e-12: continue\n    H2 += 0.5*v * (Cd5[a] @ Cd5[b] @ C5[d] @ C5[c])\n# S^2\nSp = sum(Cd5[2*o] @ C5[2*o+1] for o in range(5))\nSz = 0.5*sum(Cd5[2*o]@C5[2*o]-Cd5[2*o+1]@C5[2*o+1] for o in range(5))\nS2 = Sz@Sz + 0.5*(Sp@Sp.T + Sp.T@Sp)\nprint(\"H2 hermitian:\", np.allclose(H2,H2.T))\nmu=1e5\ndef levels(Dq):\n    H = Dq*H1 + H2\n    ev, vec = np.linalg.eigh(H + mu*S2)\n    # classify by S\n    out={}\n    for val,v in zip(ev,vec.T):\n        S2v = np.real(v.conj()@S2@v)\n        S = round((-1+np.sqrt(1+4*S2v))/2*2)/2\n        E = val - mu*S2v\n        out.setdefault(S,[]).append(E)\n    return {k:min(v) for k,v in out.items()}\nfor Dq in [0,500,1000,2000]:\n    print(Dq, {k:round(v,1) for k,v in levels(Dq).items()})\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d5.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\n/bin/bash: line 191: cd: /tmp/w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "d5.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "M[i,j]=(-1)**m1*g(2,4,2,-m1,q,m2)"
+    },
+    {
+     "script": "d5.py",
+     "line": 37,
+     "method": "eigen_solver",
+     "text": "w = np.linalg.eigvalsh(Op)"
+    },
+    {
+     "script": "d5.py",
+     "line": 41,
+     "method": "eigen_solver",
+     "text": "print(\"t2g/eg check:\", np.round(np.diag(np.real(h1)),3) if np.allclose(h1,np.diag(np.diag(h1))) else np.round(np.linalg.eigvalsh(h1),3))"
+    },
+    {
+     "script": "d5.py",
+     "line": 45,
+     "method": "matrix",
+     "text": "M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "d5.py",
+     "line": 60,
+     "method": "matrix",
+     "text": "H1 = np.zeros((D,D),dtype=complex)"
+    },
+    {
+     "script": "d5.py",
+     "line": 66,
+     "method": "matrix",
+     "text": "H2 = np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 83,
+     "method": "eigen_solver",
+     "text": "ev, vec = np.linalg.eigh(H + mu*S2)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find a writable directory",
+   "command": "cd ~ 2>/dev/null && pwd; touch $HOME/x 2>&1 && echo writable_home; df -h /tmp 2>&1 | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch '/tmp/tsbench-home-xehwqch9/x': Read-only file system\n/dev/vda1       158G   88G   64G  59% /\nShell cwd was reset to /tmp/tsbench-run-eg3s4ol1",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Check current run directory is writable",
+   "command": "touch t && echo ok && ls",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok\nt",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Build d5 Hamiltonian pieces in Fock space",
+   "command": "cat > d5.py << 'EOF'\nimport numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\n\nB, C = 621.0, 2851.0\nF2 = 49*B + 7*C\nF4 = 63*C/5\nFk = {0:0.0, 2:F2, 4:F4}\nms = [-2,-1,0,1,2]\nN = 10; dim = 2**N\n\ndef g(l1,l2,l3,m1,m2,m3):\n    if abs(m1)>l1 or abs(m2)>l2 or abs(m3)>l3: return 0.0\n    return float(gaunt(l1,l2,l3,m1,m2,m3))\n\ndef V2(m1,m2,m3,m4):\n    if m1+m2!=m3+m4: return 0.0\n    tot=0.0\n    for k in (0,2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            g1=g(2,k,2,-m1,-q,m3)\n            g2=g(2,k,2,-m2,q,m4)\n            s += (-1)**(m1+q) * g1 * (-1)**m2 * g2\n        tot += Fk[k]*4*pi/(2*k+1)*s\n    return tot\n\ndef Yc(q):\n    M=np.zeros((5,5),dtype=complex)\n    for i,m1 in enumerate(ms):\n        for j,m2 in enumerate(ms):\n            if -m1+q+m2!=0: continue\n            M[i,j]=(-1)**m1*g(2,4,2,-m1,q,m2)\n    return M\nOp = Yc(0) + sqrt(5/14)*(Yc(4)+Yc(-4))\nw = np.linalg.eigvalsh(Op)\nt, e = w[0], w[-1]\nc1 = 10.0/(e-t); c0 = -4 - c1*t\nh1 = c1*Op + c0*np.eye(5)\nprint(\"one-electron CF eigenvalues (should be -4 x3, +6 x2):\", np.round(np.linalg.eigvalsh(h1),4))\n\ndef cop(a):\n    M=np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>a)&1:\n            sign=(-1)**bin(s & ((1<<a)-1)).count('1')\n            M[s ^ (1<<a), s] = sign\n    return M\nC_ = [cop(a) for a in range(N)]\nCd = [m.T.copy() for m in C_]\nsel=[s for s in range(dim) if bin(s).count('1')==5]\ndef restrict(M): return M[np.ix_(sel,sel)]\nCd5=[restrict(m) for m in Cd]; C5=[restrict(m) for m in C_]\nD=len(sel)\norb = lambda a: a//2; spn = lambda a: a%2\nH1 = np.zeros((D,D),dtype=complex)\nfor a in range(N):\n  for b in range(N):\n    if spn(a)!=spn(b): continue\n    H1 += h1[orb(a),orb(b)] * (Cd5[a] @ C5[b])\nH2 = np.zeros((D,D))\nfor a in range(N):\n for b in range(N):\n  for c in range(N):\n   for d in range(N):\n    if spn(a)!=spn(c) or spn(b)!=spn(d): continue\n    v = V2(ms[orb(a)],ms[orb(b)],ms[orb(c)],ms[orb(d)])\n    if abs(v)<1e-12: continue\n    H2 += 0.5*v * (Cd5[a] @ Cd5[b] @ C5[d] @ C5[c])\nSp = sum(Cd5[2*o] @ C5[2*o+1] for o in range(5))\nSz = 0.5*sum(Cd5[2*o]@C5[2*o]-Cd5[2*o+1]@C5[2*o+1] for o in range(5))\nS2 = Sz@Sz + 0.5*(Sp@Sp.T + Sp.T@Sp)\nprint(\"H2 real symmetric:\", np.allclose(H2,H2.T), np.allclose(H2.imag,0) if np.iscomplexobj(H2) else '')\nnp.save(\"H1.npy\", H1); np.save(\"H2.npy\", H2); np.save(\"S2.npy\", S2)\nEOF\npython3 d5.py",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "04fda6488e790565450924efb4a58967002ecf719af6643a8a946b3f4b0c5795",
+     "lines": 74,
+     "code": "import numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom math import pi, sqrt\n\nB, C = 621.0, 2851.0\nF2 = 49*B + 7*C\nF4 = 63*C/5\nFk = {0:0.0, 2:F2, 4:F4}\nms = [-2,-1,0,1,2]\nN = 10; dim = 2**N\n\ndef g(l1,l2,l3,m1,m2,m3):\n    if abs(m1)>l1 or abs(m2)>l2 or abs(m3)>l3: return 0.0\n    return float(gaunt(l1,l2,l3,m1,m2,m3))\n\ndef V2(m1,m2,m3,m4):\n    if m1+m2!=m3+m4: return 0.0\n    tot=0.0\n    for k in (0,2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            g1=g(2,k,2,-m1,-q,m3)\n            g2=g(2,k,2,-m2,q,m4)\n            s += (-1)**(m1+q) * g1 * (-1)**m2 * g2\n        tot += Fk[k]*4*pi/(2*k+1)*s\n    return tot\n\ndef Yc(q):\n    M=np.zeros((5,5),dtype=complex)\n    for i,m1 in enumerate(ms):\n        for j,m2 in enumerate(ms):\n            if -m1+q+m2!=0: continue\n            M[i,j]=(-1)**m1*g(2,4,2,-m1,q,m2)\n    return M\nOp = Yc(0) + sqrt(5/14)*(Yc(4)+Yc(-4))\nw = np.linalg.eigvalsh(Op)\nt, e = w[0], w[-1]\nc1 = 10.0/(e-t); c0 = -4 - c1*t\nh1 = c1*Op + c0*np.eye(5)\nprint(\"one-electron CF eigenvalues (should be -4 x3, +6 x2):\", np.round(np.linalg.eigvalsh(h1),4))\n\ndef cop(a):\n    M=np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>a)&1:\n            sign=(-1)**bin(s & ((1<<a)-1)).count('1')\n            M[s ^ (1<<a), s] = sign\n    return M\nC_ = [cop(a) for a in range(N)]\nCd = [m.T.copy() for m in C_]\nsel=[s for s in range(dim) if bin(s).count('1')==5]\ndef restrict(M): return M[np.ix_(sel,sel)]\nCd5=[restrict(m) for m in Cd]; C5=[restrict(m) for m in C_]\nD=len(sel)\norb = lambda a: a//2; spn = lambda a: a%2\nH1 = np.zeros((D,D),dtype=complex)\nfor a in range(N):\n  for b in range(N):\n    if spn(a)!=spn(b): continue\n    H1 += h1[orb(a),orb(b)] * (Cd5[a] @ C5[b])\nH2 = np.zeros((D,D))\nfor a in range(N):\n for b in range(N):\n  for c in range(N):\n   for d in range(N):\n    if spn(a)!=spn(c) or spn(b)!=spn(d): continue\n    v = V2(ms[orb(a)],ms[orb(b)],ms[orb(c)],ms[orb(d)])\n    if abs(v)<1e-12: continue\n    H2 += 0.5*v * (Cd5[a] @ Cd5[b] @ C5[d] @ C5[c])\nSp = sum(Cd5[2*o] @ C5[2*o+1] for o in range(5))\nSz = 0.5*sum(Cd5[2*o]@C5[2*o]-Cd5[2*o+1]@C5[2*o+1] for o in range(5))\nS2 = Sz@Sz + 0.5*(Sp@Sp.T + Sp.T@Sp)\nprint(\"H2 real symmetric:\", np.allclose(H2,H2.T), np.allclose(H2.imag,0) if np.iscomplexobj(H2) else '')\nnp.save(\"H1.npy\", H1); np.save(\"H2.npy\", H2); np.save(\"S2.npy\", S2)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d5.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "one-electron CF eigenvalues (should be -4 x3, +6 x2): [-4. -4. -4.  6.  6.]\nH2 real symmetric: True",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 29,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "d5.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "M[i,j]=(-1)**m1*g(2,4,2,-m1,q,m2)"
+    },
+    {
+     "script": "d5.py",
+     "line": 36,
+     "method": "eigen_solver",
+     "text": "w = np.linalg.eigvalsh(Op)"
+    },
+    {
+     "script": "d5.py",
+     "line": 40,
+     "method": "eigen_solver",
+     "text": "print(\"one-electron CF eigenvalues (should be -4 x3, +6 x2):\", np.round(np.linalg.eigvalsh(h1),4))"
+    },
+    {
+     "script": "d5.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "d5.py",
+     "line": 56,
+     "method": "matrix",
+     "text": "H1 = np.zeros((D,D),dtype=complex)"
+    },
+    {
+     "script": "d5.py",
+     "line": 61,
+     "method": "matrix",
+     "text": "H2 = np.zeros((D,D))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Find crossover Dq where doublet meets sextet ground state",
+   "command": "cat > run.py << 'EOF'\nimport numpy as np\nfrom scipy.optimize import brentq\nH1=np.load(\"H1.npy\"); H2=np.load(\"H2.npy\"); S2=np.load(\"S2.npy\")\nH1=np.real_if_close(H1)\nprint(\"H1 imag max\", np.abs(np.imag(H1)).max())\nH1=np.real(H1)\nmu=1e5\ndef levels(Dq):\n    H = Dq*H1 + H2\n    ev, vec = np.linalg.eigh(H + mu*S2)\n    out={}\n    for v in vec.T:\n        S2v = v@S2@v\n        S = (-1+np.sqrt(1+4*S2v))/2\n        S=round(S*2)/2\n        E = v@H@v\n        out.setdefault(S,[]).append(E)\n    return {k:min(v) for k,v in out.items()}\n# free-ion check at Dq=0\nL=levels(0.0)\nprint(\"free-ion lowest per S (cm-1 rel):\", {k:round(v-levels(0.0)[2.5],1) for k,v in L.items()})\nfor Dq in [0,500,1000,1500,2000,2500,3000]:\n    L=levels(Dq); print(Dq, {k:round(v,1) for k,v in L.items()})\nf=lambda Dq: levels(Dq)[0.5]-levels(Dq)[2.5]\nDqc=brentq(f,500,3000,xtol=1e-6)\nprint(\"crossover Dq =\",Dqc, \" Dq/B=\",Dqc/621, \" C/B=\",2851/621)\nEOF\npython3 run.py",
+   "scripts": [
+    {
+     "name": "run.py",
+     "sha256": "7a2358c38a95231de6b04983496635666f0a42508ffcca91e6fc2c098fe6dd05",
+     "lines": 26,
+     "code": "import numpy as np\nfrom scipy.optimize import brentq\nH1=np.load(\"H1.npy\"); H2=np.load(\"H2.npy\"); S2=np.load(\"S2.npy\")\nH1=np.real_if_close(H1)\nprint(\"H1 imag max\", np.abs(np.imag(H1)).max())\nH1=np.real(H1)\nmu=1e5\ndef levels(Dq):\n    H = Dq*H1 + H2\n    ev, vec = np.linalg.eigh(H + mu*S2)\n    out={}\n    for v in vec.T:\n        S2v = v@S2@v\n        S = (-1+np.sqrt(1+4*S2v))/2\n        S=round(S*2)/2\n        E = v@H@v\n        out.setdefault(S,[]).append(E)\n    return {k:min(v) for k,v in out.items()}\n# free-ion check at Dq=0\nL=levels(0.0)\nprint(\"free-ion lowest per S (cm-1 rel):\", {k:round(v-levels(0.0)[2.5],1) for k,v in L.items()})\nfor Dq in [0,500,1000,1500,2000,2500,3000]:\n    L=levels(Dq); print(Dq, {k:round(v,1) for k,v in L.items()})\nf=lambda Dq: levels(Dq)[0.5]-levels(Dq)[2.5]\nDqc=brentq(f,500,3000,xtol=1e-6)\nprint(\"crossover Dq =\",Dqc, \" Dq/B=\",Dqc/621, \" C/B=\",2851/621)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 6
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nH1 imag max 0.0\nTraceback (most recent call last):\n  File \"/tmp/tsbench-run-eg3s4ol1/run.py\", line 21, in <module>\n    print(\"free-ion lowest per S (cm-1 rel):\", {k:round(v-levels(0.0)[2.5],1) for k,v in L.items()})\n                                                          ~~~~~~~~~~~^^^^^\nKeyError: 2.5",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "run.py",
+     "line": 10,
+     "method": "eigen_solver",
+     "text": "ev, vec = np.linalg.eigh(H + mu*S2)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Inspect eigenvalues of S^2 matrix",
+   "command": "cat > dbg.py << 'EOF'\nimport numpy as np\nH2=np.load(\"H2.npy\"); S2=np.load(\"S2.npy\")\nprint(np.round(np.linalg.eigvalsh(S2),3)[:20], np.unique(np.round(np.linalg.eigvalsh(S2),3)))\nEOF\npython3 dbg.py",
+   "scripts": [
+    {
+     "name": "dbg.py",
+     "sha256": "c527212730653e7a211f6c86f8326ec0542e5a17498ba0c9801af9eec47e57ab",
+     "lines": 3,
+     "code": "import numpy as np\nH2=np.load(\"H2.npy\"); S2=np.load(\"S2.npy\")\nprint(np.round(np.linalg.eigvalsh(S2),3)[:20], np.unique(np.round(np.linalg.eigvalsh(S2),3)))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "dbg.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0.] [0.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "dbg.py",
+     "line": 3,
+     "method": "eigen_solver",
+     "text": "print(np.round(np.linalg.eigvalsh(S2),3)[:20], np.unique(np.round(np.linalg.eigvalsh(S2),3)))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Fix restriction bug and recompute levels and crossover",
+   "command": "cat > fix.py << 'EOF'\nimport numpy as np\nfrom math import pi\nexec(open(\"d5.py\").read().split(\"def restrict\")[0])\ndef R(M): return M[np.ix_(sel,sel)]\nD=len(sel)\nH1 = np.zeros((dim,dim),dtype=complex)\nfor a in range(N):\n  for b in range(N):\n    if a%2!=b%2: continue\n    H1 += h1[a//2,b//2]*(Cd[a]@C_[b])\nH2 = np.zeros((dim,dim))\nfor a in range(N):\n for b in range(N):\n  for c in range(N):\n   for d in range(N):\n    if a%2!=c%2 or b%2!=d%2: continue\n    v=V2(ms[a//2],ms[b//2],ms[c//2],ms[d//2])\n    if abs(v)<1e-12: continue\n    H2 += 0.5*v*(Cd[a]@Cd[b]@C_[d]@C_[c])\nSp = sum(Cd[2*o]@C_[2*o+1] for o in range(5))\nSz = 0.5*sum(Cd[2*o]@C_[2*o]-Cd[2*o+1]@C_[2*o+1] for o in range(5))\nS2 = Sz@Sz + 0.5*(Sp@Sp.T+Sp.T@Sp)\nH1=np.real(R(H1)); H2=R(H2); S2=R(S2)\nprint(\"H1 sym\", np.allclose(H1,H1.T), \"H2 sym\", np.allclose(H2,H2.T), \"S2 eig\", np.unique(np.round(np.linalg.eigvalsh(S2),3)))\nnp.save(\"H1.npy\",H1); np.save(\"H2.npy\",H2); np.save(\"S2.npy\",S2)\nEOF\npython3 fix.py && python3 run.py",
+   "scripts": [
+    {
+     "name": "fix.py",
+     "sha256": "760b9b257cd847170c79590ea284362de1ed9ef12bd334cb230728fe25f3dc19",
+     "lines": 25,
+     "code": "import numpy as np\nfrom math import pi\nexec(open(\"d5.py\").read().split(\"def restrict\")[0])\ndef R(M): return M[np.ix_(sel,sel)]\nD=len(sel)\nH1 = np.zeros((dim,dim),dtype=complex)\nfor a in range(N):\n  for b in range(N):\n    if a%2!=b%2: continue\n    H1 += h1[a//2,b//2]*(Cd[a]@C_[b])\nH2 = np.zeros((dim,dim))\nfor a in range(N):\n for b in range(N):\n  for c in range(N):\n   for d in range(N):\n    if a%2!=c%2 or b%2!=d%2: continue\n    v=V2(ms[a//2],ms[b//2],ms[c//2],ms[d//2])\n    if abs(v)<1e-12: continue\n    H2 += 0.5*v*(Cd[a]@Cd[b]@C_[d]@C_[c])\nSp = sum(Cd[2*o]@C_[2*o+1] for o in range(5))\nSz = 0.5*sum(Cd[2*o]@C_[2*o]-Cd[2*o+1]@C_[2*o+1] for o in range(5))\nS2 = Sz@Sz + 0.5*(Sp@Sp.T+Sp.T@Sp)\nH1=np.real(R(H1)); H2=R(H2); S2=R(S2)\nprint(\"H1 sym\", np.allclose(H1,H1.T), \"H2 sym\", np.allclose(H2,H2.T), \"S2 eig\", np.unique(np.round(np.linalg.eigvalsh(S2),3)))\nnp.save(\"H1.npy\",H1); np.save(\"H2.npy\",H2); np.save(\"S2.npy\",S2)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fix.py",
+     "written_in_step": 8
+    },
+    {
+     "name": "run.py",
+     "written_in_step": 6
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "one-electron CF eigenvalues (should be -4 x3, +6 x2): [-4. -4. -4.  6.  6.]\nH1 sym True H2 sym True S2 eig [0.75 3.75 8.75]\nH1 imag max 0.0\nfree-ion lowest per S (cm-1 rel): {0.5: np.float64(29639.0), 1.5: np.float64(20465.0), 2.5: np.float64(0.0)}\n0 {0.5: np.float64(-32010.0), 1.5: np.float64(-41184.0), 2.5: np.float64(-61649.0)}\n500 {0.5: np.float64(-37490.1), 1.5: np.float64(-44346.8), 2.5: np.float64(-61649.0)}\n1000 {0.5: np.float64(-46540.9), 1.5: np.float64(-49001.1), 2.5: np.float64(-61649.0)}\n1500 {0.5: np.float64(-56028.2), 1.5: np.float64(-53839.9), 2.5: np.float64(-61649.0)}\n2000 {0.5: np.float64(-65684.7), 1.5: np.float64(-58743.2), 2.5: np.float64(-61649.0)}\n2500 {0.5: np.float64(-75434.9), 1.5: np.float64(-63678.0), 2.5: np.float64(-61649.0)}\n3000 {0.5: np.float64(-85244.5), 1.5: np.float64(-68630.9), 2.5: np.float64(-61649.0)}\ncrossover Dq = 1791.777277877871  Dq/B= 2.8853096262123525  C/B= 4.5909822866344605",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "fix.py",
+     "line": 6,
+     "method": "matrix",
+     "text": "H1 = np.zeros((dim,dim),dtype=complex)"
+    },
+    {
+     "script": "fix.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "H2 = np.zeros((dim,dim))"
+    },
+    {
+     "script": "fix.py",
+     "line": 24,
+     "method": "eigen_solver",
+     "text": "print(\"H1 sym\", np.allclose(H1,H1.T), \"H2 sym\", np.allclose(H2,H2.T), \"S2 eig\", np.unique(np.round(np.linalg.eigvalsh(S2),3)))"
+    }
+   ],
+   "produces": [
+    "Dq"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1792.0,
+   "weak": false,
+   "steps": [
+    8
+   ],
+   "typed_in_steps": [],
+   "source_step": 8
+  },
+  {
+   "path": "B",
+   "value": 621.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 2851.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 9,
+  "n_scripts": 6,
+  "n_failed_steps": 2,
+  "n_values": 3,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   8
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

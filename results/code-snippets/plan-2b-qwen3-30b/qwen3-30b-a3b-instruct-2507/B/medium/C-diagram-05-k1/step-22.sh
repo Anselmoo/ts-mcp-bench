@@ -1,0 +1,1 @@
+python3 -c "import sys; sys.path.append('<HOME>/.cache/tsbench/python/cpython-3.14.9-linux-x86_64-gnu/lib/python3.14'); import ensurepip; ensurepip.bootstrap(); import pip; print('pip installed successfully')"

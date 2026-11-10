@@ -63,6 +63,13 @@ COMMANDS: dict[tuple[str, ...], tuple[str, str]] = {
     ),
     ("report", "artifacts"): ("tsbench.score.artifacts:main", "images and code produced by the runs"),
     ("explain",): ("tsbench.report.explain:main", "explain one run: task, tool calls, answer, verdict"),
+    ("analyze", "snippets"): ("tsbench.analyze.snippets:main", "every Bash command and heredoc of the runs as a file"),
+    ("analyze", "strategy"): ("tsbench.analyze.strategy:main", "solution strategy per run and its accuracy per group"),
+    ("analyze", "errors"): ("tsbench.analyze.errors:main", "failing tool steps per run: kind, exception, recovery"),
+    ("analyze", "provenance"): (
+        "tsbench.analyze.provenance:main", "origin of each answer number: tool, typed, fit copied or changed, none",
+    ),
+    ("analyze", "effort"): ("tsbench.analyze.effort:main", "thinking, tokens, turns, time and timeouts per run"),
     ("release", "gate"): (
         "tsbench.release.gate:main", "fail if private material or forbidden text would enter a release",
     ),

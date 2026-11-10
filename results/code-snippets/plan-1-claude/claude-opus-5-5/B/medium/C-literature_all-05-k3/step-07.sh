@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>/tmp.LtwqOKhLVU; for C in 3380 3400; do python3 d3.py 2155 657.4 $C | cut -c1-80; done

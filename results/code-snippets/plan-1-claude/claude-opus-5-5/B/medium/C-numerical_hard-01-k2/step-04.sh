@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null || cd $TMPDIR; pwd; python3 -c "import sympy, scipy; print('ok')"; touch x && echo writable

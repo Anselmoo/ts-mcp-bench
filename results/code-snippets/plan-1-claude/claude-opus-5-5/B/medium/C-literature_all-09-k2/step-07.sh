@@ -1,0 +1,1 @@
+sed -i 's/s=least_squares(res,\[800,800,3200\])/s=least_squares(res,[800,800,3200],diff_step=1e-3)/' fit.py && python3 fit.py

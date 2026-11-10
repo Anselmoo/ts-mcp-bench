@@ -3,7 +3,9 @@ levels per tab, a light/dark switch, every task identifiable, every figure at on
 caption, the method tables and a provenance row for every figure (the report contract)."""
 from __future__ import annotations
 
+import base64
 import copy
+import hashlib
 import html.parser
 import json
 import pathlib
@@ -15,7 +17,7 @@ from typing import Any
 import pytest
 
 from tsbench.core import resource
-from tsbench.report import full, page
+from tsbench.report import base, full, page
 from tsbench.stats.analysis import mcnemar_exact
 from tsbench.tasks import load
 
@@ -135,8 +137,63 @@ def built(tmp_path_factory, demo_runs_root):
 
 @pytest.fixture(scope="module")
 def built2(tmp_path_factory, demo_runs_root):
-    """The same report over the runs of two models: the page with a comparison, a model switch and a view per model."""
+    """The same report over the runs of two models: one layout with all models together."""
     return _build(demo_runs_root, tmp_path_factory.mktemp("full2"), TWO)
+
+
+DOI = "10.5281/zenodo.23889782"
+HYP_MODELS = ("claude-haiku-5-5", "claude-sonnet-5-5")
+HYP = {"k_layers": {"primary": 3, "h1": 3, "h4": 0},
+       "primary": [{"name": f"H2_{m}", "n": 17, "p": p, "mean_diff": d, "ci": [d - 0.1, d + 0.1], "p_holm": q,
+                    "family": "primary"} for m, p, d, q in ((HYP_MODELS[0], 0.5, -0.01, 0.9),
+                                                            (HYP_MODELS[1], 4e-6, 0.25, 1.8e-5))]
+       + [{"name": "H3", "n": 17, "p": 0.1, "mean_diff": -0.1, "ci": [-0.2, 0.0], "p_holm": 0.2, "family": "primary"}],
+       "secondary": [{"name": f"H1_{HYP_MODELS[0]}", "n": 17, "p": 1e-10, "mean_diff": 0.68, "ci": [0.58, 0.78],
+                      "family": "secondary"},
+                     {"name": f"H2_{HYP_MODELS[0]}_mcnemar", "n": 17, "p": 0.39, "b": 8, "c": 4,
+                      "family": "secondary"}],
+       "efficiency": [{"name": f"EFF_total_tokens_Cvs{base}_{HYP_MODELS[0]}", "metric": "total_tokens",
+                       "model": HYP_MODELS[0], "base": base, "other": "C", "correct_only": False, "n": 17,
+                       "median_base": 100.0, "median_other": 50.0, "median_ratio": ratio,
+                       "ratio_ci": [ratio / 2, 2 * ratio], "p": 0.01, "family": "descriptive"}
+                      for base, ratio in (("A", 2.5), ("B", 0.25))]}
+
+
+def _confirmatory_tasks(mp: pytest.MonkeyPatch) -> None:
+    """Let the pilot records of the demo run set stand in for the confirmatory split (the class literature_new, which
+    the confirmatory split does not have, left out), so that a report of the confirmatory split has runs to read."""
+    import tsbench.tasks as T
+    from tsbench.report import gallery
+    real = T.load
+
+    def load(split, *a, **k):
+        if split == "confirmatory":
+            return [{**t, "split": "confirmatory"} for t in real("pilot", *a, **k) if t["class"] != "literature_new"]
+        return real(split, *a, **k)
+
+    mp.setattr(T, "load", load)
+    mp.setattr(gallery, "_TASKS", {})
+
+
+@pytest.fixture(scope="module")
+def built_conf(tmp_path_factory, demo_runs_root):
+    """The report of the demo runs of one model read as the confirmatory split, with a hypotheses.json in the run
+    set: the page of a confirmatory run set."""
+    root = tmp_path_factory.mktemp("full-conf")
+    with pytest.MonkeyPatch.context() as mp:
+        _confirmatory_tasks(mp)
+        runs = _copy_models(demo_runs_root, root / "runs", ONE)
+        for f in sorted(runs.rglob("P-literature_new-*"), reverse=True):  # no run of a task outside the split
+            shutil.rmtree(f) if f.is_dir() else f.unlink()
+        sets = full.run_sets_in([runs])
+        for rs in sets:  # the manifests record the split and the DOI, as those of a confirmatory run do
+            path = rs.path / "MANIFEST.json"
+            m = json.loads(path.read_text(encoding="utf-8"))
+            m["split"], m["args"] = "confirmatory", {**m["args"], "split": "confirmatory", "preregistered": DOI}
+            path.write_text(json.dumps(m), encoding="utf-8")
+        (sets[0].path / "hypotheses.json").write_text(json.dumps(HYP), encoding="utf-8")
+        ctx = full.context(sets, root / "pages" / "report.html", make_figs=False, split="confirmatory", doi=DOI)
+        return ctx, full.build_html(ctx)
 
 
 # ---------------------------------------------------------------- a small DOM of the page
@@ -440,7 +497,7 @@ def test_every_pilot_task_has_a_row_with_its_id_and_its_prompt(built):
         assert [n for n in row.iter() if n.tag == "details"], t  # the prompt, folded
 
 
-@pytest.mark.parametrize("page", ["built", "built2"])
+@pytest.mark.parametrize("page", ["built", "built2", "built_conf"])
 def test_every_internal_link_of_the_page_resolves(page, request):
     _, markup = request.getfixturevalue(page)
     root = _dom(_own(markup))
@@ -618,9 +675,10 @@ def test_the_dark_theme_switch_does_not_reach_the_printed_page(built):
 def test_the_paired_table_has_the_full_row_not_the_464_px_column(built2):
     ctx, markup = built2
     root = _dom(_own(markup))
-    tables = [n for n in root.find("table") if n.attrs.get("id", "").endswith("paired")
-              and n.attrs.get("id", "").startswith("tbl-") and n.attrs["id"] != "tbl-model_paired"]
-    assert len(tables) == len(ctx["views"])
+    tables = [n for n in root.find("table") if n.attrs.get("id") == "tbl-paired"]
+    assert len(tables) == 1
+    rows = [n for n in tables[0].iter() if n.tag == "tr" and n.parent is not None and n.parent.tag == "tbody"]
+    assert len(rows) == sum(len(v["bench"]["paired"]) for v in ctx["views"])
     for t in tables:
         node, held = t.parent, []
         while node is not None:
@@ -839,7 +897,7 @@ def test_a_doi_with_url_characters_is_percent_encoded_in_both_links(built):
     ctx = copy.deepcopy(ctx)
     doi = "10.1002/(SICI)1097-4555(199708)28:8<593::AID-JRS157>3.0.CO;2-#"
     ctx["views"][0]["bench"]["tasks_view"][0]["tasks"][0]["source"]["doi"] = doi
-    ctx["views"][0]["bench"]["literature"][0]["doi"] = doi
+    ctx["systems"][0]["doi"] = doi
     hrefs = [h for h in _hrefs(_dom(_own(full.build_html(ctx)))) if "SICI" in h]
     want = "https://doi.org/10.1002/(SICI)1097-4555(199708)28:8%3C593::AID-JRS157%3E3.0.CO;2-%23"
     assert hrefs and set(hrefs) == {want} and len(hrefs) == 2
@@ -1002,7 +1060,7 @@ def test_no_figure_numbers_and_no_interpretation_words(built):
     assert not hits, hits[:3]
 
 
-@pytest.mark.parametrize("page", ["built", "built2"])
+@pytest.mark.parametrize("page", ["built", "built2", "built_conf"])
 def test_ids_are_unique_and_no_external_request(page, request):
     _, markup = request.getfixturevalue(page)
     own = _own(markup)
@@ -1015,160 +1073,235 @@ def test_ids_are_unique_and_no_external_request(page, request):
 
 # ---------------------------------------------------------------- several models
 
-MODEL_TABS = ["models", "tasks", "spectra"]
-COMPARE = "Models compared"
+
+def _body_rows(table: Node) -> list[Node]:
+    return [n for n in table.iter() if n.tag == "tr" and n.parent is not None and n.parent.tag == "tbody"]
 
 
-def _mviews(node: Node) -> list[Node]:
-    return [n for n in node.iter() if "mview" in n.cls]
+def _table(root: Node, ident: str) -> Node:
+    found = [n for n in root.iter() if n.tag == "table" and n.attrs.get("id") == ident]
+    assert len(found) == 1, ident
+    return found[0]
 
 
-def test_one_model_has_no_switch_no_model_views_and_no_comparison(built):
+def test_no_page_has_a_model_switch_or_a_view_per_model(built, built2):
+    for ctx, markup in (built, built2):
+        own = _own(markup)
+        root = _dom(own)
+        assert not root.find("select")
+        assert not [n for n in root.iter() if {"mview", "mtoc", "mline", "mswitch"} & set(n.cls)]
+        for needle in ("model-switch", "mview", "mtoc", "setModel", "tsb-model", "data-model=\"claude"):
+            assert needle not in _script(markup) + _styles(markup), needle
+        assert not [v for v in ctx["views"] if "pfx" in v or "figs" in v or "toc" in v]
+
+
+def test_one_model_has_no_model_column_and_no_comparison(built):
     ctx, markup = built
     own = _own(markup)
     root = _dom(own)
-    assert [(v["model"], v["pfx"]) for v in ctx["views"]] == [(ONE[0], "")]
-    assert not root.find("select", id="model-switch")
-    assert not _mviews(root) and not [n for n in root.iter() if "mtoc" in n.cls or "mline" in n.cls]
-    assert COMPARE not in root.text()
-    assert ctx["compare"] is None
+    assert ctx["compare"] is None and not root.find("table", id="tbl-models")
     chips = re.search(r'<div class="chips">(.*?)</div>', own, flags=re.S)
     assert chips and ONE[0] in chips.group(1)
-    head = [n for n in root.iter() if n.tag == "table" and n.attrs.get("id") == "tbl-intervals"][0]
-    assert "Model" not in [th.text() for th in head.iter() if th.tag == "th"]
+    for ident in ("tbl-intervals", "tbl-shares", "tbl-paired", "tbl-outcome", "tbl-medians"):
+        assert "Model" not in [th.text() for th in _table(root, ident).iter() if th.tag == "th"], ident
+    assert not [n for n in root.iter() if "mn" in n.cls]
 
 
-def test_two_models_get_one_view_per_model_in_the_model_tabs_only(built2):
+def test_each_tab_has_one_table_of_contents_whose_ids_exist_on_a_page_of_two_models(built2):
     ctx, markup = built2
     root = _dom(_own(markup))
-    models = [v["model"] for v in ctx["views"]]
-    assert sorted(models) == sorted(TWO)
-    pfx = [v["pfx"] for v in ctx["views"]]
-    assert all(re.fullmatch(r"[a-z0-9-]+-", p) for p in pfx) and len(set(pfx)) == len(pfx)
     for tab, _ in TABS:
-        views = _mviews(_tab(root, tab))
-        if tab in MODEL_TABS:
-            assert [v.attrs.get("data-model") for v in views] == models, tab
-            for v, name in zip(views, models, strict=True):
-                first = next(n for n in v.iter() if n is not v)
-                assert first.text() == f"Model: {name}", tab
-        else:
-            assert not views, tab
-
-
-def test_every_id_inside_a_model_view_carries_the_prefix_of_its_model(built2):
-    ctx, markup = built2
-    root = _dom(_own(markup))
-    pfx = {v["model"]: v["pfx"] for v in ctx["views"]}
-    for tab in MODEL_TABS:
-        for view in _mviews(_tab(root, tab)):
-            p = pfx[view.attrs["data-model"]]
-            ids = [i for i in _ids(view)]
-            assert ids, tab
-            assert all(p in i for i in ids), [i for i in ids if p not in i][:3]
-    tasks = _tab(root, "tasks")
-    for view in _mviews(tasks):
-        p = pfx[view.attrs["data-model"]]
-        rows = {n.attrs["id"] for n in view.iter() if n.tag == "tr" and n.attrs.get("id", "").startswith("task-")}
-        assert rows == {f"task-{p}{t}" for t in PILOT}
-
-
-def test_links_of_a_model_view_stay_in_that_view_or_lead_to_its_run_cards(built2):
-    ctx, markup = built2
-    root = _dom(_own(markup))
-    owner = {}
-    for tab in MODEL_TABS:
-        for view in _mviews(_tab(root, tab)):
-            owner |= {i: view.attrs["data-model"] for i in _ids(view)}
-    card_model = {c["anchor"]: c["head"]["model"] for t in ctx["gal"]["run_tasks"] for c in t["cards"]}
-    task_links = run_links = 0
-    for tab in MODEL_TABS:
-        for view in _mviews(_tab(root, tab)):
-            m = view.attrs["data-model"]
-            for href in _hrefs(view):
-                if not href.startswith("#"):
-                    continue
-                target = href[1:]
-                if target in card_model:
-                    assert card_model[target] == m, (m, href)
-                    run_links += 1
-                elif target.startswith("task-"):
-                    assert owner.get(target) == m, (m, href)
-                    task_links += 1
-    assert task_links and run_links
-
-
-def test_each_model_view_has_its_own_table_of_contents(built2):
-    ctx, markup = built2
-    root = _dom(_own(markup))
-    for tab in MODEL_TABS:
         node = _tab(root, tab)
         navs = [n for n in node.iter() if _toc_nav(n)]
         assert len(navs) == 1, tab
-        lists = [n for n in navs[0].iter() if n.tag == "ol" and n.attrs.get("data-model")]
-        assert [n.attrs["data-model"] for n in lists] == [v["model"] for v in ctx["views"]], tab
-        views = {v.attrs["data-model"]: v for v in _mviews(node)}
-        for v, ol in zip(ctx["views"], lists, strict=True):
-            entries = v["toc"][tab]
-            assert [t for lv, _, t in entries if lv == 2] == [s for s, _ in PLACEMENT[tab]], tab
-            ids = set(_ids(views[v["model"]]))
-            assert {i for _, i, _ in entries} <= ids, tab
-            assert {f"#{i}" for _, i, _ in entries} == set(_hrefs(ol)), tab
-            assert f"Model: {v['model']}" in ol.text()
-    level4 = {(i, t) for lv, i, t in ctx["views"][1]["toc"]["tasks"] if lv == 4}
-    assert {(f"task-{ctx['views'][1]['pfx']}{t}", t) for t in PILOT} <= level4
+        assert len([n for n in navs[0].iter() if n.tag == "ol"]) == 1, tab
+        ids = set(_ids(node))
+        entries = ctx["toc"][tab]
+        assert [t for lv, _, t in entries if lv == 2] == [s for s, _ in PLACEMENT[tab]], tab
+        assert {i for _, i, _ in entries} <= ids, tab
+        assert {f"#{i}" for _, i, _ in entries} == set(_hrefs(navs[0])), tab
+    level4 = {(i, t) for lv, i, t in ctx["toc"]["tasks"] if lv == 4}
+    assert {(f"task-{t}", t) for t in PILOT} <= level4
 
 
-def test_two_models_open_the_models_tab_with_a_comparison(built2):
+def test_the_models_stand_in_one_order_on_the_page(built2):
+    ctx, markup = built2
+    want = sorted(TWO, key=base.model_key)
+    assert [v["model"] for v in ctx["views"]] == want == ["claude-haiku-5-5", "claude-sonnet-5-5"]
+    assert [x["model"] for x in ctx["compare"]] == want
+    root = _dom(_own(markup))
+    for ident in ("tbl-shares", "tbl-paired", "tbl-outcome", "tbl-medians", "tbl-usd", "tbl-tools"):
+        seen = [r.text().split()[0] for r in _body_rows(_table(root, ident))]
+        assert list(dict.fromkeys(seen)) == want, ident
+
+
+def test_every_figure_of_two_models_is_the_all_models_version_at_the_full_width(built2):
+    ctx, markup = built2
+    assert set(full.ALL_MODELS) == {k for tab in ("models", "tasks", "spectra") for _, k, _, _ in _figures(tab)}
+    root = _dom(_own(markup))
+    questions = list(full.ALL_MODELS.values())
+    assert len(set(questions)) == len(questions) and all(q.endswith("?") and len(q) < 110 for q in questions)
+    for tab in ("models", "tasks", "spectra"):
+        regions = _regions(_tab(root, tab))
+        for section, key, _, _ in _figures(tab):
+            if key not in ctx["figs"]:  # no data in the demo run set
+                continue
+            f = [n for n in _fig_nodes(regions[section]) if n.attrs.get("data-key") == key]
+            assert len(f) == 1, key
+            assert "full" in f[0].cls and f[0].attrs["id"] == f"fig-{key}", key
+            assert [n for n in f[0].iter() if n.tag == "figcaption"][0].text() == full.ALL_MODELS[key], key
+            assert [s.attrs.get("width") for s in f[0].iter() if s.tag == "svg"] == ["960"], key
+
+
+@pytest.mark.parametrize("key", ["share", "paired", "outcome", "swarm", "tool_output", "classes", "sunburst", "upset",
+                                 "ledger"])
+def test_a_figure_of_two_models_names_both(built2, key):
+    fig = built2[0]["figs"][key]["svg"]
+    for name in TWO:
+        assert name in fig, (key, name)
+
+
+def test_the_outcome_figure_counts_the_runs_of_both_models(built2):
+    ctx, _ = built2
+    fig = str(ctx["figs"]["outcome"]["svg"])
+    for v in ctx["views"]:
+        for o in v["bench"]["outcome"]:
+            n = sum(o["counts"].values())
+            k = o["counts"].get("correct", 0)
+            if k:
+                assert f"{v['model']} · {o['cond']}: correct {k} of {n} runs" in fig
+
+
+def test_the_bubbles_have_the_median_tokens_and_share_of_each_model_and_condition(built2):
+    ctx, _ = built2
+    fig = str(ctx["figs"]["cost"]["svg"])
+    want = 0
+    for v in ctx["views"]:
+        med = {m["cond"]: m for m in v["bench"]["cost"]["medians"]}
+        for s in v["bench"]["shares"]:
+            if med[s["cond"]].get("output_tokens"):
+                want += 1
+                assert f"{v['model']}, {s['cond']}: median" in fig
+                assert f"{s['k']}/{s['n']} runs" in fig
+    assert want and fig.count('class="bubble ') == want
+
+
+def test_the_heat_map_shows_the_solved_tasks_of_each_model_with_the_ramp_of_the_comparison_page(built2):
+    from tsbench.report import comparison
+
+    ctx, _ = built2
+    fig = str(ctx["figs"]["classes"]["svg"])
+    for v in ctx["views"]:
+        for blk in v["bench"]["tasks_view"]:
+            for c in v["bench"]["header"]["conds"]:
+                n = blk["n_by"].get(c, blk["n"])
+                if n:
+                    assert f"{v['model']}, {c}, {blk['class']}: {blk['k'].get(c, 0)} of {n} tasks" in fig
+                    assert f"fill:{comparison.heat_color(blk['k'].get(c, 0) / n)[0]}" in fig
+
+
+def test_panels_of_two_models_share_one_scale(built2):
+    ctx, _ = built2
+    upset = [b["upset"] for b in (v["bench"] for v in ctx["views"])]
+    peak, _ = full.outcome.upset_scale(upset)
+    assert peak == max(len(s["tasks"]) for sets in upset for s in sets)
+    bench = {v["model"]: v["bench"] for v in ctx["views"]}
+    assert full._categories(list(bench.values()))[0] == ("correct", "correct")
+
+
+def test_cost_maps_have_heights_in_proportion_to_their_totals():
+    def bench(cost: float, estimate: bool = False) -> dict:
+        return {"header": {"cost_is_estimate": estimate},
+                "runs": [{"cond": "A", "class": "x", "task": "t", "outcome": "correct", "values": {"cost_usd": cost}}]}
+
+    cats = [("correct", "correct")]
+    got = dict(full._cost_maps({"big": bench(8.0), "small": bench(4.0), "tiny": bench(0.1), "gw": bench(9.0, True)},
+                               cats, 960.0))
+    tall, low = full.MAP_HEIGHT
+    tile = r'class="tile ok"[^>]* height="([0-9.]+)"'
+    height = {m: float(re.search(tile, got[m]).group(1)) for m in ("big", "small", "tiny")}  # type: ignore[union-attr]
+    head = 35.0  # the headers of condition and class take this much of a map
+    assert height["big"] + head == pytest.approx(tall, abs=1)
+    assert height["big"] + head == pytest.approx(2 * (height["small"] + head), abs=1)
+    assert height["tiny"] + head == pytest.approx(low, abs=1) and got["gw"] == ""
+    assert "not to the scale" in got["tiny"] and "not to the scale" not in got["small"]
+
+
+def test_a_task_has_one_row_with_the_answers_of_every_model(built2):
+    ctx, markup = built2
+    node = _tab(_dom(_own(markup)), "tasks")
+    rows = {n.attrs["id"]: n for n in node.iter() if n.tag == "tr" and n.attrs.get("id", "").startswith("task-")}
+    assert set(rows) == {f"task-{t}" for t in PILOT}
+    cards = {c["anchor"]: c["head"] for t in ctx["gal"]["run_tasks"] for c in t["cards"]}
+    run_links = 0
+    for v in ctx["views"]:
+        for blk in v["bench"]["tasks_view"]:
+            for row in blk["tasks"]:
+                text = rows[f"task-{row['id']}"].text()
+                for cond, a in row["answers"].items():
+                    assert " ".join(str(a["text"]).split()) in text, (v["model"], row["id"], cond)
+                    assert v["model"] in text
+                    if a["href"]:
+                        head = cards[a["href"][1:]]
+                        assert (head["model"], head["cond"], head["task"]) == (v["model"], cond, row["id"])
+                        assert a["href"] in _hrefs(rows[f"task-{row['id']}"])
+                        run_links += 1
+    assert run_links
+
+
+def test_the_classes_and_spectra_tables_hold_a_line_per_model(built2):
     ctx, markup = built2
     root = _dom(_own(markup))
-    node = _tab(root, "models")
-    regions = _regions(node)
-    assert list(regions)[0] == COMPARE
-    h2 = [n for n in node.iter(skip=_toc_nav) if n.tag == "h2"][0]
-    assert h2.text() == COMPARE and not any("mview" in p.cls for p in _parents(h2))
-    assert ctx["toc"]["models"][0] == (2, h2.attrs["id"], COMPARE)
-    region = regions[COMPARE]
-    table = [n for n in region if n.tag == "table" and n.attrs.get("id") == "tbl-models"]
+    classes = _table(root, "tbl-classes")
+    assert len(_body_rows(classes)) == len(ctx["task_blocks"])
+    text = classes.text()
+    for v in ctx["views"]:
+        for blk in v["bench"]["tasks_view"]:
+            for c, k in blk["k"].items():
+                n = blk["n_by"].get(c, blk["n"])
+                assert (f"{k} of {n}" if n else "no run") in text
+    union = {x["task"] for v in ctx["views"] for x in v["bench"]["literature"]}
+    assert len(_body_rows(_table(root, "tbl-systems"))) == len(ctx["systems"]) == len(union)
+    answers = _table(root, "tbl-system-answers")
+    assert len(_body_rows(answers)) == len(union)
+    for v in ctx["views"]:
+        assert v["model"] in answers.text()
+
+
+def test_a_task_of_one_model_only_keeps_its_row():
+    bench = {"tasks_view": [{"class": "x", "tasks": [{"id": "t1", "answers": {"A": {"ok": True}}}]}]}
+    other = {"tasks_view": [{"class": "x", "tasks": [{"id": "t2", "answers": {"A": {"ok": False}}}]},
+                            {"class": "y", "tasks": [{"id": "t3", "answers": {}}]}]}
+    blocks = full._task_blocks([{"model": "m1", "bench": bench}, {"model": "m2", "bench": other}])
+    assert [b["class"] for b in blocks] == ["x", "y"]
+    assert [r["id"] for r in blocks[0]["tasks"]] == ["t1", "t2"]
+    assert blocks[0]["tasks"][1]["by_cond"] == {"A": [("m2", {"ok": False})]}
+    assert [m for m, _ in blocks[0]["by_model"]] == ["m1", "m2"]
+
+
+def test_two_models_open_the_overview_with_the_table_of_the_models(built2):
+    ctx, markup = built2
+    root = _dom(_own(markup))
+    regions = _regions(_tab(root, "models"))
+    assert next(iter(regions)) == "Overview"
+    table = [n for n in regions["Overview"] if n.tag == "table" and n.attrs.get("id") == "tbl-models"]
     assert len(table) == 1
-    rows = [n for n in table[0].iter() if n.tag == "tr" and n.parent is not None and n.parent.tag == "tbody"]
+    rows = _body_rows(table[0])
     assert [r.text().split()[0] for r in rows] == [x["model"] for x in ctx["compare"]]
     for r, x in zip(rows, ctx["compare"], strict=True):
         text = r.text()
         assert x["endpoint"] in text and str(x["n_runs"]) in text
         for cond, cell in x["cells"].items():
             assert f"{cell['k']} of {cell['n']}" in text, (x["model"], cond)
-    figs = {f.attrs.get("data-key"): f for f in _fig_nodes(region)}
-    for key, width, question in full.COMPARE[1]:
-        assert key in figs, key
-        assert width in figs[key].cls
-        assert [n for n in figs[key].iter() if n.tag == "figcaption"][0].text() == question
-        assert all(s.attrs.get("width") == WIDTH[width] for s in figs[key].iter() if s.tag == "svg" and "fig" in s.cls)
-        assert (4, figs[key].attrs["id"], question) in ctx["toc"]["models"]
-    assert [q for _, _, q in full.COMPARE[1]] == [
-        "How often does each model answer correctly under A, B and C?",
-        "How much does C change the share, model by model?"]
+    assert (4, "tbl-models", "Models") in ctx["toc"]["models"]
 
 
-def _parents(n: Node) -> Iterator[Node]:
-    p = n.parent
-    while p is not None:
-        yield p
-        p = p.parent
-
-
-def test_two_models_put_a_model_switch_in_the_top_bar(built2):
-    ctx, markup = built2
-    root = _dom(_own(markup))
-    bar = [n for n in root.iter() if n.tag == "header" and "bar" in n.cls]
-    assert len(bar) == 1
-    sel = bar[0].find("select", id="model-switch")
-    assert len(sel) == 1
-    assert [o.attrs.get("value") for o in sel[0].iter() if o.tag == "option"] == [v["model"] for v in ctx["views"]]
-    labels = [n for n in bar[0].iter() if n.tag == "label"]
-    assert labels and "Model" in labels[0].text()
-    scripts = " ".join(re.findall(r"<script\b[^>]*>(.*?)</script>", markup, flags=re.S))
-    assert "model-switch" in scripts and "mview" in scripts and "tsb-model" in scripts
+def test_solution_paths_of_two_models_keep_apart_and_a_task_link_needs_a_row(built2):
+    ctx, _ = built2
+    hids = [sp["hid"] for sp in ctx["solution_paths"]]
+    assert len(set(hids)) == len(hids)
+    task = next(iter(ctx["task_ids"]))
+    assert ctx["task_href"](task) == f"#task-{task}" and ctx["task_href"]("nope") is None
 
 
 def test_two_models_header_counts_every_model_and_every_run(built2):
@@ -1286,6 +1419,88 @@ def test_main_takes_more_than_one_mutation_folder(tmp_path, monkeypatch, demo_ru
     assert [p.name for p in seen["mutation"]] == ["m1", "m2"]
 
 
+# ---------------------------------------------------------------- one file
+
+
+def test_the_page_links_no_local_file(built, built2, built_conf):
+    for _, markup in (built, built2, built_conf):
+        assert page.local_links(markup) == []
+
+
+def test_a_full_report_embeds_every_figure_and_image_of_its_runs(tmp_path, demo_runs_root):
+    runs = _copy_models(demo_runs_root, tmp_path / "runs", TWO)
+    t = sorted(runs.rglob("*-k1.jsonl"))[0]
+    art = t.with_name(t.name.removesuffix(".jsonl") + ".artifacts")
+    art.mkdir(exist_ok=True)
+    (art / "made.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 500_000)
+    ctx = full.context(full.run_sets_in([runs]), tmp_path / "pages" / "r.html", with_gallery=True, make_figs=True)
+    markup = full.build_html(ctx)
+    assert page.local_links(markup) == []
+    assert base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"x" * 500_000).decode() in markup
+    counts = [c for t in ctx["gal"]["image_tasks"] for c in t["cards"]]
+    assert counts and all(c["src"] and c["src"].startswith("data:") for c in counts)
+    figs = [f for t in ctx["gal"]["run_tasks"] for c in t["cards"] for f in c["figs"]]
+    assert figs and all(f["src"] or f["clone"] for f in figs)
+
+
+def _links_only(tmp_path: pathlib.Path, demo_runs_root: pathlib.Path) -> list[str]:
+    runs = _copy_models(demo_runs_root, tmp_path / "runs", ONE)
+    t = sorted(runs.rglob("*-k1.jsonl"))[0]
+    art = t.with_name(t.name.removesuffix(".jsonl") + ".artifacts")
+    art.mkdir(exist_ok=True)
+    (art / "made.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 5000)
+    return ["--runs", str(runs), "--no-figures", "--page-budget", "0"]
+
+
+def test_the_page_budget_is_an_option_and_links_what_it_leaves_out(tmp_path, demo_runs_root, capsys):
+    out = tmp_path / "pages" / "r.html"
+    assert full.main([*_links_only(tmp_path, demo_runs_root), "--out", str(out)]) == 0
+    assert any(x.endswith("made.png") for x in page.local_links(out.read_text(encoding="utf-8")))
+
+
+def test_the_images_option_embeds_what_the_image_index_holds(tmp_path, demo_runs_root):
+    runs = _copy_models(demo_runs_root, tmp_path / "runs", ONE)
+    t = next(p for p in sorted(runs.rglob("*-k1.jsonl")) if ".attempt" not in p.name)
+    sets = full.run_sets_in([runs])
+    rel = t.relative_to(sets[0].path)
+    data = b"\x89PNG\r\n\x1a\n" + b"saved elsewhere"
+    images = tmp_path / "images"
+    file = images / sets[0].name / "diagram.png"
+    file.parent.mkdir(parents=True)
+    file.write_bytes(data)
+    (images / f"{sets[0].name}.index.csv").write_text(
+        "run_id,file,origin,sha256\n"
+        f"{rel.with_suffix('').as_posix()},images/{sets[0].name}/diagram.png,recovered,"
+        f"{hashlib.sha256(data).hexdigest()}\n", encoding="utf-8")
+    out = tmp_path / "pages" / "r.html"
+    argv = ["--runs", str(runs), "--no-figures", "--out", str(out), "--images", str(images)]
+    assert full.main(argv) == 0
+    assert base64.b64encode(data).decode() in out.read_text(encoding="utf-8")
+    file.write_bytes(b"changed")
+    assert full.main(argv) == 2
+
+
+def test_a_publication_build_fails_rather_than_link_a_local_file(tmp_path, demo_runs_root, capsys):
+    out = tmp_path / "pages" / "r.html"
+    assert full.main([*_links_only(tmp_path, demo_runs_root), "--out", str(out), "--publication"]) == 2
+    err = capsys.readouterr().err
+    assert "made.png" in err and "--page-budget" in err and not out.exists()
+
+
+def test_a_publication_build_without_a_budget_writes_one_file(tmp_path, demo_runs_root):
+    runs = _copy_models(demo_runs_root, tmp_path / "runs", ONE)
+    out = tmp_path / "pages" / "r.html"
+    assert full.main(["--runs", str(runs), "--no-figures", "--out", str(out), "--publication"]) == 0
+    assert page.local_links(out.read_text(encoding="utf-8")) == []
+
+
+def test_run_cards_copy_their_images_when_their_class_is_opened(built):
+    _, markup = built
+    script = _script(markup)
+    assert re.search(r'addEventListener\("toggle"', script) and "fill(doc)" in script
+    assert not re.search(r'^\$\$\("\.clone"\)', script, flags=re.M)
+
+
 # ---------------------------------------------------------------- print, no script, bad address, resize, copy, theme
 
 
@@ -1311,7 +1526,7 @@ def test_print_opens_every_closed_fold_out(built):
 def test_controls_that_need_the_script_are_hidden_without_it(built):
     _, markup = built
     styles = _styles(markup)
-    for sel in ("#theme-switch", ".copy", "label.mswitch"):
+    for sel in ("#theme-switch", ".copy"):
         rule = re.search(r"html:not\(\.js\)\s*" + re.escape(sel) + r"\b[^{]*\{[^}]*display:\s*none", styles)
         assert rule, sel
 
@@ -1325,7 +1540,7 @@ def test_a_broken_percent_escape_in_the_address_never_blanks_the_page(built):
     assert helper, "a decode helper with try/catch and a fallback to the raw text"
     rest = script.replace(helper.group(0), "")
     assert "decodeURIComponent" not in rest
-    assert len(re.findall(r"\b" + helper.group(1) + r"\(", rest)) >= 3
+    assert len(re.findall(r"\b" + helper.group(1) + r"\(", rest)) >= 2
 
 
 def test_the_contents_list_follows_the_window_width(built):
@@ -1358,3 +1573,122 @@ def test_figures_of_the_run_cards_follow_the_page_theme_not_only_the_system(buil
 def test_share_and_interval_texts_round_a_half_up():
     """100 * 0.025 and 100 * 0.035 are 2.5 and 3.5: both go up, not to the even neighbour."""
     assert full._interval_text(0.025, 0.035) == "3\u20134 %"
+
+
+# ---------------------------------------------------------------- the confirmatory split
+
+
+def test_a_confirmatory_report_reads_the_tasks_of_its_split_and_names_split_and_doi(built_conf):
+    ctx, markup = built_conf
+    h = ctx["header"]
+    assert h["split"] == "confirmatory" and h["preregistration"] == DOI and h["n_runs"] > 0
+    assert h["n_evaluable"] > 0 and ctx["views"][0]["task_ids"]
+    assert ctx["ident"]["tasks"] == base.split_hash("confirmatory")[:7]
+    assert ctx["gal"]["run_tasks"]
+    root = _dom(_own(markup))
+    chips = [n.text() for n in root.iter() if "chip" in n.cls]
+    assert any(c.startswith("confirmatory split ·") for c in chips)
+    assert any(DOI in c and "preregistered" in c for c in chips)
+    assert f'href="https://doi.org/{DOI}"' in markup
+
+
+def test_a_confirmatory_report_has_no_pilot_wording(built_conf):
+    _, markup = built_conf
+    text = _dom(_own(markup)).text().lower()
+    assert "not preregistered" not in text and "no hypothesis is tested" not in text
+    assert "pilot" not in text, re.findall(r".{60}pilot.{60}", text)[:3]
+
+
+def test_a_confirmatory_report_shows_the_preregistered_tests_first_in_the_models_tab(built_conf):
+    _, markup = built_conf
+    root = _dom(_own(markup))
+    regions = _regions(_tab(root, "models"))
+    assert next(iter(regions)) == "Preregistered tests"
+    tables = {t.attrs["id"]: t for t in root.iter() if t.tag == "table" and t.attrs.get("id", "").startswith("tbl-hyp")}
+    assert set(tables) == {"tbl-hyp-primary", "tbl-hyp-secondary", "tbl-hyp-mcnemar", "tbl-hyp-efficiency"}
+    rows = [[c.text() for c in tr.iter() if c.tag in ("td", "th")] for tr in tables["tbl-hyp-primary"].iter()
+            if tr.tag == "tr"][1:]
+    assert [r[0] for r in rows] == ["H2", "H2", "H3"]
+    assert rows[1][1] == HYP_MODELS[1] and "1.8 × 10⁻⁵" in rows[1] and "+25.0 pp" in rows[1]
+    assert "0.200" in rows[2] and f"({HYP_MODELS[1]} − {HYP_MODELS[0]}) under B minus under C" in rows[2]
+    mc = tables["tbl-hyp-mcnemar"].text()
+    assert "8" in mc and "4" in mc and "0.390" in mc
+    toc = [a.attrs["href"] for a in _tab(root, "models").iter() if a.tag == "a" and a.inside("nav")]
+    assert toc[:2] == ["#models-preregistered-tests", "#tbl-hyp-primary"]
+
+
+def test_a_confirmatory_report_shows_the_efficiency_ratios_as_descriptive(built_conf):
+    ctx, html = built_conf
+    region = html[html.index('id="tbl-hyp-efficiency"'):]
+    table = region[:region.index("</table>")]
+    assert "2.50 (1.25 to 5.00)" in table and "0.25 (0.13 to 0.50)" in table
+    assert "<th" in table and "C/A" in table and "C/B" in table and ">p<" not in table
+    before = html[:html.index('id="tbl-hyp-efficiency"')]
+    assert "Efficiency ratios (descriptive)" in before[before.rindex("<h"):]
+    assert "#tbl-hyp-efficiency" in [f"#{i}" for _, i, _ in ctx["toc"]["models"]]
+
+
+def test_the_redactions_option_reaches_the_method_tables(tmp_path, demo_runs_root, capsys):
+    runs = _copy_models(demo_runs_root, tmp_path / "runs", ONE)
+    run_set = full.run_sets_in([runs])[0]
+    manifest = json.loads((run_set.path / "MANIFEST.json").read_text(encoding="utf-8"))
+    key = next(iter(manifest["transcripts"]))
+    t = run_set.path / f"{key}.jsonl"
+    old = hashlib.sha256(t.read_bytes()).hexdigest()
+    t.write_bytes(t.read_bytes() + b"\n")
+    log = tmp_path / "log.csv"
+    log.write_text("file,sha256_original,sha256_published\n"
+                   f"{key},{old},{hashlib.sha256(t.read_bytes()).hexdigest()}\n", encoding="utf-8")
+    out = tmp_path / "pages" / "report.html"
+    assert full.main(["--runs", str(runs), "--out", str(out), "--no-gallery", "--redactions", str(log)]) == 0
+    assert "through the path replacement of log.csv" in out.read_text(encoding="utf-8")
+
+
+def test_an_unreadable_redaction_log_stops_the_report(tmp_path, demo_runs_root, capsys):
+    runs = _copy_models(demo_runs_root, tmp_path / "runs", ONE)
+    out = tmp_path / "pages" / "report.html"
+    args = ["--runs", str(runs), "--out", str(out), "--no-gallery", "--redactions"]
+    assert full.main([*args, str(tmp_path / "missing.csv")]) == 2
+    assert "missing.csv" in capsys.readouterr().err and not out.exists()
+
+
+def test_a_pilot_report_shows_no_preregistered_tests(built):
+    ctx, markup = built
+    assert ctx["header"]["split"] == "pilot" and not ctx["header"].get("preregistration") and not ctx["hypotheses"]
+    assert "Preregistered tests" not in markup and "tbl-hyp" not in markup
+
+
+def test_the_cli_refuses_the_confirmatory_split_without_a_doi(tmp_path, demo_runs_root, capsys):
+    runs = _copy_models(demo_runs_root, tmp_path / "runs", ONE)
+    out = tmp_path / "r.html"
+    assert full.main(["--runs", str(runs), "--out", str(out), "--split", "confirmatory"]) == 2
+    assert "--i-have-preregistered" in capsys.readouterr().err and not out.exists()
+    assert full.main(["--runs", str(runs), "--out", str(out), "--split", "confirmatory",
+                      "--i-have-preregistered", "yes"]) == 2
+
+
+def test_the_cli_refuses_a_split_other_than_that_of_the_run_sets(tmp_path, demo_runs_root, capsys):
+    runs = _copy_models(demo_runs_root, tmp_path / "runs", ONE)
+    out = tmp_path / "r.html"
+    assert full.main(["--runs", str(runs), "--out", str(out), "--split", "confirmatory",
+                      "--i-have-preregistered", DOI]) == 2
+    assert "--split pilot" in capsys.readouterr().err and not out.exists()
+
+
+def test_the_cli_passes_the_split_and_the_doi_to_the_page(tmp_path, demo_runs_root, monkeypatch):
+    seen = {}
+
+    def fake_context(run_sets, out, title=None, coverage=None, mutation=(), *rest):
+        seen["rest"] = rest
+        raise SystemExit(0)
+
+    monkeypatch.setattr(full, "context", fake_context)
+    runs = _copy_models(demo_runs_root, tmp_path / "runs", ONE)
+    for rs in full.run_sets_in([runs]):
+        (rs.path / "MANIFEST.json").write_text(json.dumps({"split": "confirmatory"}), encoding="utf-8")
+        for name in ("plan.jsonl", "plan.sealed.json"):
+            (rs.path / name).unlink(missing_ok=True)
+    with pytest.raises(SystemExit):
+        full.main(["--runs", str(runs), "--out", str(tmp_path / "r.html"), "--split", "confirmatory",
+                   "--i-have-preregistered", DOI])
+    assert seen["rest"][-4:-2] == ("confirmatory", DOI)

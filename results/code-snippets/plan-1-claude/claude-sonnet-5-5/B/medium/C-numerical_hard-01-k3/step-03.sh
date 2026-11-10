@@ -1,0 +1,2 @@
+
+cd /dev/shm; sed -i 's/H(B,C,Dq,1)/H(B,C,Dq,2)/;s/H(B,C,Dq,2)));/XX/' a.py; sed -i 's/e2=list(np.linalg.eigvalsh(H(B,C,Dq,2)))/e2=list(np.linalg.eigvalsh(H(B,C,Dq,4)))/;s/M=H(900,4230,2000,1)/M=H(900,4230,2000,2)/' a.py; grep -n "H(" a.py; python3 a.py

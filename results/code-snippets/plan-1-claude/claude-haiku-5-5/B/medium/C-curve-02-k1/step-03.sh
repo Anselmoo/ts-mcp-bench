@@ -1,0 +1,1 @@
+pwd; echo $HOME; for d in "$PWD" /root /var/tmp /dev/shm; do touch "$d/.w" 2>/dev/null && echo "writable: $d" && rm -f "$d/.w"; done

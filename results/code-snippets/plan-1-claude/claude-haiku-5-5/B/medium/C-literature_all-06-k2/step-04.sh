@@ -1,0 +1,1 @@
+cd ~ && pwd && touch x_test && echo ok; ls -ld ~ /tmp 2>&1

@@ -8,15 +8,16 @@ report and the mutation shards, as plain data (no markup, no prose).
     platform(run_sets, keep=None)          where the runs ran, their schedule, the files of a run set
 
 The shapes are the inputs of the figure functions of `tsbench.report.svg` (see `report/full.py`). `benchmark` reads
-the scored runs of the pilot tasks (`dashboard.collect`, which scores a run set that has no scores.csv) and the
+the scored runs of the tasks of one split (`split`, default pilot; `dashboard.collect`, which scores a run set that
+has no scores.csv) and the
 transcripts of conditions B and C; it chooses one model (the one with the most evaluable runs, or the one asked for).
 `benchmarks` gives the same facts for every model of the run sets from one `dashboard.collect`.
 Runs that are not evaluable stay out of every count. Several runs of one task and condition (k > 1) are counted as
 runs in the shares and the outcome table, and as one verdict per task (more than half of the runs correct) in the
 class marks, the paired differences, the solved-set intersections, the ledger, the literature rows and the task view.
 A mark that says "within the tolerance" is the `correct` flag of the scores table, never a ratio decided again. A
-record that no figure reads (a run of another condition, a task outside the pilot set, a scoring failure, a missing
-transcript) is counted in `notes`. Only pilot tasks are read; no file is written except the scores.csv that
+record that no figure reads (a run of another condition, a task outside the split, a scoring failure, a missing
+transcript) is counted in `notes`. Only the tasks of the split are read; no file is written except the scores.csv that
 `dashboard.collect` writes into a run set that lacks it.
 """
 from __future__ import annotations
@@ -28,12 +29,12 @@ import json
 import pathlib
 import re
 import time
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from typing import Any
 
 from tsbench.conditions import gateway_label
 from tsbench.report import dashboard, literature, quality, science, taskview
-from tsbench.report.base import as_number, as_run_sets, is_true, median, share
+from tsbench.report.base import as_number, as_run_sets, is_true, median, share, solved
 from tsbench.report.svg.base import fixed, round_half_up
 from tsbench.score.artifacts import TranscriptCache
 from tsbench.score.extract import read_transcript
@@ -111,31 +112,33 @@ def _distinct(values: Iterable[Any]) -> list[str]:
     return sorted({str(v) for v in values if v not in (None, "")})
 
 
-def _solved(rs: list[dict]) -> bool:
-    return science._solved(rs)
-
-
 # ---------------------------------------------------------------- the benchmark of the models
 
 
 def benchmark(run_sets: Sequence[RunSet | pathlib.Path | str], out: pathlib.Path | str,
-              model: str | None = None, reader: TranscriptCache | None = None) -> dict:
+              model: str | None = None, reader: TranscriptCache | None = None, split: str = "pilot") -> dict:
     """The benchmark facts for `model` (default: the model with the most evaluable runs) over the run sets. `out` is
     the path of the page that will be written; it only fixes the relative links of `dashboard.collect`. `reader`
-    reads the transcripts (default `read_transcript`); the gallery can share one with it."""
-    data = dashboard.collect(run_sets, out, dashboard.load_pilot_tasks(), reader=reader)
+    reads the transcripts (default `read_transcript`); the gallery can share one with it. `split` names the tasks."""
+    data = _collect(run_sets, out, reader, split)
     paths = {s["name"]: pathlib.Path(s["path"]) for s in data["sets"]}
     return _benchmark(data, paths, model, reader)
 
 
 def benchmarks(run_sets: Sequence[RunSet | pathlib.Path | str], out: pathlib.Path | str,
-               reader: TranscriptCache | None = None) -> dict[str, dict]:
+               reader: TranscriptCache | None = None, split: str = "pilot") -> dict[str, dict]:
     """The benchmark facts for every model of the run sets, keyed by model: the model with the most evaluable runs
     first, then by name. One `dashboard.collect` serves every model. A run set without runs gives one bench under the
     model name "" (as `benchmark` does)."""
-    data = dashboard.collect(run_sets, out, dashboard.load_pilot_tasks(), reader=reader)
+    data = _collect(run_sets, out, reader, split)
     paths = {s["name"]: pathlib.Path(s["path"]) for s in data["sets"]}
     return _benchmarks(data, paths, reader)
+
+
+def _collect(run_sets: Sequence[RunSet | pathlib.Path | str], out: pathlib.Path | str,
+             reader: TranscriptCache | None, split: str) -> dict:
+    """`dashboard.collect` over the tasks of `split`, with the split kept as `data["split"]`."""
+    return {**dashboard.collect(run_sets, out, dashboard.load_tasks(split), reader=reader), "split": split}
 
 
 def _benchmarks(data: dict, paths: dict[str, pathlib.Path], reader: TranscriptCache | None = None) -> dict[str, dict]:
@@ -191,7 +194,7 @@ def _benchmark(data: dict, paths: dict[str, pathlib.Path], model: str | None,
     cost = _cost(runs, model, conds)
     literature_rows = _literature(runs, order, by_task)
     header = _header(data, runs, model, models, conds, order)
-    pilot = data.get("tasks") or runs.tasks
+    task_set = data.get("tasks") or runs.tasks
     upset, upset_excluded = _upset(order, by_task, conds)
     swarm = _errors(runs, model, conds, fit)
     return {
@@ -213,7 +216,7 @@ def _benchmark(data: dict, paths: dict[str, pathlib.Path], model: str | None,
         "solution_paths": reads["solution_paths"],
         "ledger": _ledger(order, by_task, runs.tasks, conds),
         "tool_output": reads["tool_output"],
-        "tasks_view": taskview.tasks_view(list(pilot), pilot, by_task, conds,
+        "tasks_view": taskview.tasks_view(list(task_set), task_set, by_task, conds,
                                           (header["oracle"] or "").removeprefix("tanabesugano ") or None,
                                           lambda category: labels[_fold(category)], ran=set(order)),
         "notes": [*_notes(data, mine, runs, paths), *_swarm_notes(swarm)],
@@ -234,7 +237,7 @@ def _check_run_keys(rows: list[dict]) -> None:
 def _notes(data: dict, rows: list[dict], runs: science._Runs, paths: dict[str, pathlib.Path]) -> list[dict]:
     """The records the page does not show, as `{kind, text, count}`: the notes of `dashboard.collect` (a run set that
     failed to score, an unreadable plan; a note with a run count in `note_counts` carries that count), the runs of the
-    model that no figure reads (another condition, a task outside the pilot set) and the scored B and C runs whose
+    model that no figure reads (another condition, a task outside the split) and the scored B and C runs whose
     transcript is missing from a run set folder that is known."""
     counts = data.get("note_counts") or {}
     notes = [{"kind": "run set", "text": str(text), "count": counts.get(text, 1)} for text in data.get("notes") or []]
@@ -244,8 +247,8 @@ def _notes(data: dict, rows: list[dict], runs: science._Runs, paths: dict[str, p
         notes.append({"kind": "condition", "text": "runs of a condition other than A, B and C are not counted",
                       "count": other})
     if outside:
-        notes.append({"kind": "task", "text": "runs of a task outside the pilot set are not counted",
-                      "count": outside})
+        notes.append({"kind": "task", "text": f"runs of a task outside the {data.get('split', 'pilot')} set are not "
+                      "counted", "count": outside})
     lost = sum(1 for r in runs.rows if r["_cond"] in ("B", "C") and r.get("_set", "") in paths
                and _transcript(paths, r) is None)
     if lost:
@@ -287,7 +290,7 @@ def _header(data: dict, runs: science._Runs, model: str, models: list[str], cond
     ends = [m["end_time_utc"] for m in mans if m.get("end_time_utc")]
     commits = _distinct(str(m["git_commit"])[:7] for m in mans if m.get("git_commit"))
     oracle = _distinct(m.get("tanabesugano_version") for m in mans)
-    return {"model": model, "models": models, "split": "pilot", "n_tasks": len(order),
+    return {"model": model, "models": models, "split": data.get("split", "pilot"), "n_tasks": len(order),
             "n_classes": len({runs.tasks[t]["class"] for t in order}), "conds": conds, "k": max(ks, default=1),
             "k_planned": max(planned, default=None),
             "cost_is_estimate": bool(model) and not str(model).startswith("claude-"),
@@ -322,7 +325,7 @@ def _paired(runs: science._Runs, model: str) -> list[dict]:
 def _mark(rs: list[dict]) -> bool | None:
     """The verdict of a task under one condition; None when the condition has no evaluable run of it (the task is
     then left out of that condition, not counted as unsolved)."""
-    return _solved(rs) if rs else None
+    return solved(rs) if rs else None
 
 
 def _classes(runs: science._Runs, model: str, conds: list[str], order: list[str], by_task: dict) -> list[dict]:
@@ -363,7 +366,7 @@ def _upset(order: list[str], by_task: dict, conds: Sequence[str] = CONDS) -> tup
         if any(not by_task.get((c, t)) for c in conds):
             left_out.append(t)
             continue
-        sets["".join(c for c in CONDS if _solved(by_task.get((c, t), [])))].append(t)
+        sets["".join(c for c in CONDS if solved(by_task.get((c, t), [])))].append(t)
     return [{"key": k, "tasks": v} for k, v in sets.items()], left_out
 
 
@@ -409,7 +412,7 @@ def _literature(runs: science._Runs, order: list[str], by_task: dict) -> list[di
                 reported[c] = None
                 continue
             shown = taskview.shown_run(rs)
-            reported[c] = {**{p: as_number(shown.get(p.lower())) for p in required}, "ok": _solved(rs),
+            reported[c] = {**{p: as_number(shown.get(p.lower())) for p in required}, "ok": solved(rs),
                            "n_runs": len(rs), "n_correct": sum(is_true(r.get("correct")) for r in rs),
                            "shown_k": _k(shown)}
             texts[c] = " / ".join(_number(reported[c][p]) for p in required)
@@ -564,7 +567,7 @@ def _ledger_cell(rs: list[dict], t: dict) -> dict:
     value are those of one run, the first on the side of that verdict (a run without a value leaves the value empty),
     so the mark and the verdict agree and the value is one that a run gave."""
     cells = [_run_cell(r, t) for r in rs]
-    ok = _solved(rs)
+    ok = solved(rs)
     side = [c for c in cells if c["ok"] == ok] or cells
     first = side[0]
     return {**first, "ok": ok, "n_runs": len(rs),
@@ -916,17 +919,17 @@ def _imports(src_root: pathlib.Path, files: dict[str, dict]) -> dict:
 
 
 def platform(run_sets: Sequence[RunSet | pathlib.Path | str],
-             keep: Collection[tuple[str, str, str, int]] | None = None) -> dict:
+             keep: Collection[tuple[str, str, str, int]] | None = None, split: str = "pilot") -> dict:
     """The facts of the platform from the manifests, the run sidecars and the files of the run sets: a table of where
     the runs ran (what the records do not hold says "not recorded"), the schedule of the runs, and the file tree of the
     first run set with the hash links between its files, and per run set the count of its hash links and the links
     that do not match (`chains`: {set, links, broken}). `keep` is the set of (model, condition, task, k) of the
     evaluable runs of the analysed models: the schedule holds those runs only, and `notes` counts the runs of `keep`
     that have no sidecar. A sidecar without a model field matches when `keep` names exactly one model. Without `keep`
-    the schedule holds every run of a pilot task."""
+    the schedule holds every run of a task of `split`."""
     sets = as_run_sets(run_sets)
     mans = [m for m in (_manifest(rs) for rs in sets) if m]
-    schedule = _schedule(sets, mans, keep)
+    schedule = _schedule(sets, mans, keep, split)
     trees = [_tree(rs.path) for rs in sets]
     chains = [{"set": rs.name, "links": len(t["chain"]), "broken": [x for x in t["chain"] if not x["ok"]]}
               for rs, t in zip(sets, trees, strict=True)]
@@ -944,10 +947,12 @@ def _schedule_notes(schedule: dict, keep: Collection[tuple[str, str, str, int]] 
              "count": lost}] if lost else []
 
 
-def distinct_row(item: str, values: Iterable[Any], source: str = "MANIFEST.json") -> dict:
-    """A table row `{item, value, source}`: the distinct values joined with a comma, or "not recorded" with the source
-    "–" when there are none. The platform table and the method page both build their rows with it."""
-    got = _distinct(values)
+def distinct_row(item: str, values: Iterable[Any], source: str = "MANIFEST.json",
+                 key: Callable[[str], Any] | None = None) -> dict:
+    """A table row `{item, value, source}`: the distinct values joined with a comma, in the order of `key` if given, or
+    "not recorded" with the source "–" when there are none. The platform table and the method page both build their
+    rows with it."""
+    got = sorted(_distinct(values), key=key) if key else _distinct(values)
     return {"item": item, "value": ", ".join(got) if got else NOT_RECORDED, "source": source if got else "–"}
 
 
@@ -973,14 +978,15 @@ def _platform_rows(mans: list[dict]) -> list[dict]:
     return rows
 
 
-def _schedule(sets: list[RunSet], mans: list[dict], keep: Collection[tuple[str, str, str, int]] | None = None) -> dict:
-    """Model, start, length and cost of every run of a pilot task (from the `.meta.json` beside each transcript; a
+def _schedule(sets: list[RunSet], mans: list[dict], keep: Collection[tuple[str, str, str, int]] | None = None,
+              split: str = "pilot") -> dict:
+    """Model, start, length and cost of every run of a task of `split` (from the `.meta.json` beside each transcript; a
     length or cost the sidecar lacks is None, and so is a cost it calls `cost_unknown`), and the totals of the
     manifests. `cost_is_estimate` is True for a model that is not a Claude model: Claude Code prices it at Claude
     list prices, so its cost is no real cost. With `keep` only the runs of that set; a sidecar without a model field
     takes the model of `keep` when it names one model, and is left out otherwise. Without `keep` the model of such a
     sidecar is None."""
-    pilot = dashboard.load_pilot_tasks()
+    tasks = dashboard.load_tasks(split)
     named = {key[0] for key in keep} if keep is not None else set()
     only = next(iter(named)) if len(named) == 1 else None
     runs = []
@@ -990,7 +996,7 @@ def _schedule(sets: list[RunSet], mans: list[dict], keep: Collection[tuple[str, 
                 continue
             m = _read_json(f)
             model = m.get("model") or only
-            if m.get("task_id") in pilot and m.get("condition") in CONDS and m.get("started_utc"):
+            if m.get("task_id") in tasks and m.get("condition") in CONDS and m.get("started_utc"):
                 k = as_number(m.get("k"))
                 if k is None:
                     found = re.search(r"-k(\d+)\.meta\.json$", f.name)

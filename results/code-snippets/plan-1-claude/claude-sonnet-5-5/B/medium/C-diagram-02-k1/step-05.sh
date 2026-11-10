@@ -1,0 +1,1 @@
+sed -i 's/((d,False),(cc,False),(b,True),(a,True))/((cc,False),(d,False),(b,True),(a,True))/; s/for op,cr in ((d,False),(cc,False)/for op,cr in ((cc,False),(d,False)/' a.py; grep -n "for op,cr" a.py; python3 a.py 2>&1 | grep -v -i matplotlib | head -12

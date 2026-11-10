@@ -1,0 +1,1 @@
+sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y\ndef sph_harm(m,n,ph,th): return sph_harm_y(n,m,th,ph)/' d5.py && time python3 d5.py

@@ -1,0 +1,1 @@
+cd "$(mktemp -d)" && pwd && touch x && echo ok; df -h . | tail -1

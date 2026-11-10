@@ -1,0 +1,518 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-literature_all-04-k2.jsonl",
+ "transcript_sha256": "977d37a40a97eb785a623eeba58fadf38a1387a1e5051b1363ae8ec53d1dca79",
+ "answer": {
+  "Dq": 1750.0,
+  "B": 611.0,
+  "C": 3235.0,
+  "out_of_scope": false,
+  "reason": "Full d3 ligand-field diagonalization with Dq from 10Dq=17500 and B, C fitted to the 4T1(F) and 2E bands reproduces all three bands exactly."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check for numerical Python packages",
+   "command": "pip list 2>/dev/null | grep -i -E \"sympy|numpy|scipy\" ; python3 -c \"import sympy, numpy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Write d3 Hamiltonian builder",
+   "command": "mkdir -p /w && cat > /w/d3.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nfrom functools import lru_cache\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (1,-1)]   # spin-orbitals\nn=len(orbs)\ndef ck(k,m,q,mp):\n    # <l m|C^k_q|l mp>\n    if m!=m+0 or q!=(m-mp) : pass\n    if -m+q+mp!=0: return 0.0\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    return (-1)**(l-m)*float(wigner_3j(l,k,l,-m,q,mp))*red\ndef angular(k,m1,m2,m3,m4):\n    # <m1 m2|C^k(1).C^k(2)|m3 m4>\n    s=0.0\n    for q in range(-k,k+1):\n        s+=(-1)**q*ck(k,m1,q,m3)*ck(k,m2,-q,m4)\n    return s\n# Coulomb matrix elements in spin-orbitals: V[i,j,k,l] = <i j|1/r12|k l>, spin-diag\nV=np.zeros((n,n,n,n,5))  # store angular coeff for k=0,2,4\nfor i,(m1,s1) in enumerate(orbs):\n for j,(m2,s2) in enumerate(orbs):\n  for kk,(m3,s3) in enumerate(orbs):\n   for ll,(m4,s4) in enumerate(orbs):\n    if s1!=s3 or s2!=s4: continue\n    for k in (0,2,4):\n        V[i,j,kk,ll,k]=angular(k,m1,m2,m3,m4)\n# sanity: F^k multiply by (4pi/(2k+1)) normalization included in C^k convention -> e^2/r = sum_k F^k C^k.C^k\ndef fock_basis(N):\n    return [tuple(c) for c in itertools.combinations(range(n),N)]\ndef build(N,Fk,dq):\n    basis=fock_basis(N); idx={b:i for i,b in enumerate(basis)}\n    D=len(basis); H=np.zeros((D,D))\n    # one-body ligand field: -4Dq on t2g, +6Dq on eg per spin-orbital (projector form)\n    h=np.zeros((n,n))\n    # eg projector in m basis: |0><0| + (|2>+|-2>)(<2|+<-2|)/2\n    pe=np.zeros((5,5)); ix={m:i for i,m in enumerate(range(-2,3))}\n    pe[ix[0],ix[0]]=1\n    v=np.zeros(5); v[ix[2]]+=1; v[ix[-2]]+=1; pe+=np.outer(v,v)/2\n    one=-4*np.eye(5)+10*pe\n    for i,(m1,s1) in enumerate(orbs):\n     for j,(m2,s2) in enumerate(orbs):\n      if s1==s2: h[i,j]=dq*one[ix[m1],ix[m2]]\n    W=sum(Fk[k]*V[:,:,:,:,k] for k in (0,2,4))\n    def occ_list(b): return list(b)\n    for bi,b in enumerate(basis):\n        # one-body\n        for i in b:\n            pass\n        for jj in range(n):\n            for ii in range(n):\n                if h[ii,jj]==0: continue\n                # c_i^dag c_j |b>\n                if jj not in b: continue\n                bl=list(b); pos=bl.index(jj); sgn=(-1)**pos; bl.pop(pos)\n                if ii in bl: continue\n                # insert ii\n                p=sum(1 for x in bl if x<ii); sgn*=(-1)**p; bl.insert(p,ii)\n                t=tuple(bl)\n                H[idx[t],bi]+=h[ii,jj]*sgn\n        # two-body: 1/2 sum W[i,j,k,l] c_i^+ c_j^+ c_l c_k\n        for k_ in b:\n          for l_ in b:\n            if k_==l_: continue\n            for i_ in range(n):\n              for j_ in range(n):\n                w=W[i_,j_,k_,l_]\n                if abs(w)<1e-14: continue\n                bl=list(b)\n                # annihilate l_ then k_ (c_l c_k acting: first k then l)\n                s=1\n                pk=bl.index(k_); s*=(-1)**pk; bl.pop(pk)\n                if l_ not in bl: continue\n                pl=bl.index(l_); s*=(-1)**pl; bl.pop(pl)\n                # create j then i\n                if j_ in bl: continue\n                p=sum(1 for x in bl if x<j_); s*=(-1)**p; bl.insert(p,j_)\n                if i_ in bl: continue\n                p=sum(1 for x in bl if x<i_); s*=(-1)**p; bl.insert(p,i_)\n                t=tuple(sorted(bl)) if False else None\n                # recompute sign from ordered insertion: bl is ordered? ensure canonical\n                # sign of permutation to sorted order\n                perm=bl[:]; sign=1\n                for a in range(len(perm)):\n                    for c in range(len(perm)-1-a):\n                        if perm[c]>perm[c+1]:\n                            perm[c],perm[c+1]=perm[c+1],perm[c]; sign=-sign\n                H[idx[tuple(perm)],bi]+=0.5*w*s*sign\n    return basis,H\nEOF\ncd /w && python3 -c \"\nimport d3\nprint('ok')\"",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "149ad82cca73d16ed44249cfde400b4fdd4bdb97b2030e53d1d3d4b9525f4e60",
+     "lines": 90,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nfrom functools import lru_cache\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (1,-1)]   # spin-orbitals\nn=len(orbs)\ndef ck(k,m,q,mp):\n    # <l m|C^k_q|l mp>\n    if m!=m+0 or q!=(m-mp) : pass\n    if -m+q+mp!=0: return 0.0\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    return (-1)**(l-m)*float(wigner_3j(l,k,l,-m,q,mp))*red\ndef angular(k,m1,m2,m3,m4):\n    # <m1 m2|C^k(1).C^k(2)|m3 m4>\n    s=0.0\n    for q in range(-k,k+1):\n        s+=(-1)**q*ck(k,m1,q,m3)*ck(k,m2,-q,m4)\n    return s\n# Coulomb matrix elements in spin-orbitals: V[i,j,k,l] = <i j|1/r12|k l>, spin-diag\nV=np.zeros((n,n,n,n,5))  # store angular coeff for k=0,2,4\nfor i,(m1,s1) in enumerate(orbs):\n for j,(m2,s2) in enumerate(orbs):\n  for kk,(m3,s3) in enumerate(orbs):\n   for ll,(m4,s4) in enumerate(orbs):\n    if s1!=s3 or s2!=s4: continue\n    for k in (0,2,4):\n        V[i,j,kk,ll,k]=angular(k,m1,m2,m3,m4)\n# sanity: F^k multiply by (4pi/(2k+1)) normalization included in C^k convention -> e^2/r = sum_k F^k C^k.C^k\ndef fock_basis(N):\n    return [tuple(c) for c in itertools.combinations(range(n),N)]\ndef build(N,Fk,dq):\n    basis=fock_basis(N); idx={b:i for i,b in enumerate(basis)}\n    D=len(basis); H=np.zeros((D,D))\n    # one-body ligand field: -4Dq on t2g, +6Dq on eg per spin-orbital (projector form)\n    h=np.zeros((n,n))\n    # eg projector in m basis: |0><0| + (|2>+|-2>)(<2|+<-2|)/2\n    pe=np.zeros((5,5)); ix={m:i for i,m in enumerate(range(-2,3))}\n    pe[ix[0],ix[0]]=1\n    v=np.zeros(5); v[ix[2]]+=1; v[ix[-2]]+=1; pe+=np.outer(v,v)/2\n    one=-4*np.eye(5)+10*pe\n    for i,(m1,s1) in enumerate(orbs):\n     for j,(m2,s2) in enumerate(orbs):\n      if s1==s2: h[i,j]=dq*one[ix[m1],ix[m2]]\n    W=sum(Fk[k]*V[:,:,:,:,k] for k in (0,2,4))\n    def occ_list(b): return list(b)\n    for bi,b in enumerate(basis):\n        # one-body\n        for i in b:\n            pass\n        for jj in range(n):\n            for ii in range(n):\n                if h[ii,jj]==0: continue\n                # c_i^dag c_j |b>\n                if jj not in b: continue\n                bl=list(b); pos=bl.index(jj); sgn=(-1)**pos; bl.pop(pos)\n                if ii in bl: continue\n                # insert ii\n                p=sum(1 for x in bl if x<ii); sgn*=(-1)**p; bl.insert(p,ii)\n                t=tuple(bl)\n                H[idx[t],bi]+=h[ii,jj]*sgn\n        # two-body: 1/2 sum W[i,j,k,l] c_i^+ c_j^+ c_l c_k\n        for k_ in b:\n          for l_ in b:\n            if k_==l_: continue\n            for i_ in range(n):\n              for j_ in range(n):\n                w=W[i_,j_,k_,l_]\n                if abs(w)<1e-14: continue\n                bl=list(b)\n                # annihilate l_ then k_ (c_l c_k acting: first k then l)\n                s=1\n                pk=bl.index(k_); s*=(-1)**pk; bl.pop(pk)\n                if l_ not in bl: continue\n                pl=bl.index(l_); s*=(-1)**pl; bl.pop(pl)\n                # create j then i\n                if j_ in bl: continue\n                p=sum(1 for x in bl if x<j_); s*=(-1)**p; bl.insert(p,j_)\n                if i_ in bl: continue\n                p=sum(1 for x in bl if x<i_); s*=(-1)**p; bl.insert(p,i_)\n                t=tuple(sorted(bl)) if False else None\n                # recompute sign from ordered insertion: bl is ordered? ensure canonical\n                # sign of permutation to sorted order\n                perm=bl[:]; sign=1\n                for a in range(len(perm)):\n                    for c in range(len(perm)-1-a):\n                        if perm[c]>perm[c+1]:\n                            perm[c],perm[c+1]=perm[c+1],perm[c]; sign=-sign\n                H[idx[tuple(perm)],bi]+=0.5*w*s*sign\n    return basis,H\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 187: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d3.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "V=np.zeros((n,n,n,n,5))  # store angular coeff for k=0,2,4"
+    },
+    {
+     "script": "d3.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "D=len(basis); H=np.zeros((D,D))"
+    },
+    {
+     "script": "d3.py",
+     "line": 36,
+     "method": "matrix",
+     "text": "h=np.zeros((n,n))"
+    },
+    {
+     "script": "d3.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "pe=np.zeros((5,5)); ix={m:i for i,m in enumerate(range(-2,3))}"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Write d3 Hamiltonian in temp dir and test",
+   "command": "mkdir -p /tmp/w && cat > /tmp/w/d3.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (1,-1)]\nn=len(orbs)\nix={m:i for i,m in enumerate(range(-2,3))}\ndef ck(k,m,q,mp):\n    if -m+q+mp!=0: return 0.0\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    return (-1)**(l-m)*float(wigner_3j(l,k,l,-m,q,mp))*red\ndef angular(k,m1,m2,m3,m4):\n    return sum((-1)**q*ck(k,m1,q,m3)*ck(k,m2,-q,m4) for q in range(-k,k+1))\nV=np.zeros((n,n,n,n,5))\nfor i,(m1,s1) in enumerate(orbs):\n for j,(m2,s2) in enumerate(orbs):\n  for a,(m3,s3) in enumerate(orbs):\n   for b,(m4,s4) in enumerate(orbs):\n    if s1!=s3 or s2!=s4: continue\n    for k in (0,2,4):\n        V[i,j,a,b,k]=angular(k,m1,m2,m3,m4)\ndef apply_ops(ops,state):\n    # ops: list applied right-to-left: ops[-1] acts first; each (type,orb) type 'c' create,'a' annihilate\n    st=list(state); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return 0,None\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return 0,None\n            p=sum(1 for x in st if x<o); sign*=(-1)**p; st.insert(p,o)\n    return sign,tuple(st)\ndef build(N,Fk,dq):\n    basis=list(itertools.combinations(range(n),N)); idx={b:i for i,b in enumerate(basis)}\n    D=len(basis); H=np.zeros((D,D))\n    pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1\n    v=np.zeros(5); v[ix[2]]+=1; v[ix[-2]]+=1; pe+=np.outer(v,v)/2\n    one=dq*(-4*np.eye(5)+10*pe)\n    W=sum(Fk[k]*V[:,:,:,:,k] for k in (0,2,4))\n    for bi,b in enumerate(basis):\n        for i in range(n):\n            for j in range(n):\n                if orbs[i][1]!=orbs[j][1]: continue\n                h=one[ix[orbs[i][0]],ix[orbs[j][0]]]\n                if h==0: continue\n                s,t=apply_ops([('c',i),('a',j)],b)\n                if s: H[idx[t],bi]+=h*s\n        for i in range(n):\n          for j in range(n):\n            for a in range(n):\n              for c in range(n):\n                w=W[i,j,a,c]\n                if abs(w)<1e-14: continue\n                s,t=apply_ops([('c',i),('c',j),('a',c),('a',a)],b)\n                if s: H[idx[t],bi]+=0.5*w*s\n    return basis,H\nEOF\ncd /tmp/w && python3 -c \"\nimport d3,numpy as np\n# check: Dq=0, F4=0 etc; also Racah: 4F and 4P separation\nF={0:0,2:1.0,4:0.0}\nb,H=d3.build(3,F,0.0)\nprint(np.allclose(H,H.T))\n\"",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "2be82fd2d4f4c9c98ccc64881c7ea01514410eb14ca563ff0d50b229a41388c0",
+     "lines": 56,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (1,-1)]\nn=len(orbs)\nix={m:i for i,m in enumerate(range(-2,3))}\ndef ck(k,m,q,mp):\n    if -m+q+mp!=0: return 0.0\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    return (-1)**(l-m)*float(wigner_3j(l,k,l,-m,q,mp))*red\ndef angular(k,m1,m2,m3,m4):\n    return sum((-1)**q*ck(k,m1,q,m3)*ck(k,m2,-q,m4) for q in range(-k,k+1))\nV=np.zeros((n,n,n,n,5))\nfor i,(m1,s1) in enumerate(orbs):\n for j,(m2,s2) in enumerate(orbs):\n  for a,(m3,s3) in enumerate(orbs):\n   for b,(m4,s4) in enumerate(orbs):\n    if s1!=s3 or s2!=s4: continue\n    for k in (0,2,4):\n        V[i,j,a,b,k]=angular(k,m1,m2,m3,m4)\ndef apply_ops(ops,state):\n    # ops: list applied right-to-left: ops[-1] acts first; each (type,orb) type 'c' create,'a' annihilate\n    st=list(state); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return 0,None\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return 0,None\n            p=sum(1 for x in st if x<o); sign*=(-1)**p; st.insert(p,o)\n    return sign,tuple(st)\ndef build(N,Fk,dq):\n    basis=list(itertools.combinations(range(n),N)); idx={b:i for i,b in enumerate(basis)}\n    D=len(basis); H=np.zeros((D,D))\n    pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1\n    v=np.zeros(5); v[ix[2]]+=1; v[ix[-2]]+=1; pe+=np.outer(v,v)/2\n    one=dq*(-4*np.eye(5)+10*pe)\n    W=sum(Fk[k]*V[:,:,:,:,k] for k in (0,2,4))\n    for bi,b in enumerate(basis):\n        for i in range(n):\n            for j in range(n):\n                if orbs[i][1]!=orbs[j][1]: continue\n                h=one[ix[orbs[i][0]],ix[orbs[j][0]]]\n                if h==0: continue\n                s,t=apply_ops([('c',i),('a',j)],b)\n                if s: H[idx[t],bi]+=h*s\n        for i in range(n):\n          for j in range(n):\n            for a in range(n):\n              for c in range(n):\n                w=W[i,j,a,c]\n                if abs(w)<1e-14: continue\n                s,t=apply_ops([('c',i),('c',j),('a',c),('a',a)],b)\n                if s: H[idx[t],bi]+=0.5*w*s\n    return basis,H\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\n/bin/bash: line 123: cd: /tmp/w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d3.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "V=np.zeros((n,n,n,n,5))"
+    },
+    {
+     "script": "d3.py",
+     "line": 35,
+     "method": "matrix",
+     "text": "D=len(basis); H=np.zeros((D,D))"
+    },
+    {
+     "script": "d3.py",
+     "line": 36,
+     "method": "matrix",
+     "text": "pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find a writable directory",
+   "command": "cd ~ 2>/dev/null && pwd; touch ~/x 2>&1; echo $HOME; df -h /dev/shm 2>/dev/null | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch '/tmp/tsbench-home-xehwqch9/x': Read-only file system\n/tmp/tsbench-home-xehwqch9\ntmpfs            16G     0   16G   0% /dev/shm\nShell cwd was reset to /tmp/tsbench-run-md8x2fow",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Build d3 Hamiltonian and test symmetry",
+   "command": "mkdir -p /dev/shm/w && cd /dev/shm/w && cat > d3.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (1,-1)]\nn=len(orbs)\nix={m:i for i,m in enumerate(range(-2,3))}\ndef ck(k,m,q,mp):\n    if -m+q+mp!=0: return 0.0\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    return (-1)**(l-m)*float(wigner_3j(l,k,l,-m,q,mp))*red\ndef angular(k,m1,m2,m3,m4):\n    return sum((-1)**q*ck(k,m1,q,m3)*ck(k,m2,-q,m4) for q in range(-k,k+1))\nV=np.zeros((n,n,n,n,5))\nfor i,(m1,s1) in enumerate(orbs):\n for j,(m2,s2) in enumerate(orbs):\n  for a,(m3,s3) in enumerate(orbs):\n   for b,(m4,s4) in enumerate(orbs):\n    if s1!=s3 or s2!=s4: continue\n    for k in (0,2,4):\n        V[i,j,a,b,k]=angular(k,m1,m2,m3,m4)\ndef apply_ops(ops,state):\n    st=list(state); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return 0,None\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return 0,None\n            p=sum(1 for x in st if x<o); sign*=(-1)**p; st.insert(p,o)\n    return sign,tuple(st)\ndef build(N,Fk,dq):\n    basis=list(itertools.combinations(range(n),N)); idx={b:i for i,b in enumerate(basis)}\n    D=len(basis); H=np.zeros((D,D))\n    pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1\n    v=np.zeros(5); v[ix[2]]+=1; v[ix[-2]]+=1; pe+=np.outer(v,v)/2\n    one=dq*(-4*np.eye(5)+10*pe)\n    W=sum(Fk[k]*V[:,:,:,:,k] for k in (0,2,4))\n    for bi,b in enumerate(basis):\n        for i in range(n):\n            for j in range(n):\n                if orbs[i][1]!=orbs[j][1]: continue\n                h=one[ix[orbs[i][0]],ix[orbs[j][0]]]\n                if h==0: continue\n                s,t=apply_ops([('c',i),('a',j)],b)\n                if s: H[idx[t],bi]+=h*s\n        for i in range(n):\n          for j in range(n):\n            for a in range(n):\n              for c in range(n):\n                w=W[i,j,a,c]\n                if abs(w)<1e-14: continue\n                s,t=apply_ops([('c',i),('c',j),('a',c),('a',a)],b)\n                if s: H[idx[t],bi]+=0.5*w*s\n    return basis,H\nEOF\npython3 -c \"\nimport d3,numpy as np\nb,H=d3.build(3,{0:0,2:1.0,4:0.0},0.0)\nprint(np.allclose(H,H.T))\nprint(np.round(np.linalg.eigvalsh(H),4))\n\"",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "22b3904736dcbe350fd254b22d76d191a39512c4dd0907dfc5a2b8c1363c4be7",
+     "lines": 54,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (1,-1)]\nn=len(orbs)\nix={m:i for i,m in enumerate(range(-2,3))}\ndef ck(k,m,q,mp):\n    if -m+q+mp!=0: return 0.0\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    return (-1)**(l-m)*float(wigner_3j(l,k,l,-m,q,mp))*red\ndef angular(k,m1,m2,m3,m4):\n    return sum((-1)**q*ck(k,m1,q,m3)*ck(k,m2,-q,m4) for q in range(-k,k+1))\nV=np.zeros((n,n,n,n,5))\nfor i,(m1,s1) in enumerate(orbs):\n for j,(m2,s2) in enumerate(orbs):\n  for a,(m3,s3) in enumerate(orbs):\n   for b,(m4,s4) in enumerate(orbs):\n    if s1!=s3 or s2!=s4: continue\n    for k in (0,2,4):\n        V[i,j,a,b,k]=angular(k,m1,m2,m3,m4)\ndef apply_ops(ops,state):\n    st=list(state); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return 0,None\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return 0,None\n            p=sum(1 for x in st if x<o); sign*=(-1)**p; st.insert(p,o)\n    return sign,tuple(st)\ndef build(N,Fk,dq):\n    basis=list(itertools.combinations(range(n),N)); idx={b:i for i,b in enumerate(basis)}\n    D=len(basis); H=np.zeros((D,D))\n    pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1\n    v=np.zeros(5); v[ix[2]]+=1; v[ix[-2]]+=1; pe+=np.outer(v,v)/2\n    one=dq*(-4*np.eye(5)+10*pe)\n    W=sum(Fk[k]*V[:,:,:,:,k] for k in (0,2,4))\n    for bi,b in enumerate(basis):\n        for i in range(n):\n            for j in range(n):\n                if orbs[i][1]!=orbs[j][1]: continue\n                h=one[ix[orbs[i][0]],ix[orbs[j][0]]]\n                if h==0: continue\n                s,t=apply_ops([('c',i),('a',j)],b)\n                if s: H[idx[t],bi]+=h*s\n        for i in range(n):\n          for j in range(n):\n            for a in range(n):\n              for c in range(n):\n                w=W[i,j,a,c]\n                if abs(w)<1e-14: continue\n                s,t=apply_ops([('c',i),('c',j),('a',c),('a',a)],b)\n                if s: H[idx[t],bi]+=0.5*w*s\n    return basis,H\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "True\n[-0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061\n -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061\n -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061 -0.3061\n -0.3061 -0.2245 -0.2245 -0.2245 -0.2245 -0.2245 -0.2245 -0.2245 -0.2245\n -0.2245 -0.2245 -0.2245 -0.2245 -0.2245 -0.2245 -0.2245 -0.2245 -0.2245\n -0.2245 -0.1815 -0.1815 -0.1815 -0.1815 -0.1815 -0.1815 -0.1815 -0.1815\n -0.1815 -0.1815 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224\n -0.1224 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224\n -0.1224 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224 -0.1224\n -0.1224 -0.1224 -0.1224 -0.     -0.     -0.     -0.      0.      0.\n  0.      0.      0.      0.      0.      0.      0.1837  0.1837  0.1837\n  0.1837  0.1837  0.1837  0.1837  0.1837  0.1837  0.1837  0.1837  0.1837\n  0.1837  0.1837  0.3856  0.3856  0.3856  0.3856  0.3856  0.3856  0.3856\n  0.3856  0.3856  0.3856]\nShell cwd was reset to /tmp/tsbench-run-md8x2fow",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "V=np.zeros((n,n,n,n,5))"
+    },
+    {
+     "script": "d3.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "D=len(basis); H=np.zeros((D,D))"
+    },
+    {
+     "script": "d3.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Compute d3 level spectrum and check identification",
+   "command": "cd /dev/shm/w && cat > fit.py << 'EOF'\nimport numpy as np, d3\nfrom scipy.optimize import least_squares\ndef FkOf(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\ndef spectrum(Dq,B,C):\n    F=FkOf(B,C)\n    b,H=d3.build(3,F,Dq)\n    up=[i for i,s in enumerate(b) if all(o%2==0 for o in s)]  # all spin-up (even index)\n    Hq=H[np.ix_(up,up)]\n    eq=np.sort(np.linalg.eigvalsh(Hq))\n    # quartet levels (mult from M_S=3/2 block)\n    qlev=group(eq)\n    # M_S=1/2 sector: 2 up,1 down\n    half=[i for i,s in enumerate(b) if sum(1 for o in s if o%2==0)==2]\n    eh=np.sort(np.linalg.eigvalsh(H[np.ix_(half,half)]))\n    # remove quartet eigenvalues\n    rem=list(eh)\n    for e,m in qlev:\n        for _ in range(m):\n            j=int(np.argmin([abs(x-e) for x in rem])); rem.pop(j)\n    dlev=group(np.array(rem))\n    return qlev,dlev\ndef group(e,tol=1e-6):\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<tol: out[-1][1]+=1\n        else: out.append([x,1])\n    return out\nif __name__==\"__main__\":\n    q,d=spectrum(0.0,1000.0,4000.0)\n    print(\"quartets\",[(round(e,1),m) for e,m in q])\n    print(\"doublets\",[(round(e,1),m) for e,m in d])\nEOF\npython3 fit.py",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "ec3bbdf3e50d52cac177002e3c7bf136ba01a3437327f7b107ad1d5b6f3f7cc1",
+     "lines": 33,
+     "code": "import numpy as np, d3\nfrom scipy.optimize import least_squares\ndef FkOf(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\ndef spectrum(Dq,B,C):\n    F=FkOf(B,C)\n    b,H=d3.build(3,F,Dq)\n    up=[i for i,s in enumerate(b) if all(o%2==0 for o in s)]  # all spin-up (even index)\n    Hq=H[np.ix_(up,up)]\n    eq=np.sort(np.linalg.eigvalsh(Hq))\n    # quartet levels (mult from M_S=3/2 block)\n    qlev=group(eq)\n    # M_S=1/2 sector: 2 up,1 down\n    half=[i for i,s in enumerate(b) if sum(1 for o in s if o%2==0)==2]\n    eh=np.sort(np.linalg.eigvalsh(H[np.ix_(half,half)]))\n    # remove quartet eigenvalues\n    rem=list(eh)\n    for e,m in qlev:\n        for _ in range(m):\n            j=int(np.argmin([abs(x-e) for x in rem])); rem.pop(j)\n    dlev=group(np.array(rem))\n    return qlev,dlev\ndef group(e,tol=1e-6):\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<tol: out[-1][1]+=1\n        else: out.append([x,1])\n    return out\nif __name__==\"__main__\":\n    q,d=spectrum(0.0,1000.0,4000.0)\n    print(\"quartets\",[(round(e,1),m) for e,m in q])\n    print(\"doublets\",[(round(e,1),m) for e,m in d])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 36: cd: /dev/shm/w: No such file or directory\npython3: can't open file '/tmp/tsbench-run-md8x2fow/fit.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit.py",
+     "line": 11,
+     "method": "eigen_solver",
+     "text": "eq=np.sort(np.linalg.eigvalsh(Hq))"
+    },
+    {
+     "script": "fit.py",
+     "line": 16,
+     "method": "eigen_solver",
+     "text": "eh=np.sort(np.linalg.eigvalsh(H[np.ix_(half,half)]))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Check whether scratch directory persists",
+   "command": "ls -la /dev/shm/ 2>&1 | head; ls /dev/shm/w 2>&1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\ntotal 0\ndrwxr-xr-x 2 <USER> <USER>  40 Nov  4 01:03 .\ndrwxr-xr-x 4 <USER> <USER> 320 Nov  4 01:03 ..\nls: cannot access '/dev/shm/w': No such file or directory",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Build d3 spectrum and check level identification",
+   "command": "mkdir -p /dev/shm/w && cd /dev/shm/w && cat > d3.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (1,-1)]\nn=len(orbs)\nix={m:i for i,m in enumerate(range(-2,3))}\ndef ck(k,m,q,mp):\n    if -m+q+mp!=0: return 0.0\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    return (-1)**(l-m)*float(wigner_3j(l,k,l,-m,q,mp))*red\ndef angular(k,m1,m2,m3,m4):\n    return sum((-1)**q*ck(k,m1,q,m3)*ck(k,m2,-q,m4) for q in range(-k,k+1))\nV=np.zeros((n,n,n,n,5))\nfor i,(m1,s1) in enumerate(orbs):\n for j,(m2,s2) in enumerate(orbs):\n  for a,(m3,s3) in enumerate(orbs):\n   for b,(m4,s4) in enumerate(orbs):\n    if s1!=s3 or s2!=s4: continue\n    for k in (0,2,4):\n        V[i,j,a,b,k]=angular(k,m1,m2,m3,m4)\ndef apply_ops(ops,state):\n    st=list(state); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return 0,None\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return 0,None\n            p=sum(1 for x in st if x<o); sign*=(-1)**p; st.insert(p,o)\n    return sign,tuple(st)\ndef build(N,Fk,dq):\n    basis=list(itertools.combinations(range(n),N)); idx={b:i for i,b in enumerate(basis)}\n    D=len(basis); H=np.zeros((D,D))\n    pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1\n    v=np.zeros(5); v[ix[2]]+=1; v[ix[-2]]+=1; pe+=np.outer(v,v)/2\n    one=dq*(-4*np.eye(5)+10*pe)\n    W=sum(Fk[k]*V[:,:,:,:,k] for k in (0,2,4))\n    for bi,b in enumerate(basis):\n        for i in range(n):\n            for j in range(n):\n                if orbs[i][1]!=orbs[j][1]: continue\n                h=one[ix[orbs[i][0]],ix[orbs[j][0]]]\n                if h==0: continue\n                s,t=apply_ops([('c',i),('a',j)],b)\n                if s: H[idx[t],bi]+=h*s\n        for i in range(n):\n          for j in range(n):\n            for a in range(n):\n              for c in range(n):\n                w=W[i,j,a,c]\n                if abs(w)<1e-14: continue\n                s,t=apply_ops([('c',i),('c',j),('a',c),('a',a)],b)\n                if s: H[idx[t],bi]+=0.5*w*s\n    return basis,H\nEOF\ncat > fit.py << 'EOF'\nimport numpy as np, d3\nfrom scipy.optimize import least_squares\ndef FkOf(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\ndef group(e,tol=1e-5):\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<tol: out[-1][1]+=1\n        else: out.append([x,1])\n    return out\ndef spectrum(Dq,B,C):\n    b,H=d3.build(3,FkOf(B,C),Dq)\n    up=[i for i,s in enumerate(b) if all(o%2==0 for o in s)]\n    qlev=group(np.sort(np.linalg.eigvalsh(H[np.ix_(up,up)])))\n    half=[i for i,s in enumerate(b) if sum(1 for o in s if o%2==0)==2]\n    rem=list(np.sort(np.linalg.eigvalsh(H[np.ix_(half,half)])))\n    for e,m in qlev:\n        for _ in range(m):\n            j=int(np.argmin([abs(x-e) for x in rem])); rem.pop(j)\n    return qlev,group(np.array(rem))\nif __name__==\"__main__\":\n    q,d=spectrum(0.0,1000.0,4000.0)\n    print(\"quartets\",[(round(e,2),m) for e,m in q])\n    print(\"doublets\",[(round(e,2),m) for e,m in d])\nEOF\npython3 fit.py",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "22b3904736dcbe350fd254b22d76d191a39512c4dd0907dfc5a2b8c1363c4be7",
+     "lines": 54,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (1,-1)]\nn=len(orbs)\nix={m:i for i,m in enumerate(range(-2,3))}\ndef ck(k,m,q,mp):\n    if -m+q+mp!=0: return 0.0\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    return (-1)**(l-m)*float(wigner_3j(l,k,l,-m,q,mp))*red\ndef angular(k,m1,m2,m3,m4):\n    return sum((-1)**q*ck(k,m1,q,m3)*ck(k,m2,-q,m4) for q in range(-k,k+1))\nV=np.zeros((n,n,n,n,5))\nfor i,(m1,s1) in enumerate(orbs):\n for j,(m2,s2) in enumerate(orbs):\n  for a,(m3,s3) in enumerate(orbs):\n   for b,(m4,s4) in enumerate(orbs):\n    if s1!=s3 or s2!=s4: continue\n    for k in (0,2,4):\n        V[i,j,a,b,k]=angular(k,m1,m2,m3,m4)\ndef apply_ops(ops,state):\n    st=list(state); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return 0,None\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return 0,None\n            p=sum(1 for x in st if x<o); sign*=(-1)**p; st.insert(p,o)\n    return sign,tuple(st)\ndef build(N,Fk,dq):\n    basis=list(itertools.combinations(range(n),N)); idx={b:i for i,b in enumerate(basis)}\n    D=len(basis); H=np.zeros((D,D))\n    pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1\n    v=np.zeros(5); v[ix[2]]+=1; v[ix[-2]]+=1; pe+=np.outer(v,v)/2\n    one=dq*(-4*np.eye(5)+10*pe)\n    W=sum(Fk[k]*V[:,:,:,:,k] for k in (0,2,4))\n    for bi,b in enumerate(basis):\n        for i in range(n):\n            for j in range(n):\n                if orbs[i][1]!=orbs[j][1]: continue\n                h=one[ix[orbs[i][0]],ix[orbs[j][0]]]\n                if h==0: continue\n                s,t=apply_ops([('c',i),('a',j)],b)\n                if s: H[idx[t],bi]+=h*s\n        for i in range(n):\n          for j in range(n):\n            for a in range(n):\n              for c in range(n):\n                w=W[i,j,a,c]\n                if abs(w)<1e-14: continue\n                s,t=apply_ops([('c',i),('c',j),('a',c),('a',a)],b)\n                if s: H[idx[t],bi]+=0.5*w*s\n    return basis,H\n"
+    },
+    {
+     "name": "fit.py",
+     "sha256": "076af8b6145594020a0cee3da877c5c27a584a572b750e5257bfb1fd27942be9",
+     "lines": 25,
+     "code": "import numpy as np, d3\nfrom scipy.optimize import least_squares\ndef FkOf(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\ndef group(e,tol=1e-5):\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<tol: out[-1][1]+=1\n        else: out.append([x,1])\n    return out\ndef spectrum(Dq,B,C):\n    b,H=d3.build(3,FkOf(B,C),Dq)\n    up=[i for i,s in enumerate(b) if all(o%2==0 for o in s)]\n    qlev=group(np.sort(np.linalg.eigvalsh(H[np.ix_(up,up)])))\n    half=[i for i,s in enumerate(b) if sum(1 for o in s if o%2==0)==2]\n    rem=list(np.sort(np.linalg.eigvalsh(H[np.ix_(half,half)])))\n    for e,m in qlev:\n        for _ in range(m):\n            j=int(np.argmin([abs(x-e) for x in rem])); rem.pop(j)\n    return qlev,group(np.array(rem))\nif __name__==\"__main__\":\n    q,d=spectrum(0.0,1000.0,4000.0)\n    print(\"quartets\",[(round(e,2),m) for e,m in q])\n    print(\"doublets\",[(round(e,2),m) for e,m in d])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "quartets [(np.float64(-31800.0), 7), (np.float64(-16800.0), 3)]\ndoublets [(np.float64(-15800.0), 9), (np.float64(-10800.0), 14), (np.float64(-8800.0), 5), (np.float64(4200.0), 7), (np.float64(25200.0), 5)]\nShell cwd was reset to /tmp/tsbench-run-md8x2fow",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "V=np.zeros((n,n,n,n,5))"
+    },
+    {
+     "script": "d3.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "D=len(basis); H=np.zeros((D,D))"
+    },
+    {
+     "script": "d3.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1"
+    },
+    {
+     "script": "fit.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit.py",
+     "line": 15,
+     "method": "eigen_solver",
+     "text": "qlev=group(np.sort(np.linalg.eigvalsh(H[np.ix_(up,up)])))"
+    },
+    {
+     "script": "fit.py",
+     "line": 17,
+     "method": "eigen_solver",
+     "text": "rem=list(np.sort(np.linalg.eigvalsh(H[np.ix_(half,half)])))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Fit Dq, B, C to the three band energies",
+   "command": "cd /dev/shm/w && cat > solve.py << 'EOF'\nimport numpy as np\nfrom scipy.optimize import least_squares\nfrom fit import spectrum\ndef ident(Dq,B,C):\n    q,d=spectrum(Dq,B,C)\n    A2=q[0][0]\n    t=[e for e,m in q[1:] if m==3]\n    T2,T1F=t[0],t[1]\n    E2=[e for e,m in d if m==2]\n    E2e=min(E2,key=lambda e:abs(e-(A2+14300)))\n    return T2-A2,T1F-A2,E2e-A2\ndef res(p):\n    Dq,B,C=p\n    a,b,c=ident(Dq,B,C)\n    return [a-17500,b-23800,c-14300]\nsol=least_squares(res,[1750,700,3000],x_scale=[1000,500,2000])\nprint(sol.x, sol.fun)\nprint(\"pred\", ident(*sol.x))\nEOF\npython3 solve.py",
+   "scripts": [
+    {
+     "name": "solve.py",
+     "sha256": "20f31c78c021093cd3cfc5c531a1d94b96021c3e56ae01e8a6914c213f3f3d85",
+     "lines": 18,
+     "code": "import numpy as np\nfrom scipy.optimize import least_squares\nfrom fit import spectrum\ndef ident(Dq,B,C):\n    q,d=spectrum(Dq,B,C)\n    A2=q[0][0]\n    t=[e for e,m in q[1:] if m==3]\n    T2,T1F=t[0],t[1]\n    E2=[e for e,m in d if m==2]\n    E2e=min(E2,key=lambda e:abs(e-(A2+14300)))\n    return T2-A2,T1F-A2,E2e-A2\ndef res(p):\n    Dq,B,C=p\n    a,b,c=ident(Dq,B,C)\n    return [a-17500,b-23800,c-14300]\nsol=least_squares(res,[1750,700,3000],x_scale=[1000,500,2000])\nprint(sol.x, sol.fun)\nprint(\"pred\", ident(*sol.x))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "solve.py",
+     "written_in_step": 8
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 21: cd: /dev/shm/w: No such file or directory\npython3: can't open file '/tmp/tsbench-run-md8x2fow/solve.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "solve.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "solve.py",
+     "line": 16,
+     "method": "least_squares",
+     "text": "sol=least_squares(res,[1750,700,3000],x_scale=[1000,500,2000])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Fit Dq, B, C to the three band energies",
+   "command": "mkdir -p /dev/shm/w && cd /dev/shm/w && cat > d3.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (1,-1)]\nn=len(orbs)\nix={m:i for i,m in enumerate(range(-2,3))}\ndef ck(k,m,q,mp):\n    if -m+q+mp!=0: return 0.0\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    return (-1)**(l-m)*float(wigner_3j(l,k,l,-m,q,mp))*red\ndef angular(k,m1,m2,m3,m4):\n    return sum((-1)**q*ck(k,m1,q,m3)*ck(k,m2,-q,m4) for q in range(-k,k+1))\nV=np.zeros((n,n,n,n,5))\nfor i,(m1,s1) in enumerate(orbs):\n for j,(m2,s2) in enumerate(orbs):\n  for a,(m3,s3) in enumerate(orbs):\n   for b,(m4,s4) in enumerate(orbs):\n    if s1!=s3 or s2!=s4: continue\n    for k in (0,2,4):\n        V[i,j,a,b,k]=angular(k,m1,m2,m3,m4)\ndef apply_ops(ops,state):\n    st=list(state); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return 0,None\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return 0,None\n            p=sum(1 for x in st if x<o); sign*=(-1)**p; st.insert(p,o)\n    return sign,tuple(st)\ndef build(N,Fk,dq):\n    basis=list(itertools.combinations(range(n),N)); idx={b:i for i,b in enumerate(basis)}\n    D=len(basis); H=np.zeros((D,D))\n    pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1\n    v=np.zeros(5); v[ix[2]]+=1; v[ix[-2]]+=1; pe+=np.outer(v,v)/2\n    one=dq*(-4*np.eye(5)+10*pe)\n    W=sum(Fk[k]*V[:,:,:,:,k] for k in (0,2,4))\n    for bi,b in enumerate(basis):\n        for i in range(n):\n            for j in range(n):\n                if orbs[i][1]!=orbs[j][1]: continue\n                h=one[ix[orbs[i][0]],ix[orbs[j][0]]]\n                if h==0: continue\n                s,t=apply_ops([('c',i),('a',j)],b)\n                if s: H[idx[t],bi]+=h*s\n        for i in range(n):\n          for j in range(n):\n            for a in range(n):\n              for c in range(n):\n                w=W[i,j,a,c]\n                if abs(w)<1e-14: continue\n                s,t=apply_ops([('c',i),('c',j),('a',c),('a',a)],b)\n                if s: H[idx[t],bi]+=0.5*w*s\n    return basis,H\nEOF\ncat > fit.py << 'EOF'\nimport numpy as np, d3\ndef FkOf(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\ndef group(e,tol=1e-5):\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<tol: out[-1][1]+=1\n        else: out.append([x,1])\n    return out\ndef spectrum(Dq,B,C):\n    b,H=d3.build(3,FkOf(B,C),Dq)\n    up=[i for i,s in enumerate(b) if all(o%2==0 for o in s)]\n    qlev=group(np.sort(np.linalg.eigvalsh(H[np.ix_(up,up)])))\n    half=[i for i,s in enumerate(b) if sum(1 for o in s if o%2==0)==2]\n    rem=list(np.sort(np.linalg.eigvalsh(H[np.ix_(half,half)])))\n    for e,m in qlev:\n        for _ in range(m):\n            j=int(np.argmin([abs(x-e) for x in rem])); rem.pop(j)\n    return qlev,group(np.array(rem))\nEOF\ncat > solve.py << 'EOF'\nimport numpy as np\nfrom scipy.optimize import least_squares\nfrom fit import spectrum\ndef ident(Dq,B,C):\n    q,d=spectrum(Dq,B,C)\n    A2=q[0][0]\n    t=[e for e,m in q[1:] if m==3]\n    T2,T1F=t[0],t[1]\n    E2=[e for e,m in d if m==2]\n    E2e=min(E2,key=lambda e:abs(e-(A2+14300)))\n    return T2-A2,T1F-A2,E2e-A2\ndef res(p):\n    a,b,c=ident(*p)\n    return [a-17500,b-23800,c-14300]\nsol=least_squares(res,[1750,700,3000],x_scale=[1000,500,2000],diff_step=1e-3)\nprint(sol.x, sol.fun)\nprint(\"pred\", ident(*sol.x))\nprint(\"spectrum\", spectrum(*sol.x))\nEOF\npython3 solve.py",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "22b3904736dcbe350fd254b22d76d191a39512c4dd0907dfc5a2b8c1363c4be7",
+     "lines": 54,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (1,-1)]\nn=len(orbs)\nix={m:i for i,m in enumerate(range(-2,3))}\ndef ck(k,m,q,mp):\n    if -m+q+mp!=0: return 0.0\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    return (-1)**(l-m)*float(wigner_3j(l,k,l,-m,q,mp))*red\ndef angular(k,m1,m2,m3,m4):\n    return sum((-1)**q*ck(k,m1,q,m3)*ck(k,m2,-q,m4) for q in range(-k,k+1))\nV=np.zeros((n,n,n,n,5))\nfor i,(m1,s1) in enumerate(orbs):\n for j,(m2,s2) in enumerate(orbs):\n  for a,(m3,s3) in enumerate(orbs):\n   for b,(m4,s4) in enumerate(orbs):\n    if s1!=s3 or s2!=s4: continue\n    for k in (0,2,4):\n        V[i,j,a,b,k]=angular(k,m1,m2,m3,m4)\ndef apply_ops(ops,state):\n    st=list(state); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return 0,None\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return 0,None\n            p=sum(1 for x in st if x<o); sign*=(-1)**p; st.insert(p,o)\n    return sign,tuple(st)\ndef build(N,Fk,dq):\n    basis=list(itertools.combinations(range(n),N)); idx={b:i for i,b in enumerate(basis)}\n    D=len(basis); H=np.zeros((D,D))\n    pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1\n    v=np.zeros(5); v[ix[2]]+=1; v[ix[-2]]+=1; pe+=np.outer(v,v)/2\n    one=dq*(-4*np.eye(5)+10*pe)\n    W=sum(Fk[k]*V[:,:,:,:,k] for k in (0,2,4))\n    for bi,b in enumerate(basis):\n        for i in range(n):\n            for j in range(n):\n                if orbs[i][1]!=orbs[j][1]: continue\n                h=one[ix[orbs[i][0]],ix[orbs[j][0]]]\n                if h==0: continue\n                s,t=apply_ops([('c',i),('a',j)],b)\n                if s: H[idx[t],bi]+=h*s\n        for i in range(n):\n          for j in range(n):\n            for a in range(n):\n              for c in range(n):\n                w=W[i,j,a,c]\n                if abs(w)<1e-14: continue\n                s,t=apply_ops([('c',i),('c',j),('a',c),('a',a)],b)\n                if s: H[idx[t],bi]+=0.5*w*s\n    return basis,H\n"
+    },
+    {
+     "name": "fit.py",
+     "sha256": "a861ead2cdbf9dd5b584f7fc5916bd9e0255a72c1e1cda7e52cdf65ca6ba95a7",
+     "lines": 20,
+     "code": "import numpy as np, d3\ndef FkOf(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\ndef group(e,tol=1e-5):\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<tol: out[-1][1]+=1\n        else: out.append([x,1])\n    return out\ndef spectrum(Dq,B,C):\n    b,H=d3.build(3,FkOf(B,C),Dq)\n    up=[i for i,s in enumerate(b) if all(o%2==0 for o in s)]\n    qlev=group(np.sort(np.linalg.eigvalsh(H[np.ix_(up,up)])))\n    half=[i for i,s in enumerate(b) if sum(1 for o in s if o%2==0)==2]\n    rem=list(np.sort(np.linalg.eigvalsh(H[np.ix_(half,half)])))\n    for e,m in qlev:\n        for _ in range(m):\n            j=int(np.argmin([abs(x-e) for x in rem])); rem.pop(j)\n    return qlev,group(np.array(rem))\n"
+    },
+    {
+     "name": "solve.py",
+     "sha256": "14918dc27fbed0a626727800a3f5e15cfe7f8d10f9e37851e7a33cfcfcd7e6df",
+     "lines": 18,
+     "code": "import numpy as np\nfrom scipy.optimize import least_squares\nfrom fit import spectrum\ndef ident(Dq,B,C):\n    q,d=spectrum(Dq,B,C)\n    A2=q[0][0]\n    t=[e for e,m in q[1:] if m==3]\n    T2,T1F=t[0],t[1]\n    E2=[e for e,m in d if m==2]\n    E2e=min(E2,key=lambda e:abs(e-(A2+14300)))\n    return T2-A2,T1F-A2,E2e-A2\ndef res(p):\n    a,b,c=ident(*p)\n    return [a-17500,b-23800,c-14300]\nsol=least_squares(res,[1750,700,3000],x_scale=[1000,500,2000],diff_step=1e-3)\nprint(sol.x, sol.fun)\nprint(\"pred\", ident(*sol.x))\nprint(\"spectrum\", spectrum(*sol.x))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "solve.py",
+     "written_in_step": 9
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[1750.          610.90909091 3235.31515317] [-7.27595761e-12 -5.33327693e-09 -1.28420652e-09]\npred (np.float64(17499.999999999993), np.float64(23799.999999994667), np.float64(14299.999999998716))\nspectrum ([[np.float64(-43751.96000693302), 1], [np.float64(-26251.960006933026), 3], [np.float64(-19951.960006938352), 3], [np.float64(-5888.323643301077), 3]], [[np.float64(-29451.960006934303), 2], [np.float64(-28950.647049043288), 3], [np.float64(-22152.521050990712), 3], [np.float64(-14102.378183794677), 1], [np.float64(-12113.951908099463), 3], [np.float64(-11805.086847832927), 3], [np.float64(-10130.588646804163), 2], [np.float64(-7403.083873562602), 3], [np.float64(-3191.777486805165), 3], [np.float64(-1884.196365625825), 1], [np.float64(5324.234717347282), 3], [np.float64(6815.302384370214), 3], [np.float64(6947.867623539192), 2], [np.float64(11204.510315913469), 3], [np.float64(25394.1359370056), 3], [np.float64(29270.065271305586), 2]])\nShell cwd was reset to /tmp/tsbench-run-md8x2fow",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "V=np.zeros((n,n,n,n,5))"
+    },
+    {
+     "script": "d3.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "D=len(basis); H=np.zeros((D,D))"
+    },
+    {
+     "script": "d3.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "pe=np.zeros((5,5)); pe[ix[0],ix[0]]=1"
+    },
+    {
+     "script": "fit.py",
+     "line": 14,
+     "method": "eigen_solver",
+     "text": "qlev=group(np.sort(np.linalg.eigvalsh(H[np.ix_(up,up)])))"
+    },
+    {
+     "script": "fit.py",
+     "line": 16,
+     "method": "eigen_solver",
+     "text": "rem=list(np.sort(np.linalg.eigvalsh(H[np.ix_(half,half)])))"
+    },
+    {
+     "script": "solve.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "solve.py",
+     "line": 15,
+     "method": "least_squares",
+     "text": "sol=least_squares(res,[1750,700,3000],x_scale=[1000,500,2000],diff_step=1e-3)"
+    }
+   ],
+   "produces": [
+    "B",
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1750.0,
+   "weak": false,
+   "steps": [
+    9
+   ],
+   "typed_in_steps": [
+    9
+   ],
+   "source_step": null
+  },
+  {
+   "path": "B",
+   "value": 611.0,
+   "weak": false,
+   "steps": [
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "C",
+   "value": 3235.0,
+   "weak": false,
+   "steps": [
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  }
+ ],
+ "summary": {
+  "n_steps": 10,
+  "n_scripts": 10,
+  "n_failed_steps": 5,
+  "n_values": 3,
+  "n_linked": 2,
+  "n_weak": 0,
+  "source_steps": [
+   9
+  ],
+  "methods": [
+   "least_squares",
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

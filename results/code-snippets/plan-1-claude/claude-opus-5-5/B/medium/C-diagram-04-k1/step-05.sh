@@ -1,0 +1,1 @@
+sed -i 's/+=0.5\*v\*s1/+=0.25*v*s1/' ts.py && MPLCONFIGDIR=. python ts.py 2>/dev/null; sha256sum diagram.png

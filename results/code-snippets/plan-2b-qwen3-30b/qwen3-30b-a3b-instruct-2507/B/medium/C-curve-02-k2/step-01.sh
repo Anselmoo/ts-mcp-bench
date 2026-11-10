@@ -1,0 +1,1 @@
+echo 'Calculating ligand-field energies for octahedral d3 ion with B=722 cm⁻¹, C=3003 cm⁻¹ at Dq/B = 1.00, 2.20, 3.50...'

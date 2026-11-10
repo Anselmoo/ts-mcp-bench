@@ -1,0 +1,1 @@
+W=<SANDBOX_TMP>; sed -i "s/('2','T1'):\['G','H','P','F'\]/('2','T1'):['G','H','H','P','F']/" $W/oh.py && python3 $W/oh.py

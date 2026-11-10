@@ -1,0 +1,1 @@
+mkdir -p /tmp/w 2>/dev/null || mkdir -p ~/w; cd ~ ; pwd; ls -ld ~ /tmp 2>&1 | head

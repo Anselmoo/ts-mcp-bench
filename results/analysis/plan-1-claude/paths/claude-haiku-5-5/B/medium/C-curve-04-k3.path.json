@@ -1,0 +1,1116 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-curve-04-k3.jsonl",
+ "transcript_sha256": "15b58e3eb2e125415a5716e6792b89db58f59a38912906dc086c41ec91674d83",
+ "answer": {
+  "points": [
+   {
+    "dq_over_b": 1.45,
+    "term": "4T1",
+    "e_over_b": 20.46
+   },
+   {
+    "dq_over_b": 1.45,
+    "term": "2T2",
+    "e_over_b": 25.0
+   },
+   {
+    "dq_over_b": 1.45,
+    "term": "4T2",
+    "e_over_b": 26.25
+   },
+   {
+    "dq_over_b": 2.55,
+    "term": "2T2",
+    "e_over_b": 4.11
+   },
+   {
+    "dq_over_b": 2.55,
+    "term": "4T1",
+    "e_over_b": 9.8
+   },
+   {
+    "dq_over_b": 2.55,
+    "term": "4T2",
+    "e_over_b": 16.78
+   },
+   {
+    "dq_over_b": 3.25,
+    "term": "6A1",
+    "e_over_b": 9.45
+   },
+   {
+    "dq_over_b": 3.25,
+    "term": "4T1",
+    "e_over_b": 12.37
+   },
+   {
+    "dq_over_b": 3.25,
+    "term": "4T2",
+    "e_over_b": 19.64
+   }
+  ],
+  "reason": "I diagonalised the full 252-determinant d5 Hamiltonian (cubic field plus Coulomb repulsion with F2 = 49B+7C and F4 = 441C/35, C/B = 4.34), split the levels by total spin and octahedral irrep, and measured each term from the lowest level; at Dq/B = 1.45 and 2.55 the ground is 6A1, while at Dq/B = 3.25 the 2T2 doublet has dropped below 6A1 and is the ground, so the 6A1 entry there is measured from 2T2."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d5.py\nimport numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\n\n# ---------- angular grid on unit sphere ----------\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\n\n# real d orbitals (unnormalised), basis order: xy,yz,zx,x2-y2,3z2-r2\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF = forb(P)\nnorm = np.sqrt(np.einsum('k,ki->i', W, F**2))\nF = F/norm\n# cubic-field one-electron diagonal: t2g (0,1,2) -4Dq ; eg (3,4) +6Dq (in units of Dq)\nh1 = np.diag([-4,-4,-4,6,6]).astype(float)\n\n# ---------- group O (rotations) ----------\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)  # (x,y,z)->(z,x,y)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nG = list(G.values())\nassert len(G)==24, len(G)\n\ndef U5(R):\n    Fp = forb(P@R)   # f_i(R p)\n    # Fp = F @ Ut  -> solve\n    Ut,_,_,_ = np.linalg.lstsq(F*np.sqrt(W)[:,None], Fp*np.sqrt(W)[:,None], rcond=None)\n    return Ut  # Fp[:,i] = sum_j F[:,j] Ut[j,i]\nUs = [U5(R) for R in G]\nfor U in Us: assert np.allclose(U.T@U, np.eye(5), atol=1e-8)\n\ndef char_class(R):\n    tr = np.trace(R)\n    if np.isclose(tr,3): return 'E'\n    if np.isclose(tr,0): return 'C3'\n    if np.isclose(tr,-1):\n        ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))])\n        ax=ax/np.max(abs(ax))\n        return 'C2' if np.sum(np.isclose(abs(ax),0,atol=1e-6))==2 else \"C2'\"\n    if np.isclose(tr,1): return 'C4'\nclasses=[char_class(R) for R in G]\nirreps = {\n 'A1':{'E':1,'C3':1,'C2':1,'C4':1,\"C2'\":1},\n 'A2':{'E':1,'C3':1,'C2':1,'C4':-1,\"C2'\":-1},\n 'E': {'E':2,'C3':-1,'C2':2,'C4':0,\"C2'\":0},\n 'T1':{'E':3,'C3':0,'C2':-1,'C4':1,\"C2'\":-1},\n 'T2':{'E':3,'C3':0,'C2':-1,'C4':-1,\"C2'\":1}}\n\n# ---------- Fock space ----------\nN=5; NS=10\nstates=[sum(1<<i for i in c) for c in itertools.combinations(range(NS),N)]\nidx={s:i for i,s in enumerate(states)}\nD=len(states)\ndef sgn(state,i): return (-1)**bin(state & ((1<<i)-1)).count('1')\ndef ann(i,s):\n    if not (s>>i)&1: return None\n    return sgn(s,i), s ^ (1<<i)\ndef cre(i,s):\n    if (s>>i)&1: return None\n    return sgn(s,i), s | (1<<i)\n\ndef onebody(h):\n    M=np.zeros((D,D))\n    for s in states:\n        for a in range(NS):\n            for b in range(NS):\n                if h[a,b]==0: continue\n                r=ann(b,s)\n                if r is None: continue\n                s1,s1s=r\n                r2=cre(a,s1s)\n                if r2 is None: continue\n                s2,s2s=r2\n                M[idx[s2s],idx[s]] += h[a,b]*s1*s2\n    return M\n\n# spin-orbital index: orbital i, spin sigma -> 2i+sigma (sigma 0 up,1 down)\nh_so=np.zeros((NS,NS))\nfor i in range(5):\n    for sg in range(2):\n        h_so[2*i+sg,2*i+sg]=h1[i,i]\nHh = None\n\n# two-electron integrals in orbital basis: a_k[(a,c),(b,d)] = int int phi_a(1)phi_c(1) P_k(1.2) phi_b(2)phi_d(2)\nK = {}\ncosg = P@P.T\nfor k in (2,4):\n    Kk = eval_legendre(k,cosg)\n    K[k]=Kk\nWsq=W\ng = {}\nak={}\nfor k in (2,4):\n    A=np.zeros((5,5,5,5))\n    for a in range(5):\n        for c in range(5):\n            v1 = F[:,a]*F[:,c]*W\n            for b in range(5):\n                for d in range(5):\n                    v2 = F[:,b]*F[:,d]\n                    A[a,c,b,d]= v1@K[k]@v2\n    ak[k]=A\n# F0 term ignored (constant). Slater: F2, F4 from Racah B, C (units of B)\nBv=1.0; Cv=3473/800\nF4=441*Cv/35*Bv; F2=(441*Bv+5*F4)/9\nprint(\"F2,F4 (B units):\",F2,F4)\nFk={2:F2,4:F4}\n# Two-body operator: 1/2 sum V_{ab,cd} c+_a c+_b c_d c_c with V=<ab|cd>, spins: a~c, b~d\nVso = np.zeros((NS,NS,NS,NS))\nfor a in range(NS):\n    for b in range(NS):\n        for c in range(NS):\n            for d in range(NS):\n                if (a%2)!=(c%2) or (b%2)!=(d%2): continue\n                oa,ob,oc,od=a//2,b//2,c//2,d//2\n                Vso[a,b,c,d]=sum(Fk[k]*ak[k][oa,oc,ob,od] for k in (2,4))\nH2=np.zeros((D,D))\nfor s in states:\n    for a in range(NS):\n        for b in range(NS):\n            for c in range(NS):\n                for d in range(NS):\n                    v=Vso[a,b,c,d]\n                    if v==0: continue\n                    r=ann(c,s)\n                    if r is None: continue\n                    s1,s1s=r\n                    r=ann(d,s1s)\n                    if r is None: continue\n                    s2,s2s=r\n                    r=cre(b,s2s)\n                    if r is None: continue\n                    s3,s3s=r\n                    r=cre(a,s3s)\n                    if r is None: continue\n                    s4,s4s=r\n                    H2[idx[s4s],idx[s]] += 0.5*v*s1*s2*s3*s4\n# spin operators\nSp=np.zeros((NS,NS))\nfor i in range(5): Sp[2*i,2*i+1]=1\nSpop=onebody(Sp)\nSmop=Spop.T\nSz=np.zeros((NS,NS))\nfor i in range(5): Sz[2*i,2*i]=0.5; Sz[2*i+1,2*i+1]=-0.5\nSzop=onebody(Sz)\nS2=Smop@Spop+Szop@Szop+Szop\n# Fock representation of group elements\ndef fock(U):\n    M=np.kron(U,np.eye(2))\n    Out=np.zeros((D,D))\n    for s in states:\n        occ=[i for i in range(NS) if (s>>i)&1]\n        for T in states:\n            tocc=[i for i in range(NS) if (T>>i)&1]\n            Out[idx[T],idx[s]] = np.linalg.det(M[np.ix_(tocc,occ)])\n    return Out\nHdq = None\ndef run(Dq):\n    H = Dq*onebody(h_so/1.0) if False else None\n    H = onebody(np.diag([0]*NS).astype(float))  # placeholder\n    H = np.zeros((D,D))\n    hd = np.zeros((NS,NS))\n    for i in range(5):\n        for sg in range(2): hd[2*i+sg,2*i+sg]=h1[i,i]*Dq\n    H = onebody(hd) + H2\n    return H\nEOF\necho ok",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "be83e7f3c00ebfe88b78b6ff4571346b460d04191365eca8011c1757f3601029",
+     "lines": 185,
+     "code": "import numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\n\n# ---------- angular grid on unit sphere ----------\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\n\n# real d orbitals (unnormalised), basis order: xy,yz,zx,x2-y2,3z2-r2\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF = forb(P)\nnorm = np.sqrt(np.einsum('k,ki->i', W, F**2))\nF = F/norm\n# cubic-field one-electron diagonal: t2g (0,1,2) -4Dq ; eg (3,4) +6Dq (in units of Dq)\nh1 = np.diag([-4,-4,-4,6,6]).astype(float)\n\n# ---------- group O (rotations) ----------\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)  # (x,y,z)->(z,x,y)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nG = list(G.values())\nassert len(G)==24, len(G)\n\ndef U5(R):\n    Fp = forb(P@R)   # f_i(R p)\n    # Fp = F @ Ut  -> solve\n    Ut,_,_,_ = np.linalg.lstsq(F*np.sqrt(W)[:,None], Fp*np.sqrt(W)[:,None], rcond=None)\n    return Ut  # Fp[:,i] = sum_j F[:,j] Ut[j,i]\nUs = [U5(R) for R in G]\nfor U in Us: assert np.allclose(U.T@U, np.eye(5), atol=1e-8)\n\ndef char_class(R):\n    tr = np.trace(R)\n    if np.isclose(tr,3): return 'E'\n    if np.isclose(tr,0): return 'C3'\n    if np.isclose(tr,-1):\n        ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))])\n        ax=ax/np.max(abs(ax))\n        return 'C2' if np.sum(np.isclose(abs(ax),0,atol=1e-6))==2 else \"C2'\"\n    if np.isclose(tr,1): return 'C4'\nclasses=[char_class(R) for R in G]\nirreps = {\n 'A1':{'E':1,'C3':1,'C2':1,'C4':1,\"C2'\":1},\n 'A2':{'E':1,'C3':1,'C2':1,'C4':-1,\"C2'\":-1},\n 'E': {'E':2,'C3':-1,'C2':2,'C4':0,\"C2'\":0},\n 'T1':{'E':3,'C3':0,'C2':-1,'C4':1,\"C2'\":-1},\n 'T2':{'E':3,'C3':0,'C2':-1,'C4':-1,\"C2'\":1}}\n\n# ---------- Fock space ----------\nN=5; NS=10\nstates=[sum(1<<i for i in c) for c in itertools.combinations(range(NS),N)]\nidx={s:i for i,s in enumerate(states)}\nD=len(states)\ndef sgn(state,i): return (-1)**bin(state & ((1<<i)-1)).count('1')\ndef ann(i,s):\n    if not (s>>i)&1: return None\n    return sgn(s,i), s ^ (1<<i)\ndef cre(i,s):\n    if (s>>i)&1: return None\n    return sgn(s,i), s | (1<<i)\n\ndef onebody(h):\n    M=np.zeros((D,D))\n    for s in states:\n        for a in range(NS):\n            for b in range(NS):\n                if h[a,b]==0: continue\n                r=ann(b,s)\n                if r is None: continue\n                s1,s1s=r\n                r2=cre(a,s1s)\n                if r2 is None: continue\n                s2,s2s=r2\n                M[idx[s2s],idx[s]] += h[a,b]*s1*s2\n    return M\n\n# spin-orbital index: orbital i, spin sigma -> 2i+sigma (sigma 0 up,1 down)\nh_so=np.zeros((NS,NS))\nfor i in range(5):\n    for sg in range(2):\n        h_so[2*i+sg,2*i+sg]=h1[i,i]\nHh = None\n\n# two-electron integrals in orbital basis: a_k[(a,c),(b,d)] = int int phi_a(1)phi_c(1) P_k(1.2) phi_b(2)phi_d(2)\nK = {}\ncosg = P@P.T\nfor k in (2,4):\n    Kk = eval_legendre(k,cosg)\n    K[k]=Kk\nWsq=W\ng = {}\nak={}\nfor k in (2,4):\n    A=np.zeros((5,5,5,5))\n    for a in range(5):\n        for c in range(5):\n            v1 = F[:,a]*F[:,c]*W\n            for b in range(5):\n                for d in range(5):\n                    v2 = F[:,b]*F[:,d]\n                    A[a,c,b,d]= v1@K[k]@v2\n    ak[k]=A\n# F0 term ignored (constant). Slater: F2, F4 from Racah B, C (units of B)\nBv=1.0; Cv=3473/800\nF4=441*Cv/35*Bv; F2=(441*Bv+5*F4)/9\nprint(\"F2,F4 (B units):\",F2,F4)\nFk={2:F2,4:F4}\n# Two-body operator: 1/2 sum V_{ab,cd} c+_a c+_b c_d c_c with V=<ab|cd>, spins: a~c, b~d\nVso = np.zeros((NS,NS,NS,NS))\nfor a in range(NS):\n    for b in range(NS):\n        for c in range(NS):\n            for d in range(NS):\n                if (a%2)!=(c%2) or (b%2)!=(d%2): continue\n                oa,ob,oc,od=a//2,b//2,c//2,d//2\n                Vso[a,b,c,d]=sum(Fk[k]*ak[k][oa,oc,ob,od] for k in (2,4))\nH2=np.zeros((D,D))\nfor s in states:\n    for a in range(NS):\n        for b in range(NS):\n            for c in range(NS):\n                for d in range(NS):\n                    v=Vso[a,b,c,d]\n                    if v==0: continue\n                    r=ann(c,s)\n                    if r is None: continue\n                    s1,s1s=r\n                    r=ann(d,s1s)\n                    if r is None: continue\n                    s2,s2s=r\n                    r=cre(b,s2s)\n                    if r is None: continue\n                    s3,s3s=r\n                    r=cre(a,s3s)\n                    if r is None: continue\n                    s4,s4s=r\n                    H2[idx[s4s],idx[s]] += 0.5*v*s1*s2*s3*s4\n# spin operators\nSp=np.zeros((NS,NS))\nfor i in range(5): Sp[2*i,2*i+1]=1\nSpop=onebody(Sp)\nSmop=Spop.T\nSz=np.zeros((NS,NS))\nfor i in range(5): Sz[2*i,2*i]=0.5; Sz[2*i+1,2*i+1]=-0.5\nSzop=onebody(Sz)\nS2=Smop@Spop+Szop@Szop+Szop\n# Fock representation of group elements\ndef fock(U):\n    M=np.kron(U,np.eye(2))\n    Out=np.zeros((D,D))\n    for s in states:\n        occ=[i for i in range(NS) if (s>>i)&1]\n        for T in states:\n            tocc=[i for i in range(NS) if (T>>i)&1]\n            Out[idx[T],idx[s]] = np.linalg.det(M[np.ix_(tocc,occ)])\n    return Out\nHdq = None\ndef run(Dq):\n    H = Dq*onebody(h_so/1.0) if False else None\n    H = onebody(np.diag([0]*NS).astype(float))  # placeholder\n    H = np.zeros((D,D))\n    hd = np.zeros((NS,NS))\n    for i in range(5):\n        for sg in range(2): hd[2*i+sg,2*i+sg]=h1[i,i]*Dq\n    H = onebody(hd) + H2\n    return H\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 190: /tmp/d5.py: Read-only file system\nok",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])"
+    },
+    {
+     "script": "d5.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "C3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)  # (x,y,z)->(z,x,y)"
+    },
+    {
+     "script": "d5.py",
+     "line": 46,
+     "method": "least_squares",
+     "text": "Ut,_,_,_ = np.linalg.lstsq(F*np.sqrt(W)[:,None], Fp*np.sqrt(W)[:,None], rcond=None)"
+    },
+    {
+     "script": "d5.py",
+     "line": 56,
+     "method": "eigen_solver",
+     "text": "ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))])"
+    },
+    {
+     "script": "d5.py",
+     "line": 82,
+     "method": "matrix",
+     "text": "M=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 97,
+     "method": "matrix",
+     "text": "h_so=np.zeros((NS,NS))"
+    },
+    {
+     "script": "d5.py",
+     "line": 113,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d5.py",
+     "line": 128,
+     "method": "matrix",
+     "text": "Vso = np.zeros((NS,NS,NS,NS))"
+    },
+    {
+     "script": "d5.py",
+     "line": 136,
+     "method": "matrix",
+     "text": "H2=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 158,
+     "method": "matrix",
+     "text": "Sp=np.zeros((NS,NS))"
+    },
+    {
+     "script": "d5.py",
+     "line": 162,
+     "method": "matrix",
+     "text": "Sz=np.zeros((NS,NS))"
+    },
+    {
+     "script": "d5.py",
+     "line": 169,
+     "method": "matrix",
+     "text": "Out=np.zeros((D,D))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p ~/d5 && cd ~/d5 && cat << 'EOF' > d5.py\nimport numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\n\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\n\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF = forb(P)\nF = F/np.sqrt(np.einsum('k,ki->i', W, F**2))\nh1 = np.array([-4,-4,-4,6,6],float)  # t2g -4Dq, eg +6Dq\n\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nG = list(G.values()); assert len(G)==24\n\ndef U5(R):\n    Fp = forb(P@R)\n    sw=np.sqrt(W)[:,None]\n    Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)\n    return Ut\nUs = [U5(R) for R in G]\nfor U in Us: assert np.allclose(U.T@U, np.eye(5), atol=1e-8)\n\ndef cls(R):\n    tr = np.trace(R)\n    if np.isclose(tr,3): return 'E'\n    if np.isclose(tr,0): return 'C3'\n    if np.isclose(tr,1): return 'C4'\n    ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))]); ax=ax/np.max(abs(ax))\n    return 'C2' if np.sum(np.isclose(abs(ax),0,atol=1e-6))==2 else \"C2'\"\nclasses=[cls(R) for R in G]\nfrom collections import Counter\nprint(Counter(classes))\nirreps = {\n 'A1':{'E':1,'C3':1,'C2':1,'C4':1,\"C2'\":1},\n 'A2':{'E':1,'C3':1,'C2':1,'C4':-1,\"C2'\":-1},\n 'E': {'E':2,'C3':-1,'C2':2,'C4':0,\"C2'\":0},\n 'T1':{'E':3,'C3':0,'C2':-1,'C4':1,\"C2'\":-1},\n 'T2':{'E':3,'C3':0,'C2':-1,'C4':-1,\"C2'\":1}}\n\nNS=10; N=5\nstates=[sum(1<<i for i in c) for c in itertools.combinations(range(NS),N)]\nidx={s:i for i,s in enumerate(states)}; D=len(states)\ndef sgn(s,i): return (-1)**bin(s & ((1<<i)-1)).count('1')\ndef ann(i,s):\n    if not (s>>i)&1: return None\n    return sgn(s,i), s ^ (1<<i)\ndef cre(i,s):\n    if (s>>i)&1: return None\n    return sgn(s,i), s | (1<<i)\n\ndef onebody(h):\n    M=np.zeros((D,D))\n    for s in states:\n        for a in range(NS):\n            for b in range(NS):\n                if h[a,b]==0: continue\n                r=ann(b,s)\n                if r is None: continue\n                s1,s1s=r\n                r2=cre(a,s1s)\n                if r2 is None: continue\n                s2,s2s=r2\n                M[idx[s2s],idx[s]] += h[a,b]*s1*s2\n    return M\n\n# orbital-basis angular integrals a_k[a,c,b,d] = <ab|P_k|cd>, with a,c on electron 1\ncosg = P@P.T\nak={}\nfor k in (2,4):\n    Kk = eval_legendre(k,cosg)\n    A=np.zeros((5,5,5,5))\n    for a in range(5):\n        for c in range(5):\n            v1 = F[:,a]*F[:,c]*W\n            for b in range(5):\n                for d in range(5):\n                    A[a,c,b,d]= v1@Kk@(F[:,b]*F[:,d])\n    ak[k]=A\n\nBv=1.0; Cv=3473/800\nF4=441*Cv/35*Bv; F2=(441*Bv+5*F4)/9\nprint(\"F2,F4 (B units):\",F2,F4)\nVso = np.zeros((NS,NS,NS,NS))\nfor a in range(NS):\n  for b in range(NS):\n    for c in range(NS):\n      for d in range(NS):\n        if (a%2)!=(c%2) or (b%2)!=(d%2): continue\n        Vso[a,b,c,d]=sum(Fk*ak[k][a//2,c//2,b//2,d//2] for k,Fk in ((2,F2),(4,F4)))\n# two-body matrix: 1/2 sum V_abcd c+_a c+_b c_d c_c\nterms=[(a,b,c,d,Vso[a,b,c,d]) for a in range(NS) for b in range(NS) for c in range(NS) for d in range(NS) if abs(Vso[a,b,c,d])>1e-12]\nH2=np.zeros((D,D))\nfor s in states:\n    for a,b,c,d,v in terms:\n        r=ann(c,s)\n        if r is None: continue\n        s1,s1s=r\n        r=ann(d,s1s)\n        if r is None: continue\n        s2,s2s=r\n        r=cre(b,s2s)\n        if r is None: continue\n        s3,s3s=r\n        r=cre(a,s3s)\n        if r is None: continue\n        s4,s4s=r\n        H2[idx[s4s],idx[s]] += 0.5*v*s1*s2*s3*s4\n\nSp=np.zeros((NS,NS))\nfor i in range(5): Sp[2*i,2*i+1]=1\nSpop=onebody(Sp); Smop=Spop.T\nSzd=np.array([0.5,-0.5]*5); Szop=onebody(np.diag(Szd))\nS2=Smop@Spop+Szop@Szop+Szop\n\ndef fock(U):\n    M=np.kron(U,np.eye(2))\n    Out=np.zeros((D,D))\n    for s in states:\n        occ=[i for i in range(NS) if (s>>i)&1]\n        for T in states:\n            tocc=[i for i in range(NS) if (T>>i)&1]\n            Out[idx[T],idx[s]] = np.linalg.det(M[np.ix_(tocc,occ)])\n    return Out\nGs=[fock(U) for U in Us]\n\ndef hd_op(Dq):\n    hd=np.diag(np.repeat(h1*Dq,2))\n    return onebody(hd)\n\ndef levels(Dq):\n    H = hd_op(Dq)+H2\n    # check commutation\n    assert np.allclose(H@S2,S2@H,atol=1e-8)\n    # S projectors\n    ev2,vec2=np.linalg.eigh(S2)\n    res=[]\n    Ss=[5/2,3/2,1/2]\n    for S in Ss:\n        PS = vec2[:, np.isclose(ev2,S*(S+1))] @ vec2[:, np.isclose(ev2,S*(S+1))].T\n        for name,ir in irreps.items():\n            Pg=np.zeros((D,D))\n            for g,cl,Gm in zip(range(24),classes,Gs):\n                Pg += ir[cl]*Gm\n            Pg *= ir['E']*0+ (len(ir)>0)*1.0\n            Pg = (irreps[name]['E']/24)*Pg\n            M = PS@Pg\n            ev,vec=np.linalg.eigh((M+M.T)/2)\n            V = vec[:, ev>0.5]\n            if V.shape[1]==0: continue\n            Hs = V.T@H@V\n            e = np.linalg.eigvalsh((Hs+Hs.T)/2)\n            for val in sorted(set(np.round(e,6))):\n                res.append((S,name,val))\n    return res\nEOF\npython3 -c \"\nimport sys; sys.path.insert(0,'.')\nimport d5\n\" && echo loaded",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "8422d0b1eb81882d4f70e080fe203a0da5b8cfa670ced90c3de1b0d0ee1f6b03",
+     "lines": 176,
+     "code": "import numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\n\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\n\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF = forb(P)\nF = F/np.sqrt(np.einsum('k,ki->i', W, F**2))\nh1 = np.array([-4,-4,-4,6,6],float)  # t2g -4Dq, eg +6Dq\n\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nG = list(G.values()); assert len(G)==24\n\ndef U5(R):\n    Fp = forb(P@R)\n    sw=np.sqrt(W)[:,None]\n    Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)\n    return Ut\nUs = [U5(R) for R in G]\nfor U in Us: assert np.allclose(U.T@U, np.eye(5), atol=1e-8)\n\ndef cls(R):\n    tr = np.trace(R)\n    if np.isclose(tr,3): return 'E'\n    if np.isclose(tr,0): return 'C3'\n    if np.isclose(tr,1): return 'C4'\n    ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))]); ax=ax/np.max(abs(ax))\n    return 'C2' if np.sum(np.isclose(abs(ax),0,atol=1e-6))==2 else \"C2'\"\nclasses=[cls(R) for R in G]\nfrom collections import Counter\nprint(Counter(classes))\nirreps = {\n 'A1':{'E':1,'C3':1,'C2':1,'C4':1,\"C2'\":1},\n 'A2':{'E':1,'C3':1,'C2':1,'C4':-1,\"C2'\":-1},\n 'E': {'E':2,'C3':-1,'C2':2,'C4':0,\"C2'\":0},\n 'T1':{'E':3,'C3':0,'C2':-1,'C4':1,\"C2'\":-1},\n 'T2':{'E':3,'C3':0,'C2':-1,'C4':-1,\"C2'\":1}}\n\nNS=10; N=5\nstates=[sum(1<<i for i in c) for c in itertools.combinations(range(NS),N)]\nidx={s:i for i,s in enumerate(states)}; D=len(states)\ndef sgn(s,i): return (-1)**bin(s & ((1<<i)-1)).count('1')\ndef ann(i,s):\n    if not (s>>i)&1: return None\n    return sgn(s,i), s ^ (1<<i)\ndef cre(i,s):\n    if (s>>i)&1: return None\n    return sgn(s,i), s | (1<<i)\n\ndef onebody(h):\n    M=np.zeros((D,D))\n    for s in states:\n        for a in range(NS):\n            for b in range(NS):\n                if h[a,b]==0: continue\n                r=ann(b,s)\n                if r is None: continue\n                s1,s1s=r\n                r2=cre(a,s1s)\n                if r2 is None: continue\n                s2,s2s=r2\n                M[idx[s2s],idx[s]] += h[a,b]*s1*s2\n    return M\n\n# orbital-basis angular integrals a_k[a,c,b,d] = <ab|P_k|cd>, with a,c on electron 1\ncosg = P@P.T\nak={}\nfor k in (2,4):\n    Kk = eval_legendre(k,cosg)\n    A=np.zeros((5,5,5,5))\n    for a in range(5):\n        for c in range(5):\n            v1 = F[:,a]*F[:,c]*W\n            for b in range(5):\n                for d in range(5):\n                    A[a,c,b,d]= v1@Kk@(F[:,b]*F[:,d])\n    ak[k]=A\n\nBv=1.0; Cv=3473/800\nF4=441*Cv/35*Bv; F2=(441*Bv+5*F4)/9\nprint(\"F2,F4 (B units):\",F2,F4)\nVso = np.zeros((NS,NS,NS,NS))\nfor a in range(NS):\n  for b in range(NS):\n    for c in range(NS):\n      for d in range(NS):\n        if (a%2)!=(c%2) or (b%2)!=(d%2): continue\n        Vso[a,b,c,d]=sum(Fk*ak[k][a//2,c//2,b//2,d//2] for k,Fk in ((2,F2),(4,F4)))\n# two-body matrix: 1/2 sum V_abcd c+_a c+_b c_d c_c\nterms=[(a,b,c,d,Vso[a,b,c,d]) for a in range(NS) for b in range(NS) for c in range(NS) for d in range(NS) if abs(Vso[a,b,c,d])>1e-12]\nH2=np.zeros((D,D))\nfor s in states:\n    for a,b,c,d,v in terms:\n        r=ann(c,s)\n        if r is None: continue\n        s1,s1s=r\n        r=ann(d,s1s)\n        if r is None: continue\n        s2,s2s=r\n        r=cre(b,s2s)\n        if r is None: continue\n        s3,s3s=r\n        r=cre(a,s3s)\n        if r is None: continue\n        s4,s4s=r\n        H2[idx[s4s],idx[s]] += 0.5*v*s1*s2*s3*s4\n\nSp=np.zeros((NS,NS))\nfor i in range(5): Sp[2*i,2*i+1]=1\nSpop=onebody(Sp); Smop=Spop.T\nSzd=np.array([0.5,-0.5]*5); Szop=onebody(np.diag(Szd))\nS2=Smop@Spop+Szop@Szop+Szop\n\ndef fock(U):\n    M=np.kron(U,np.eye(2))\n    Out=np.zeros((D,D))\n    for s in states:\n        occ=[i for i in range(NS) if (s>>i)&1]\n        for T in states:\n            tocc=[i for i in range(NS) if (T>>i)&1]\n            Out[idx[T],idx[s]] = np.linalg.det(M[np.ix_(tocc,occ)])\n    return Out\nGs=[fock(U) for U in Us]\n\ndef hd_op(Dq):\n    hd=np.diag(np.repeat(h1*Dq,2))\n    return onebody(hd)\n\ndef levels(Dq):\n    H = hd_op(Dq)+H2\n    # check commutation\n    assert np.allclose(H@S2,S2@H,atol=1e-8)\n    # S projectors\n    ev2,vec2=np.linalg.eigh(S2)\n    res=[]\n    Ss=[5/2,3/2,1/2]\n    for S in Ss:\n        PS = vec2[:, np.isclose(ev2,S*(S+1))] @ vec2[:, np.isclose(ev2,S*(S+1))].T\n        for name,ir in irreps.items():\n            Pg=np.zeros((D,D))\n            for g,cl,Gm in zip(range(24),classes,Gs):\n                Pg += ir[cl]*Gm\n            Pg *= ir['E']*0+ (len(ir)>0)*1.0\n            Pg = (irreps[name]['E']/24)*Pg\n            M = PS@Pg\n            ev,vec=np.linalg.eigh((M+M.T)/2)\n            V = vec[:, ev>0.5]\n            if V.shape[1]==0: continue\n            Hs = V.T@H@V\n            e = np.linalg.eigvalsh((Hs+Hs.T)/2)\n            for val in sorted(set(np.round(e,6))):\n                res.append((S,name,val))\n    return res\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/d5’: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 3, in <module>\n    import d5\nModuleNotFoundError: No module named 'd5'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])"
+    },
+    {
+     "script": "d5.py",
+     "line": 23,
+     "method": "matrix",
+     "text": "C3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)"
+    },
+    {
+     "script": "d5.py",
+     "line": 40,
+     "method": "least_squares",
+     "text": "Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)"
+    },
+    {
+     "script": "d5.py",
+     "line": 50,
+     "method": "eigen_solver",
+     "text": "ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))]); ax=ax/np.max(abs(ax))"
+    },
+    {
+     "script": "d5.py",
+     "line": 74,
+     "method": "matrix",
+     "text": "M=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 93,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d5.py",
+     "line": 105,
+     "method": "matrix",
+     "text": "Vso = np.zeros((NS,NS,NS,NS))"
+    },
+    {
+     "script": "d5.py",
+     "line": 114,
+     "method": "matrix",
+     "text": "H2=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 131,
+     "method": "matrix",
+     "text": "Sp=np.zeros((NS,NS))"
+    },
+    {
+     "script": "d5.py",
+     "line": 139,
+     "method": "matrix",
+     "text": "Out=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 157,
+     "method": "eigen_solver",
+     "text": "ev2,vec2=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "d5.py",
+     "line": 163,
+     "method": "matrix",
+     "text": "Pg=np.zeros((D,D))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "pwd; echo $HOME; for d in . $HOME /var/tmp /dev/shm; do touch $d/x_test 2>/dev/null && echo \"writable $d\" && rm $d/x_test; done",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-run-1w3nr16h\n/tmp/tsbench-home-xehwqch9\nwritable .\nwritable /dev/shm",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm && mkdir -p d5 && cd d5 && cat << 'EOF' > run.py\nexec(open('/dev/shm/d5/d5.py').read())\nimport sys\nEOF\necho",
+   "scripts": [
+    {
+     "name": "run.py",
+     "sha256": "6e41738ea2240eb7448ddb0c59674b1e9c4072a1fec50a5f96495213ab742691",
+     "lines": 2,
+     "code": "exec(open('/dev/shm/d5/d5.py').read())\nimport sys\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Shell cwd was reset to /tmp/tsbench-run-1w3nr16h",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p /dev/shm/d5 && cat << 'EOF' > /dev/shm/d5/d5.py\nimport numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\nfrom collections import Counter\n\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\n\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF = forb(P)\nF = F/np.sqrt(np.einsum('k,ki->i', W, F**2))\nh1 = np.array([-4,-4,-4,6,6],float)\n\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nG = list(G.values()); assert len(G)==24\n\ndef U5(R):\n    Fp = forb(P@R)\n    sw=np.sqrt(W)[:,None]\n    Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)\n    return Ut\nUs = [U5(R) for R in G]\nfor U in Us: assert np.allclose(U.T@U, np.eye(5), atol=1e-8)\n\ndef cls(R):\n    tr = np.trace(R)\n    if np.isclose(tr,3): return 'E'\n    if np.isclose(tr,0): return 'C3'\n    if np.isclose(tr,1): return 'C4'\n    ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))]); ax=ax/np.max(abs(ax))\n    return 'C2' if np.sum(np.isclose(abs(ax),0,atol=1e-6))==2 else \"C2'\"\nclasses=[cls(R) for R in G]\nprint(Counter(classes))\nirreps = {\n 'A1':{'E':1,'C3':1,'C2':1,'C4':1,\"C2'\":1},\n 'A2':{'E':1,'C3':1,'C2':1,'C4':-1,\"C2'\":-1},\n 'E': {'E':2,'C3':-1,'C2':2,'C4':0,\"C2'\":0},\n 'T1':{'E':3,'C3':0,'C2':-1,'C4':1,\"C2'\":-1},\n 'T2':{'E':3,'C3':0,'C2':-1,'C4':-1,\"C2'\":1}}\n\nNS=10; N=5\nstates=[sum(1<<i for i in c) for c in itertools.combinations(range(NS),N)]\nidx={s:i for i,s in enumerate(states)}; D=len(states)\ndef sgn(s,i): return (-1)**bin(s & ((1<<i)-1)).count('1')\ndef ann(i,s):\n    if not (s>>i)&1: return None\n    return sgn(s,i), s ^ (1<<i)\ndef cre(i,s):\n    if (s>>i)&1: return None\n    return sgn(s,i), s | (1<<i)\n\ndef onebody(h):\n    M=np.zeros((D,D))\n    for s in states:\n        for a in range(NS):\n            for b in range(NS):\n                if h[a,b]==0: continue\n                r=ann(b,s)\n                if r is None: continue\n                s1,s1s=r\n                r2=cre(a,s1s)\n                if r2 is None: continue\n                s2,s2s=r2\n                M[idx[s2s],idx[s]] += h[a,b]*s1*s2\n    return M\n\ncosg = P@P.T\nak={}\nfor k in (2,4):\n    Kk = eval_legendre(k,cosg)\n    A=np.zeros((5,5,5,5))\n    for a in range(5):\n        for c in range(5):\n            v1 = F[:,a]*F[:,c]*W\n            for b in range(5):\n                for d in range(5):\n                    A[a,c,b,d]= v1@Kk@(F[:,b]*F[:,d])\n    ak[k]=A\n\nBv=1.0; Cv=3473/800\nF4=441*Cv/35*Bv; F2=(441*Bv+5*F4)/9\nprint(\"F2,F4 (B units):\",F2,F4, \"C/B\", Cv)\nVso = np.zeros((NS,NS,NS,NS))\nfor a in range(NS):\n  for b in range(NS):\n    for c in range(NS):\n      for d in range(NS):\n        if (a%2)!=(c%2) or (b%2)!=(d%2): continue\n        Vso[a,b,c,d]=sum(Fk*ak[k][a//2,c//2,b//2,d//2] for k,Fk in ((2,F2),(4,F4)))\nterms=[(a,b,c,d,Vso[a,b,c,d]) for a in range(NS) for b in range(NS) for c in range(NS) for d in range(NS) if abs(Vso[a,b,c,d])>1e-12]\nH2=np.zeros((D,D))\nfor s in states:\n    for a,b,c,d,v in terms:\n        r=ann(c,s)\n        if r is None: continue\n        s1,s1s=r\n        r=ann(d,s1s)\n        if r is None: continue\n        s2,s2s=r\n        r=cre(b,s2s)\n        if r is None: continue\n        s3,s3s=r\n        r=cre(a,s3s)\n        if r is None: continue\n        s4,s4s=r\n        H2[idx[s4s],idx[s]] += 0.5*v*s1*s2*s3*s4\n\nSp=np.zeros((NS,NS))\nfor i in range(5): Sp[2*i,2*i+1]=1\nSpop=onebody(Sp); Smop=Spop.T\nSzop=onebody(np.diag(np.array([0.5,-0.5]*5)))\nS2=Smop@Spop+Szop@Szop+Szop\n\ndef fock(U):\n    M=np.kron(U,np.eye(2))\n    Out=np.zeros((D,D))\n    for s in states:\n        occ=[i for i in range(NS) if (s>>i)&1]\n        for T in states:\n            tocc=[i for i in range(NS) if (T>>i)&1]\n            Out[idx[T],idx[s]] = np.linalg.det(M[np.ix_(tocc,occ)])\n    return Out\nGs=[fock(U) for U in Us]\n\ndef hd_op(Dq):\n    return onebody(np.diag(np.repeat(h1*Dq,2)))\n\ndef levels(Dq):\n    H = hd_op(Dq)+H2\n    assert np.allclose(H@S2,S2@H,atol=1e-8)\n    ev2,vec2=np.linalg.eigh(S2)\n    res=[]\n    for S in [5/2,3/2,1/2]:\n        sel=np.isclose(ev2,S*(S+1))\n        PS = vec2[:,sel]@vec2[:,sel].T\n        for name,ir in irreps.items():\n            Pg=sum(ir[cl]*Gm for cl,Gm in zip(classes,Gs))*(ir['E']/24)\n            M=PS@Pg; M=(M+M.T)/2\n            ev,vec=np.linalg.eigh(M)\n            V=vec[:,ev>0.5]\n            if V.shape[1]==0: continue\n            Hs=V.T@H@V; Hs=(Hs+Hs.T)/2\n            for val in sorted(set(np.round(np.linalg.eigvalsh(Hs),6))):\n                res.append((S,name,val))\n    return res\nEOF\ncd /dev/shm/d5 && cat << 'EOF' > go.py\nimport time\nexec(open('/dev/shm/d5/d5.py').read())\nt=time.time()\nfor Dq in [1.45,2.55,3.25]:\n    res=levels(Dq)\n    g=[r for r in res if abs(r[0]-2.5)<1e-9]\n    E0=min(r[2] for r in g)\n    print(\"Dq\",Dq, \"ground\", g[0] if g else None, \"E0\",E0)\n    ex=sorted([(r[2]-E0,r[0],r[1]) for r in res if r[2]-E0>1e-6])\n    # merge duplicates\n    out=[]\n    for e,S,n in ex:\n        if out and abs(out[-1][0]-e)<1e-5: continue\n        out.append((e,S,n))\n    for e,S,n in out[:6]:\n        print(\"  E/B=%.4f  mult=%d  %s\"%(e,int(2*S+1),n))\nprint(time.time()-t)\nEOF\npython3 go.py",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "6ebb6bd2915fd4486727505082210837c51bebb73f719cd7511d97700d5a3cce",
+     "lines": 166,
+     "code": "import numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\nfrom collections import Counter\n\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\n\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF = forb(P)\nF = F/np.sqrt(np.einsum('k,ki->i', W, F**2))\nh1 = np.array([-4,-4,-4,6,6],float)\n\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nG = list(G.values()); assert len(G)==24\n\ndef U5(R):\n    Fp = forb(P@R)\n    sw=np.sqrt(W)[:,None]\n    Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)\n    return Ut\nUs = [U5(R) for R in G]\nfor U in Us: assert np.allclose(U.T@U, np.eye(5), atol=1e-8)\n\ndef cls(R):\n    tr = np.trace(R)\n    if np.isclose(tr,3): return 'E'\n    if np.isclose(tr,0): return 'C3'\n    if np.isclose(tr,1): return 'C4'\n    ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))]); ax=ax/np.max(abs(ax))\n    return 'C2' if np.sum(np.isclose(abs(ax),0,atol=1e-6))==2 else \"C2'\"\nclasses=[cls(R) for R in G]\nprint(Counter(classes))\nirreps = {\n 'A1':{'E':1,'C3':1,'C2':1,'C4':1,\"C2'\":1},\n 'A2':{'E':1,'C3':1,'C2':1,'C4':-1,\"C2'\":-1},\n 'E': {'E':2,'C3':-1,'C2':2,'C4':0,\"C2'\":0},\n 'T1':{'E':3,'C3':0,'C2':-1,'C4':1,\"C2'\":-1},\n 'T2':{'E':3,'C3':0,'C2':-1,'C4':-1,\"C2'\":1}}\n\nNS=10; N=5\nstates=[sum(1<<i for i in c) for c in itertools.combinations(range(NS),N)]\nidx={s:i for i,s in enumerate(states)}; D=len(states)\ndef sgn(s,i): return (-1)**bin(s & ((1<<i)-1)).count('1')\ndef ann(i,s):\n    if not (s>>i)&1: return None\n    return sgn(s,i), s ^ (1<<i)\ndef cre(i,s):\n    if (s>>i)&1: return None\n    return sgn(s,i), s | (1<<i)\n\ndef onebody(h):\n    M=np.zeros((D,D))\n    for s in states:\n        for a in range(NS):\n            for b in range(NS):\n                if h[a,b]==0: continue\n                r=ann(b,s)\n                if r is None: continue\n                s1,s1s=r\n                r2=cre(a,s1s)\n                if r2 is None: continue\n                s2,s2s=r2\n                M[idx[s2s],idx[s]] += h[a,b]*s1*s2\n    return M\n\ncosg = P@P.T\nak={}\nfor k in (2,4):\n    Kk = eval_legendre(k,cosg)\n    A=np.zeros((5,5,5,5))\n    for a in range(5):\n        for c in range(5):\n            v1 = F[:,a]*F[:,c]*W\n            for b in range(5):\n                for d in range(5):\n                    A[a,c,b,d]= v1@Kk@(F[:,b]*F[:,d])\n    ak[k]=A\n\nBv=1.0; Cv=3473/800\nF4=441*Cv/35*Bv; F2=(441*Bv+5*F4)/9\nprint(\"F2,F4 (B units):\",F2,F4, \"C/B\", Cv)\nVso = np.zeros((NS,NS,NS,NS))\nfor a in range(NS):\n  for b in range(NS):\n    for c in range(NS):\n      for d in range(NS):\n        if (a%2)!=(c%2) or (b%2)!=(d%2): continue\n        Vso[a,b,c,d]=sum(Fk*ak[k][a//2,c//2,b//2,d//2] for k,Fk in ((2,F2),(4,F4)))\nterms=[(a,b,c,d,Vso[a,b,c,d]) for a in range(NS) for b in range(NS) for c in range(NS) for d in range(NS) if abs(Vso[a,b,c,d])>1e-12]\nH2=np.zeros((D,D))\nfor s in states:\n    for a,b,c,d,v in terms:\n        r=ann(c,s)\n        if r is None: continue\n        s1,s1s=r\n        r=ann(d,s1s)\n        if r is None: continue\n        s2,s2s=r\n        r=cre(b,s2s)\n        if r is None: continue\n        s3,s3s=r\n        r=cre(a,s3s)\n        if r is None: continue\n        s4,s4s=r\n        H2[idx[s4s],idx[s]] += 0.5*v*s1*s2*s3*s4\n\nSp=np.zeros((NS,NS))\nfor i in range(5): Sp[2*i,2*i+1]=1\nSpop=onebody(Sp); Smop=Spop.T\nSzop=onebody(np.diag(np.array([0.5,-0.5]*5)))\nS2=Smop@Spop+Szop@Szop+Szop\n\ndef fock(U):\n    M=np.kron(U,np.eye(2))\n    Out=np.zeros((D,D))\n    for s in states:\n        occ=[i for i in range(NS) if (s>>i)&1]\n        for T in states:\n            tocc=[i for i in range(NS) if (T>>i)&1]\n            Out[idx[T],idx[s]] = np.linalg.det(M[np.ix_(tocc,occ)])\n    return Out\nGs=[fock(U) for U in Us]\n\ndef hd_op(Dq):\n    return onebody(np.diag(np.repeat(h1*Dq,2)))\n\ndef levels(Dq):\n    H = hd_op(Dq)+H2\n    assert np.allclose(H@S2,S2@H,atol=1e-8)\n    ev2,vec2=np.linalg.eigh(S2)\n    res=[]\n    for S in [5/2,3/2,1/2]:\n        sel=np.isclose(ev2,S*(S+1))\n        PS = vec2[:,sel]@vec2[:,sel].T\n        for name,ir in irreps.items():\n            Pg=sum(ir[cl]*Gm for cl,Gm in zip(classes,Gs))*(ir['E']/24)\n            M=PS@Pg; M=(M+M.T)/2\n            ev,vec=np.linalg.eigh(M)\n            V=vec[:,ev>0.5]\n            if V.shape[1]==0: continue\n            Hs=V.T@H@V; Hs=(Hs+Hs.T)/2\n            for val in sorted(set(np.round(np.linalg.eigvalsh(Hs),6))):\n                res.append((S,name,val))\n    return res\n"
+    },
+    {
+     "name": "go.py",
+     "sha256": "c5b8ad918b433dc3a25a40b8e064b9aaee64855a3f56cb9087434c95d2035307",
+     "lines": 17,
+     "code": "import time\nexec(open('/dev/shm/d5/d5.py').read())\nt=time.time()\nfor Dq in [1.45,2.55,3.25]:\n    res=levels(Dq)\n    g=[r for r in res if abs(r[0]-2.5)<1e-9]\n    E0=min(r[2] for r in g)\n    print(\"Dq\",Dq, \"ground\", g[0] if g else None, \"E0\",E0)\n    ex=sorted([(r[2]-E0,r[0],r[1]) for r in res if r[2]-E0>1e-6])\n    # merge duplicates\n    out=[]\n    for e,S,n in ex:\n        if out and abs(out[-1][0]-e)<1e-5: continue\n        out.append((e,S,n))\n    for e,S,n in out[:6]:\n        print(\"  E/B=%.4f  mult=%d  %s\"%(e,int(2*S+1),n))\nprint(time.time()-t)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "go.py",
+     "written_in_step": 4
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"/dev/shm/d5/go.py\", line 2, in <module>\n    exec(open('/dev/shm/d5/d5.py').read())\n    ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<string>\", line 44, in <module>\nAssertionError",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 22,
+     "method": "matrix",
+     "text": "c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])"
+    },
+    {
+     "script": "d5.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "C3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)"
+    },
+    {
+     "script": "d5.py",
+     "line": 41,
+     "method": "least_squares",
+     "text": "Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)"
+    },
+    {
+     "script": "d5.py",
+     "line": 51,
+     "method": "eigen_solver",
+     "text": "ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))]); ax=ax/np.max(abs(ax))"
+    },
+    {
+     "script": "d5.py",
+     "line": 74,
+     "method": "matrix",
+     "text": "M=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 92,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d5.py",
+     "line": 104,
+     "method": "matrix",
+     "text": "Vso = np.zeros((NS,NS,NS,NS))"
+    },
+    {
+     "script": "d5.py",
+     "line": 112,
+     "method": "matrix",
+     "text": "H2=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 129,
+     "method": "matrix",
+     "text": "Sp=np.zeros((NS,NS))"
+    },
+    {
+     "script": "d5.py",
+     "line": 137,
+     "method": "matrix",
+     "text": "Out=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 152,
+     "method": "eigen_solver",
+     "text": "ev2,vec2=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "d5.py",
+     "line": 160,
+     "method": "eigen_solver",
+     "text": "ev,vec=np.linalg.eigh(M)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm/d5 && python3 -c \"\nimport numpy as np\nexec(open('d5.py').read().split('G = list')[0])\nprint(len(G))\n\" 2>&1 | tail -3; sed -n 40,46p /dev/shm/d5/d5.py",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 5: cd: /dev/shm/d5: No such file or directory\nsed: can't read /dev/shm/d5/d5.py: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "",
+   "command": "ls -la /dev/shm/ ; ls /dev/shm/d5 2>&1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\ntotal 0\ndrwxr-xr-x 2 <USER> <USER>  40 Nov  4 11:06 .\ndrwxr-xr-x 4 <USER> <USER> 320 Nov  4 11:06 ..\nls: cannot access '/dev/shm/d5': No such file or directory",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p /dev/shm/d5 && cd /dev/shm/d5 && cat << 'EOF' > d5.py\nimport numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\nfrom collections import Counter\n\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\n\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF = forb(P)\nF = F/np.sqrt(np.einsum('k,ki->i', W, F**2))\nh1 = np.array([-4,-4,-4,6,6],float)\n\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nprint(\"group order\", len(G))\nG = list(G.values())\nEOF\npython3 -c \"\nexec(open('d5.py').read())\nprint(np.linalg.det(C3), np.linalg.det(C4))\n\"",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "36ef41c8ca26a3532f0f57f9eaefabe620eeb97da6d7b948083962c210beb572",
+     "lines": 37,
+     "code": "import numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\nfrom collections import Counter\n\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\n\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF = forb(P)\nF = F/np.sqrt(np.einsum('k,ki->i', W, F**2))\nh1 = np.array([-4,-4,-4,6,6],float)\n\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nprint(\"group order\", len(G))\nG = list(G.values())\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "group order 24\n1.0 1.0\nShell cwd was reset to /tmp/tsbench-run-1w3nr16h",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 22,
+     "method": "matrix",
+     "text": "c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])"
+    },
+    {
+     "script": "d5.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "C3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm/d5 && cat << 'EOF' > t.py\nexec(open('d5.py').read())\nUs=[]\nfor R in G:\n    Fp=forb(P@R); sw=np.sqrt(W)[:,None]\n    Ut,res,rk,sv=np.linalg.lstsq(F*sw,Fp*sw,rcond=None)\n    Us.append(Ut)\n    print(np.round(np.abs(Ut.T@Ut-np.eye(5)).max(),6), np.round(np.abs(F*sw).T@(F*sw)-np.eye(5),3).max().round(6) if False else '', np.abs((F*sw).T@(F*sw)-np.eye(5)).max())\n    break\nprint(np.round(Ut,3))\nEOF\npython3 t.py",
+   "scripts": [
+    {
+     "name": "t.py",
+     "sha256": "186d240a1afd7173212ac3a6e06362426f4ec5947592ce3d9eb82b1aeb3ff1c3",
+     "lines": 9,
+     "code": "exec(open('d5.py').read())\nUs=[]\nfor R in G:\n    Fp=forb(P@R); sw=np.sqrt(W)[:,None]\n    Ut,res,rk,sv=np.linalg.lstsq(F*sw,Fp*sw,rcond=None)\n    Us.append(Ut)\n    print(np.round(np.abs(Ut.T@Ut-np.eye(5)).max(),6), np.round(np.abs(F*sw).T@(F*sw)-np.eye(5),3).max().round(6) if False else '', np.abs((F*sw).T@(F*sw)-np.eye(5)).max())\n    break\nprint(np.round(Ut,3))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t.py",
+     "written_in_step": 8
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 12: cd: /dev/shm/d5: No such file or directory\npython3: can't open file '/tmp/tsbench-run-1w3nr16h/t.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "t.py",
+     "line": 5,
+     "method": "least_squares",
+     "text": "Ut,res,rk,sv=np.linalg.lstsq(F*sw,Fp*sw,rcond=None)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd \"$(pwd)\" && pwd && cat << 'EOF' > d5.py\nimport numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\nfrom collections import Counter\n\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\n\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF = forb(P)\nF = F/np.sqrt(np.einsum('k,ki->i', W, F**2))\nh1 = np.array([-4,-4,-4,6,6],float)\n\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nG = list(G.values()); assert len(G)==24\n\nsw=np.sqrt(W)[:,None]\nprint(\"Gram check\", np.abs((F*sw).T@(F*sw)-np.eye(5)).max())\ndef U5(R):\n    Fp = forb(P@R)\n    Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)\n    return Ut\nUs = [U5(R) for R in G]\nprint(\"orth check\", max(np.abs(U.T@U-np.eye(5)).max() for U in Us))\nprint(\"fit resid\", max(np.abs(F@U5(R)-forb(P@R)).max() for R in G[:3]))\nEOF\npython3 d5.py",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "219ac8ae6a4974e6f433afca20aa2aa8dcc9525c39001bf3b804af2d589944c8",
+     "lines": 46,
+     "code": "import numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\nfrom collections import Counter\n\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\n\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF = forb(P)\nF = F/np.sqrt(np.einsum('k,ki->i', W, F**2))\nh1 = np.array([-4,-4,-4,6,6],float)\n\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nG = list(G.values()); assert len(G)==24\n\nsw=np.sqrt(W)[:,None]\nprint(\"Gram check\", np.abs((F*sw).T@(F*sw)-np.eye(5)).max())\ndef U5(R):\n    Fp = forb(P@R)\n    Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)\n    return Ut\nUs = [U5(R) for R in G]\nprint(\"orth check\", max(np.abs(U.T@U-np.eye(5)).max() for U in Us))\nprint(\"fit resid\", max(np.abs(F@U5(R)-forb(P@R)).max() for R in G[:3]))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d5.py",
+     "written_in_step": 9
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-run-1w3nr16h\nGram check 1.8207657603852567e-14\north check 9.053096491487748\nfit resid 1.5543122344752192e-15",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 22,
+     "method": "matrix",
+     "text": "c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])"
+    },
+    {
+     "script": "d5.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "C3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)"
+    },
+    {
+     "script": "d5.py",
+     "line": 42,
+     "method": "least_squares",
+     "text": "Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "",
+   "command": "python3 - << 'EOF'\nimport re\nsrc=open('d5.py').read()\nsrc=src.replace(\"F = forb(P)\\nF = F/np.sqrt(np.einsum('k,ki->i', W, F**2))\",\n\"F0 = forb(P)\\nNRM = np.sqrt(np.einsum('k,ki->i', W, F0**2))\\nF = F0/NRM\")\nsrc=src.replace(\"    Fp = forb(P@R)\\n\",\"    Fp = forb(P@R)/NRM\\n\")\nsrc=src.split('print(\"Gram')[0]\nsrc+='''\nUs=[U5(R) for R in G]\nprint(\"orth\", max(np.abs(U.T@U-np.eye(5)).max() for U in Us))\n'''\nopen('d5.py','w').write(src)\nEOF\npython3 d5.py",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "4eff31923aa497cac32b5708525389727342a7a8a0eca65a11138c4755e49600",
+     "lines": 11,
+     "code": "import re\nsrc=open('d5.py').read()\nsrc=src.replace(\"F = forb(P)\\nF = F/np.sqrt(np.einsum('k,ki->i', W, F**2))\",\n\"F0 = forb(P)\\nNRM = np.sqrt(np.einsum('k,ki->i', W, F0**2))\\nF = F0/NRM\")\nsrc=src.replace(\"    Fp = forb(P@R)\\n\",\"    Fp = forb(P@R)/NRM\\n\")\nsrc=src.split('print(\"Gram')[0]\nsrc+='''\nUs=[U5(R) for R in G]\nprint(\"orth\", max(np.abs(U.T@U-np.eye(5)).max() for U in Us))\n'''\nopen('d5.py','w').write(src)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d5.py",
+     "written_in_step": 9
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"/tmp/tsbench-run-1w3nr16h/d5.py\", line 41, in <module>\n    Us=[U5(R) for R in G]\n        ^^\nNameError: name 'U5' is not defined",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 11,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat << 'EOF' > d5.py\nimport numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\nfrom collections import Counter\n\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\nsw=np.sqrt(W)[:,None]\n\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF0 = forb(P)\nNRM = np.sqrt(np.einsum('k,ki->i', W, F0**2))\nF = F0/NRM\nh1 = np.array([-4,-4,-4,6,6],float)\n\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nG = list(G.values()); assert len(G)==24\n\ndef U5(R):\n    Fp = forb(P@R)/NRM\n    Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)\n    return Ut\nUs = [U5(R) for R in G]\nassert max(np.abs(U.T@U-np.eye(5)).max() for U in Us) < 1e-8\n\ndef cls(R):\n    tr = np.trace(R)\n    if np.isclose(tr,3): return 'E'\n    if np.isclose(tr,0): return 'C3'\n    if np.isclose(tr,1): return 'C4'\n    ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))]); ax=ax/np.max(abs(ax))\n    return 'C2' if np.sum(np.isclose(abs(ax),0,atol=1e-6))==2 else \"C2'\"\nclasses=[cls(R) for R in G]\nprint(Counter(classes))\nirreps = {\n 'A1':{'E':1,'C3':1,'C2':1,'C4':1,\"C2'\":1},\n 'A2':{'E':1,'C3':1,'C2':1,'C4':-1,\"C2'\":-1},\n 'E': {'E':2,'C3':-1,'C2':2,'C4':0,\"C2'\":0},\n 'T1':{'E':3,'C3':0,'C2':-1,'C4':1,\"C2'\":-1},\n 'T2':{'E':3,'C3':0,'C2':-1,'C4':-1,\"C2'\":1}}\n\nNS=10; N=5\nstates=[sum(1<<i for i in c) for c in itertools.combinations(range(NS),N)]\nidx={s:i for i,s in enumerate(states)}; D=len(states)\ndef sgn(s,i): return (-1)**bin(s & ((1<<i)-1)).count('1')\ndef ann(i,s):\n    if not (s>>i)&1: return None\n    return sgn(s,i), s ^ (1<<i)\ndef cre(i,s):\n    if (s>>i)&1: return None\n    return sgn(s,i), s | (1<<i)\n\ndef onebody(h):\n    M=np.zeros((D,D))\n    for s in states:\n        for a in range(NS):\n            for b in range(NS):\n                if h[a,b]==0: continue\n                r=ann(b,s)\n                if r is None: continue\n                s1,s1s=r\n                r2=cre(a,s1s)\n                if r2 is None: continue\n                s2,s2s=r2\n                M[idx[s2s],idx[s]] += h[a,b]*s1*s2\n    return M\n\ncosg = P@P.T\nak={}\nfor k in (2,4):\n    Kk = eval_legendre(k,cosg)\n    A=np.zeros((5,5,5,5))\n    for a in range(5):\n        for c in range(5):\n            v1 = F[:,a]*F[:,c]*W\n            for b in range(5):\n                for d in range(5):\n                    A[a,c,b,d]= v1@Kk@(F[:,b]*F[:,d])\n    ak[k]=A\n\nBv=1.0; Cv=3473/800\nF4=441*Cv/35*Bv; F2=(441*Bv+5*F4)/9\nprint(\"F2,F4 (B units):\",F2,F4, \"C/B\", Cv)\nVso = np.zeros((NS,NS,NS,NS))\nfor a in range(NS):\n  for b in range(NS):\n    for c in range(NS):\n      for d in range(NS):\n        if (a%2)!=(c%2) or (b%2)!=(d%2): continue\n        Vso[a,b,c,d]=sum(Fk*ak[k][a//2,c//2,b//2,d//2] for k,Fk in ((2,F2),(4,F4)))\nterms=[(a,b,c,d,Vso[a,b,c,d]) for a in range(NS) for b in range(NS) for c in range(NS) for d in range(NS) if abs(Vso[a,b,c,d])>1e-12]\nH2=np.zeros((D,D))\nfor s in states:\n    for a,b,c,d,v in terms:\n        r=ann(c,s)\n        if r is None: continue\n        s1,s1s=r\n        r=ann(d,s1s)\n        if r is None: continue\n        s2,s2s=r\n        r=cre(b,s2s)\n        if r is None: continue\n        s3,s3s=r\n        r=cre(a,s3s)\n        if r is None: continue\n        s4,s4s=r\n        H2[idx[s4s],idx[s]] += 0.5*v*s1*s2*s3*s4\n\nSp=np.zeros((NS,NS))\nfor i in range(5): Sp[2*i,2*i+1]=1\nSpop=onebody(Sp); Smop=Spop.T\nSzop=onebody(np.diag(np.array([0.5,-0.5]*5)))\nS2=Smop@Spop+Szop@Szop+Szop\n\ndef fock(U):\n    M=np.kron(U,np.eye(2))\n    Out=np.zeros((D,D))\n    for s in states:\n        occ=[i for i in range(NS) if (s>>i)&1]\n        for T in states:\n            tocc=[i for i in range(NS) if (T>>i)&1]\n            Out[idx[T],idx[s]] = np.linalg.det(M[np.ix_(tocc,occ)])\n    return Out\nGs=[fock(U) for U in Us]\n\ndef hd_op(Dq):\n    return onebody(np.diag(np.repeat(h1*Dq,2)))\n\ndef levels(Dq):\n    H = hd_op(Dq)+H2\n    assert np.allclose(H@S2,S2@H,atol=1e-8)\n    ev2,vec2=np.linalg.eigh(S2)\n    res=[]\n    for S in [5/2,3/2,1/2]:\n        sel=np.isclose(ev2,S*(S+1))\n        PS = vec2[:,sel]@vec2[:,sel].T\n        for name,ir in irreps.items():\n            Pg=sum(ir[cl]*Gm for cl,Gm in zip(classes,Gs))*(ir['E']/24)\n            M=PS@Pg; M=(M+M.T)/2\n            ev,vec=np.linalg.eigh(M)\n            V=vec[:,ev>0.5]\n            if V.shape[1]==0: continue\n            Hs=V.T@H@V; Hs=(Hs+Hs.T)/2\n            for val in sorted(set(np.round(np.linalg.eigvalsh(Hs),6))):\n                res.append((S,name,val))\n    return res\n\nfor Dq in [1.45,2.55,3.25]:\n    res=levels(Dq)\n    g=[r for r in res if abs(r[0]-2.5)<1e-9]\n    E0=min(r[2] for r in g)\n    print(\"Dq\",Dq,\"ground\",g,\"\")\n    ex=sorted([(r[2]-E0,r[0],r[1]) for r in res if r[2]-E0>1e-6])\n    out=[]\n    for e,S,n in ex:\n        if out and abs(out[-1][0]-e)<1e-5: continue\n        out.append((e,S,n))\n    for e,S,n in out[:8]:\n        print(\"  E/B=%.4f  mult=%d  %s\"%(e,int(2*S+1),n))\nEOF\ntimeout 550 python3 d5.py",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "83cd88e711f4ded2da94f9dd8d5e758579aee411099b3be50fb5c639590ccd20",
+     "lines": 180,
+     "code": "import numpy as np, itertools\nfrom numpy.polynomial.legendre import leggauss\nfrom scipy.special import eval_legendre\nfrom collections import Counter\n\nnt, nph = 60, 120\nx, w = leggauss(nt)\nph = np.arange(nph)*2*np.pi/nph\nct, PH = np.meshgrid(x, ph, indexing='ij')\nst = np.sqrt(1-ct**2)\nP = np.stack([st*np.cos(PH), st*np.sin(PH), ct], -1).reshape(-1,3)\nW = (np.repeat(w[:,None], nph, 1)*(2*np.pi/nph)).reshape(-1)\nsw=np.sqrt(W)[:,None]\n\ndef forb(p):\n    X,Y,Z = p[:,0],p[:,1],p[:,2]\n    return np.stack([X*Y, Y*Z, Z*X, X**2-Y**2, 3*Z**2-(X**2+Y**2+Z**2)],1)\nF0 = forb(P)\nNRM = np.sqrt(np.einsum('k,ki->i', W, F0**2))\nF = F0/NRM\nh1 = np.array([-4,-4,-4,6,6],float)\n\ndef Rz(t):\n    c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])\nC4 = Rz(np.pi/2)\nC3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)\ndef key(R): return tuple(np.round(R,8).reshape(-1))\nG = {key(np.eye(3)):np.eye(3)}\nfrontier=[np.eye(3)]\nwhile frontier:\n    new=[]\n    for A in frontier:\n        for g in (C4,C3):\n            B = g@A\n            if key(B) not in G:\n                G[key(B)]=B; new.append(B)\n    frontier=new\nG = list(G.values()); assert len(G)==24\n\ndef U5(R):\n    Fp = forb(P@R)/NRM\n    Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)\n    return Ut\nUs = [U5(R) for R in G]\nassert max(np.abs(U.T@U-np.eye(5)).max() for U in Us) < 1e-8\n\ndef cls(R):\n    tr = np.trace(R)\n    if np.isclose(tr,3): return 'E'\n    if np.isclose(tr,0): return 'C3'\n    if np.isclose(tr,1): return 'C4'\n    ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))]); ax=ax/np.max(abs(ax))\n    return 'C2' if np.sum(np.isclose(abs(ax),0,atol=1e-6))==2 else \"C2'\"\nclasses=[cls(R) for R in G]\nprint(Counter(classes))\nirreps = {\n 'A1':{'E':1,'C3':1,'C2':1,'C4':1,\"C2'\":1},\n 'A2':{'E':1,'C3':1,'C2':1,'C4':-1,\"C2'\":-1},\n 'E': {'E':2,'C3':-1,'C2':2,'C4':0,\"C2'\":0},\n 'T1':{'E':3,'C3':0,'C2':-1,'C4':1,\"C2'\":-1},\n 'T2':{'E':3,'C3':0,'C2':-1,'C4':-1,\"C2'\":1}}\n\nNS=10; N=5\nstates=[sum(1<<i for i in c) for c in itertools.combinations(range(NS),N)]\nidx={s:i for i,s in enumerate(states)}; D=len(states)\ndef sgn(s,i): return (-1)**bin(s & ((1<<i)-1)).count('1')\ndef ann(i,s):\n    if not (s>>i)&1: return None\n    return sgn(s,i), s ^ (1<<i)\ndef cre(i,s):\n    if (s>>i)&1: return None\n    return sgn(s,i), s | (1<<i)\n\ndef onebody(h):\n    M=np.zeros((D,D))\n    for s in states:\n        for a in range(NS):\n            for b in range(NS):\n                if h[a,b]==0: continue\n                r=ann(b,s)\n                if r is None: continue\n                s1,s1s=r\n                r2=cre(a,s1s)\n                if r2 is None: continue\n                s2,s2s=r2\n                M[idx[s2s],idx[s]] += h[a,b]*s1*s2\n    return M\n\ncosg = P@P.T\nak={}\nfor k in (2,4):\n    Kk = eval_legendre(k,cosg)\n    A=np.zeros((5,5,5,5))\n    for a in range(5):\n        for c in range(5):\n            v1 = F[:,a]*F[:,c]*W\n            for b in range(5):\n                for d in range(5):\n                    A[a,c,b,d]= v1@Kk@(F[:,b]*F[:,d])\n    ak[k]=A\n\nBv=1.0; Cv=3473/800\nF4=441*Cv/35*Bv; F2=(441*Bv+5*F4)/9\nprint(\"F2,F4 (B units):\",F2,F4, \"C/B\", Cv)\nVso = np.zeros((NS,NS,NS,NS))\nfor a in range(NS):\n  for b in range(NS):\n    for c in range(NS):\n      for d in range(NS):\n        if (a%2)!=(c%2) or (b%2)!=(d%2): continue\n        Vso[a,b,c,d]=sum(Fk*ak[k][a//2,c//2,b//2,d//2] for k,Fk in ((2,F2),(4,F4)))\nterms=[(a,b,c,d,Vso[a,b,c,d]) for a in range(NS) for b in range(NS) for c in range(NS) for d in range(NS) if abs(Vso[a,b,c,d])>1e-12]\nH2=np.zeros((D,D))\nfor s in states:\n    for a,b,c,d,v in terms:\n        r=ann(c,s)\n        if r is None: continue\n        s1,s1s=r\n        r=ann(d,s1s)\n        if r is None: continue\n        s2,s2s=r\n        r=cre(b,s2s)\n        if r is None: continue\n        s3,s3s=r\n        r=cre(a,s3s)\n        if r is None: continue\n        s4,s4s=r\n        H2[idx[s4s],idx[s]] += 0.5*v*s1*s2*s3*s4\n\nSp=np.zeros((NS,NS))\nfor i in range(5): Sp[2*i,2*i+1]=1\nSpop=onebody(Sp); Smop=Spop.T\nSzop=onebody(np.diag(np.array([0.5,-0.5]*5)))\nS2=Smop@Spop+Szop@Szop+Szop\n\ndef fock(U):\n    M=np.kron(U,np.eye(2))\n    Out=np.zeros((D,D))\n    for s in states:\n        occ=[i for i in range(NS) if (s>>i)&1]\n        for T in states:\n            tocc=[i for i in range(NS) if (T>>i)&1]\n            Out[idx[T],idx[s]] = np.linalg.det(M[np.ix_(tocc,occ)])\n    return Out\nGs=[fock(U) for U in Us]\n\ndef hd_op(Dq):\n    return onebody(np.diag(np.repeat(h1*Dq,2)))\n\ndef levels(Dq):\n    H = hd_op(Dq)+H2\n    assert np.allclose(H@S2,S2@H,atol=1e-8)\n    ev2,vec2=np.linalg.eigh(S2)\n    res=[]\n    for S in [5/2,3/2,1/2]:\n        sel=np.isclose(ev2,S*(S+1))\n        PS = vec2[:,sel]@vec2[:,sel].T\n        for name,ir in irreps.items():\n            Pg=sum(ir[cl]*Gm for cl,Gm in zip(classes,Gs))*(ir['E']/24)\n            M=PS@Pg; M=(M+M.T)/2\n            ev,vec=np.linalg.eigh(M)\n            V=vec[:,ev>0.5]\n            if V.shape[1]==0: continue\n            Hs=V.T@H@V; Hs=(Hs+Hs.T)/2\n            for val in sorted(set(np.round(np.linalg.eigvalsh(Hs),6))):\n                res.append((S,name,val))\n    return res\n\nfor Dq in [1.45,2.55,3.25]:\n    res=levels(Dq)\n    g=[r for r in res if abs(r[0]-2.5)<1e-9]\n    E0=min(r[2] for r in g)\n    print(\"Dq\",Dq,\"ground\",g,\"\")\n    ex=sorted([(r[2]-E0,r[0],r[1]) for r in res if r[2]-E0>1e-6])\n    out=[]\n    for e,S,n in ex:\n        if out and abs(out[-1][0]-e)<1e-5: continue\n        out.append((e,S,n))\n    for e,S,n in out[:8]:\n        print(\"  E/B=%.4f  mult=%d  %s\"%(e,int(2*S+1),n))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d5.py",
+     "written_in_step": 11
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Counter({'C3': 8, 'C4': 6, \"C2'\": 6, 'C2': 3, 'E': 1})\nF2,F4 (B units): 79.38875 54.699749999999995 C/B 4.34125\nDq 1.45 ground [(2.5, 'A1', np.float64(-54876.465223))] \n  E/B=13234.8924  mult=4  T1\n  E/B=15536.9420  mult=4  T2\n  E/B=15695.2561  mult=4  E\n  E/B=15812.2239  mult=4  T1\n  E/B=16517.3465  mult=4  E\n  E/B=16777.2354  mult=4  A1\n  E/B=17635.9201  mult=4  T2\n  E/B=17743.5120  mult=4  T2\nDq 2.55 ground [(2.5, 'A1', np.float64(-54876.465223))] \n  E/B=13234.7318  mult=4  T1\n  E/B=15542.0728  mult=4  T2\n  E/B=15695.2561  mult=4  E\n  E/B=15812.3822  mult=4  T1\n  E/B=16517.3465  mult=4  E\n  E/B=16777.2354  mult=4  A1\n  E/B=17635.2796  mult=4  T2\n  E/B=17746.2223  mult=4  T2\nDq 3.25 ground [(2.5, 'A1', np.float64(-54876.465223))] \n  E/B=13234.5836  mult=4  T1\n  E/B=15545.3281  mult=4  T2\n  E/B=15695.2561  mult=4  E\n  E/B=15812.5281  mult=4  T1\n  E/B=16517.3465  mult=4  E\n  E/B=16777.2354  mult=4  A1\n  E/B=17634.8711  mult=4  T2\n  E/B=17747.9522  mult=4  T2",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "c,s=np.cos(t),np.sin(t); return np.array([[c,-s,0],[s,c,0],[0,0,1]])"
+    },
+    {
+     "script": "d5.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "C3 = np.array([[0,0,1],[1,0,0],[0,1,0]],float)"
+    },
+    {
+     "script": "d5.py",
+     "line": 42,
+     "method": "least_squares",
+     "text": "Ut,_,_,_ = np.linalg.lstsq(F*sw, Fp*sw, rcond=None)"
+    },
+    {
+     "script": "d5.py",
+     "line": 52,
+     "method": "eigen_solver",
+     "text": "ev,evec=np.linalg.eig(R); ax=np.real(evec[:,np.argmin(abs(ev-1))]); ax=ax/np.max(abs(ax))"
+    },
+    {
+     "script": "d5.py",
+     "line": 75,
+     "method": "matrix",
+     "text": "M=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 93,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d5.py",
+     "line": 105,
+     "method": "matrix",
+     "text": "Vso = np.zeros((NS,NS,NS,NS))"
+    },
+    {
+     "script": "d5.py",
+     "line": 113,
+     "method": "matrix",
+     "text": "H2=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 130,
+     "method": "matrix",
+     "text": "Sp=np.zeros((NS,NS))"
+    },
+    {
+     "script": "d5.py",
+     "line": 138,
+     "method": "matrix",
+     "text": "Out=np.zeros((D,D))"
+    },
+    {
+     "script": "d5.py",
+     "line": 153,
+     "method": "eigen_solver",
+     "text": "ev2,vec2=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "d5.py",
+     "line": 161,
+     "method": "eigen_solver",
+     "text": "ev,vec=np.linalg.eigh(M)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 12,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat << 'EOF' > dbg.py\nexec(open('d5.py').read().split('for Dq in')[0])\nprint(\"ak2 diag\", ak[2][0,0,0,0], ak[2][0,0,1,1], ak[2][0,1,0,1], \"ak4\",ak[4][0,0,0,0], ak[4][0,0,1,1])\nprint(\"H2 eig range\", np.linalg.eigvalsh(H2)[[0,-1]])\nprint(\"Vso max\", Vso.max(), len(terms))\nprint(\"hd eig\", np.linalg.eigvalsh(hd_op(1.0))[[0,-1]])\nEOF\npython3 dbg.py",
+   "scripts": [
+    {
+     "name": "dbg.py",
+     "sha256": "b3769d428e5e95d275f5a3cbebe55e8bf6e3bba89db9287ff1c9ebd80f76691e",
+     "lines": 5,
+     "code": "exec(open('d5.py').read().split('for Dq in')[0])\nprint(\"ak2 diag\", ak[2][0,0,0,0], ak[2][0,0,1,1], ak[2][0,1,0,1], \"ak4\",ak[4][0,0,0,0], ak[4][0,0,1,1])\nprint(\"H2 eig range\", np.linalg.eigvalsh(H2)[[0,-1]])\nprint(\"Vso max\", Vso.max(), len(terms))\nprint(\"hd eig\", np.linalg.eigvalsh(hd_op(1.0))[[0,-1]])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "dbg.py",
+     "written_in_step": 12
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Counter({'C3': 8, 'C4': 6, \"C2'\": 6, 'C2': 3, 'E': 1})\nF2,F4 (B units): 79.38875 54.699749999999995 C/B 4.34125\nak2 diag 29.016242382880577 -38.70138827269754 29.01755901831497 ak4 31.308799684681468 -3.424278162761515\nH2 eig range [-54876.46522314  22516.81601943]\nVso max 22218.93385720205 548\nhd eig [-20.  20.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "dbg.py",
+     "line": 3,
+     "method": "eigen_solver",
+     "text": "print(\"H2 eig range\", np.linalg.eigvalsh(H2)[[0,-1]])"
+    },
+    {
+     "script": "dbg.py",
+     "line": 5,
+     "method": "eigen_solver",
+     "text": "print(\"hd eig\", np.linalg.eigvalsh(hd_op(1.0))[[0,-1]])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 13,
+   "tool": "Bash",
+   "description": "",
+   "command": "sed -i 's/A\\[a,c,b,d\\]= v1@Kk@(F\\[:,b\\]\\*F\\[:,d\\])/A[a,c,b,d]= v1@Kk@(F[:,b]*F[:,d]*W)/' d5.py && grep -n \"v1@Kk\" d5.py && python3 dbg.py && timeout 550 python3 d5.py",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "dbg.py",
+     "written_in_step": 12
+    },
+    {
+     "name": "d5.py",
+     "written_in_step": 11
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "99:                    A[a,c,b,d]= v1@Kk@(F[:,b]*F[:,d]*W)\nCounter({'C3': 8, 'C4': 6, \"C2'\": 6, 'C2': 3, 'E': 1})\nF2,F4 (B units): 79.38875 54.699749999999995 C/B 4.34125\nak2 diag 0.08163265306122572 -0.04081632653061278 0.06122448979591888 ak4 0.0816326530612257 -0.009070294784580508\nH2 eig range [-95.7775      11.55813833]\nVso max 10.946000000001028 516\nhd eig [-20.  20.]\nCounter({'C3': 8, 'C4': 6, \"C2'\": 6, 'C2': 3, 'E': 1})\nF2,F4 (B units): 79.38875 54.699749999999995 C/B 4.34125\nDq 1.45 ground [(2.5, 'A1', np.float64(-95.7775))] \n  E/B=20.4560  mult=4  T1\n  E/B=25.0022  mult=2  T2\n  E/B=26.2456  mult=4  T2\n  E/B=31.7062  mult=4  A1\n  E/B=35.4264  mult=2  A2\n  E/B=35.6640  mult=4  T2\n  E/B=35.7439  mult=2  T1\n  E/B=37.5154  mult=2  T2\nDq 2.55 ground [(2.5, 'A1', np.float64(-95.7775))] \n  E/B=4.1059  mult=2  T2\n  E/B=9.7984  mult=4  T1\n  E/B=16.7773  mult=4  T2\n  E/B=24.8605  mult=2  A2\n  E/B=25.2015  mult=2  T1\n  E/B=27.4821  mult=2  T2\n  E/B=29.8300  mult=2  E\n  E/B=31.7062  mult=4  A1\nDq 3.25 ground [(2.5, 'A1', np.float64(-95.7775))] \n  E/B=2.9205  mult=4  T1\n  E/B=10.1878  mult=4  T2\n  E/B=17.9983  mult=2  A2\n  E/B=18.3434  mult=2  T1\n  E/B=20.8255  mult=2  T2\n  E/B=23.1792  mult=2  E\n  E/B=29.9290  mult=2  T1\n  E/B=31.7062  mult=4  A1",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": [
+    "points[0].dq_over_b",
+    "points[1].dq_over_b",
+    "points[2].dq_over_b",
+    "points[3].dq_over_b",
+    "points[4].dq_over_b",
+    "points[5].dq_over_b",
+    "points[6].dq_over_b",
+    "points[7].dq_over_b",
+    "points[8].dq_over_b"
+   ]
+  },
+  {
+   "index": 14,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat << 'EOF' > dbg2.py\nexec(open('d5.py').read().split('for Dq in')[0])\nfor Dq in [0.0,2.55]:\n    H=hd_op(Dq)+H2\n    e=np.linalg.eigvalsh(H)\n    print(\"Dq\",Dq, np.round(np.unique(np.round(e,4)),3))\n    print(\"ev2 sectors\", np.unique(np.round(np.linalg.eigvalsh(S2),3),return_counts=True))\n    res=levels(Dq)\n    for r in res: print(r)\nEOF\npython3 dbg2.py 2>&1 | head -80",
+   "scripts": [
+    {
+     "name": "dbg2.py",
+     "sha256": "0cb1c4900ad4b3c948612f0b5e17bbd678fdd4905f3bc01e1797570483389406",
+     "lines": 8,
+     "code": "exec(open('d5.py').read().split('for Dq in')[0])\nfor Dq in [0.0,2.55]:\n    H=hd_op(Dq)+H2\n    e=np.linalg.eigvalsh(H)\n    print(\"Dq\",Dq, np.round(np.unique(np.round(e,4)),3))\n    print(\"ev2 sectors\", np.unique(np.round(np.linalg.eigvalsh(S2),3),return_counts=True))\n    res=levels(Dq)\n    for r in res: print(r)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "dbg2.py",
+     "written_in_step": 14
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Counter({'C3': 8, 'C4': 6, \"C2'\": 6, 'C2': 3, 'E': 1})\nF2,F4 (B units): 79.38875 54.699749999999995 C/B 4.34125\nDq 0.0 [-95.778 -64.071 -64.071 -58.389 -58.389 -57.071 -57.071 -50.048 -43.606\n -43.389 -43.389 -42.365 -39.365 -39.048 -35.048 -29.048 -21.365 -14.365\n   2.635  11.558]\nev2 sectors (array([0.75, 3.75, 8.75]), array([150,  96,   6]))\n(2.5, 'A1', np.float64(-95.7775))\n(1.5, 'A1', np.float64(-64.07125))\n(1.5, 'A2', np.float64(-43.38875))\n(1.5, 'E', np.float64(-64.07125))\n(1.5, 'E', np.float64(-57.07125))\n(1.5, 'T1', np.float64(-64.07125))\n(1.5, 'T1', np.float64(-58.38875))\n(1.5, 'T1', np.float64(-43.38875))\n(1.5, 'T2', np.float64(-64.07125))\n(1.5, 'T2', np.float64(-57.07125))\n(1.5, 'T2', np.float64(-43.38875))\n(0.5, 'A1', np.float64(-50.0475))\n(0.5, 'A1', np.float64(-39.0475))\n(0.5, 'A1', np.float64(-29.0475))\n(0.5, 'A1', np.float64(-14.365))\n(0.5, 'A2', np.float64(-50.0475))\n(0.5, 'A2', np.float64(-42.365))\n(0.5, 'A2', np.float64(-35.0475))\n(0.5, 'E', np.float64(-50.0475))\n(0.5, 'E', np.float64(-43.605638))\n(0.5, 'E', np.float64(-39.365))\n(0.5, 'E', np.float64(-39.0475))\n(0.5, 'E', np.float64(-21.365))\n(0.5, 'E', np.float64(-14.365))\n(0.5, 'E', np.float64(11.558138))\n(0.5, 'T1', np.float64(-50.0475))\n(0.5, 'T1', np.float64(-42.365))\n(0.5, 'T1', np.float64(-39.365))\n(0.5, 'T1', np.float64(-39.0475))\n(0.5, 'T1', np.float64(-35.0475))\n(0.5, 'T1', np.float64(-14.365))\n(0.5, 'T1', np.float64(2.635))\n(0.5, 'T2', np.float64(-50.0475))\n(0.5, 'T2', np.float64(-43.605638))\n(0.5, 'T2', np.float64(-42.365))\n(0.5, 'T2', np.float64(-39.365))\n(0.5, 'T2', np.float64(-39.0475))\n(0.5, 'T2', np.float64(-35.0475))\n(0.5, 'T2', np.float64(-21.365))\n(0.5, 'T2', np.float64(-14.365))\n(0.5, 'T2', np.float64(11.558138))\nDq 2.55 [-95.778 -91.672 -85.979 -79.    -70.917 -70.576 -68.295 -65.948 -64.071\n -64.071 -60.745 -59.546 -57.071 -57.071 -55.976 -54.453 -51.156 -48.085\n -47.533 -47.353 -43.389 -42.652 -40.211 -39.965 -38.286 -38.102 -33.063\n -32.337 -32.17  -29.446 -26.887 -24.786 -19.168 -18.927 -18.257 -11.974\n  -9.601  -8.608  -5.245  -2.185   3.094   8.448  24.458  25.855]\nev2 sectors (array([0.75, 3.75, 8.75]), array([150,  96,   6]))\n(2.5, 'A1', np.float64(-95.7775))\n(1.5, 'A1', np.float64(-64.07125))\n(1.5, 'A2', np.float64(-43.38875))\n(1.5, 'E', np.float64(-64.07125))\n(1.5, 'E', np.float64(-57.07125))\n(1.5, 'T1', np.float64(-85.979144))\n(1.5, 'T1', np.float64(-47.532983))\n(1.5, 'T1', np.float64(-32.336624))\n(1.5, 'T2', np.float64(-79.000158))\n(1.5, 'T2', np.float64(-60.745082))\n(1.5, 'T2', np.float64(-24.78601))\n(0.5, 'A1', np.float64(-54.45317))\n(0.5, 'A1', np.float64(-48.085204))\n(0.5, 'A1', np.float64(-33.063019))\n(0.5, 'A1', np.float64(3.093893))\n(0.5, 'A2', np.float64(-70.916987))\n(0.5, 'A2', np.float64(-38.286433))\n(0.5, 'A2', np.float64(-18.25658))\n(0.5, 'E', np.float64(-65.947516))\n(0.5, 'E', np.float64(-51.155617))\n(0.5, 'E', np.float64(-42.652535))\n(0.5, 'E', np.float64(-32.17041))\n(0.5, 'E', np.float64(-19.167938))\n(0.5, 'E', np.float64(-9.601239))\n(0.5, 'E', np.float64(24.457755))\n(0.5, 'T1', np.float64(-70.575955))\n(0.5, 'T1', np.float64(-59.545537))",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "dbg2.py",
+     "line": 4,
+     "method": "eigen_solver",
+     "text": "e=np.linalg.eigvalsh(H)"
+    },
+    {
+     "script": "dbg2.py",
+     "line": 6,
+     "method": "eigen_solver",
+     "text": "print(\"ev2 sectors\", np.unique(np.round(np.linalg.eigvalsh(S2),3),return_counts=True))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 15,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat << 'EOF' > go2.py\nexec(open('d5.py').read().split('for Dq in')[0])\nfor Dq in [1.45,2.55,3.25]:\n    res=levels(Dq)\n    allE=sorted(res,key=lambda r:r[2])\n    E0=allE[0][2]\n    print(\"Dq\",Dq,\"global ground:\",allE[0][0],allE[0][1],\"E0=\",E0, \" sextet A1 at\", [r[2]-E0 for r in res if abs(r[0]-2.5)<1e-9])\n    out=[]\n    for S,n,v in allE:\n        e=v-E0\n        if e<1e-6: continue\n        if out and abs(out[-1][0]-e)<1e-5: continue\n        out.append((e,S,n))\n    for e,S,n in out[:6]:\n        print(\"   E/B=%.4f  %s%s  (S=%g)\"%(e,int(2*S+1),n,S))\nEOF\npython3 go2.py 2>&1 | grep -v Counter | grep -v F2",
+   "scripts": [
+    {
+     "name": "go2.py",
+     "sha256": "df8f27baac9394983b51050e581d1bd695237c42a6062399b27ca191dc4e3a11",
+     "lines": 14,
+     "code": "exec(open('d5.py').read().split('for Dq in')[0])\nfor Dq in [1.45,2.55,3.25]:\n    res=levels(Dq)\n    allE=sorted(res,key=lambda r:r[2])\n    E0=allE[0][2]\n    print(\"Dq\",Dq,\"global ground:\",allE[0][0],allE[0][1],\"E0=\",E0, \" sextet A1 at\", [r[2]-E0 for r in res if abs(r[0]-2.5)<1e-9])\n    out=[]\n    for S,n,v in allE:\n        e=v-E0\n        if e<1e-6: continue\n        if out and abs(out[-1][0]-e)<1e-5: continue\n        out.append((e,S,n))\n    for e,S,n in out[:6]:\n        print(\"   E/B=%.4f  %s%s  (S=%g)\"%(e,int(2*S+1),n,S))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "go2.py",
+     "written_in_step": 15
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq 1.45 global ground: 2.5 A1 E0= -95.7775  sextet A1 at [np.float64(0.0)]\n   E/B=20.4560  4T1  (S=1.5)\n   E/B=25.0022  2T2  (S=0.5)\n   E/B=26.2456  4T2  (S=1.5)\n   E/B=31.7062  4A1  (S=1.5)\n   E/B=35.4264  2A2  (S=0.5)\n   E/B=35.6640  4T2  (S=1.5)\nDq 2.55 global ground: 2.5 A1 E0= -95.7775  sextet A1 at [np.float64(0.0)]\n   E/B=4.1059  2T2  (S=0.5)\n   E/B=9.7984  4T1  (S=1.5)\n   E/B=16.7773  4T2  (S=1.5)\n   E/B=24.8605  2A2  (S=0.5)\n   E/B=25.2015  2T1  (S=0.5)\n   E/B=27.4821  2T2  (S=0.5)\nDq 3.25 global ground: 0.5 T2 E0= -105.226324  sextet A1 at [np.float64(9.448824000000002)]\n   E/B=9.4488  6A1  (S=2.5)\n   E/B=12.3693  4T1  (S=1.5)\n   E/B=19.6366  4T2  (S=1.5)\n   E/B=27.4471  2A2  (S=0.5)\n   E/B=27.7923  2T1  (S=0.5)\n   E/B=30.2743  2T2  (S=0.5)",
+   "stdout_truncated": false,
+   "methods": [
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "go2.py",
+     "line": 2,
+     "method": "typed_table",
+     "text": "for Dq in [1.45,2.55,3.25]:"
+    }
+   ],
+   "produces": [
+    "points[0].e_over_b",
+    "points[2].e_over_b",
+    "points[3].e_over_b",
+    "points[4].e_over_b",
+    "points[5].e_over_b",
+    "points[6].e_over_b",
+    "points[7].e_over_b",
+    "points[8].e_over_b"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "points[0].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    11,
+    13,
+    15
+   ],
+   "typed_in_steps": [
+    11,
+    15
+   ],
+   "source_step": 13
+  },
+  {
+   "path": "points[0].e_over_b",
+   "value": 20.46,
+   "weak": false,
+   "steps": [
+    13,
+    15
+   ],
+   "typed_in_steps": [],
+   "source_step": 15
+  },
+  {
+   "path": "points[1].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    11,
+    13,
+    15
+   ],
+   "typed_in_steps": [
+    11,
+    15
+   ],
+   "source_step": 13
+  },
+  {
+   "path": "points[1].e_over_b",
+   "value": 25.0,
+   "weak": true,
+   "steps": [
+    13,
+    15
+   ],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[2].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    11,
+    13,
+    15
+   ],
+   "typed_in_steps": [
+    11,
+    15
+   ],
+   "source_step": 13
+  },
+  {
+   "path": "points[2].e_over_b",
+   "value": 26.25,
+   "weak": false,
+   "steps": [
+    13,
+    15
+   ],
+   "typed_in_steps": [],
+   "source_step": 15
+  },
+  {
+   "path": "points[3].dq_over_b",
+   "value": 2.55,
+   "weak": false,
+   "steps": [
+    11,
+    13,
+    14,
+    15
+   ],
+   "typed_in_steps": [
+    11,
+    14,
+    15
+   ],
+   "source_step": 13
+  },
+  {
+   "path": "points[3].e_over_b",
+   "value": 4.11,
+   "weak": false,
+   "steps": [
+    13,
+    15
+   ],
+   "typed_in_steps": [],
+   "source_step": 15
+  },
+  {
+   "path": "points[4].dq_over_b",
+   "value": 2.55,
+   "weak": false,
+   "steps": [
+    11,
+    13,
+    14,
+    15
+   ],
+   "typed_in_steps": [
+    11,
+    14,
+    15
+   ],
+   "source_step": 13
+  },
+  {
+   "path": "points[4].e_over_b",
+   "value": 9.8,
+   "weak": false,
+   "steps": [
+    13,
+    15
+   ],
+   "typed_in_steps": [],
+   "source_step": 15
+  },
+  {
+   "path": "points[5].dq_over_b",
+   "value": 2.55,
+   "weak": false,
+   "steps": [
+    11,
+    13,
+    14,
+    15
+   ],
+   "typed_in_steps": [
+    11,
+    14,
+    15
+   ],
+   "source_step": 13
+  },
+  {
+   "path": "points[5].e_over_b",
+   "value": 16.78,
+   "weak": false,
+   "steps": [
+    13,
+    15
+   ],
+   "typed_in_steps": [],
+   "source_step": 15
+  },
+  {
+   "path": "points[6].dq_over_b",
+   "value": 3.25,
+   "weak": false,
+   "steps": [
+    11,
+    13,
+    15
+   ],
+   "typed_in_steps": [
+    11,
+    15
+   ],
+   "source_step": 13
+  },
+  {
+   "path": "points[6].e_over_b",
+   "value": 9.45,
+   "weak": false,
+   "steps": [
+    15
+   ],
+   "typed_in_steps": [],
+   "source_step": 15
+  },
+  {
+   "path": "points[7].dq_over_b",
+   "value": 3.25,
+   "weak": false,
+   "steps": [
+    11,
+    13,
+    15
+   ],
+   "typed_in_steps": [
+    11,
+    15
+   ],
+   "source_step": 13
+  },
+  {
+   "path": "points[7].e_over_b",
+   "value": 12.37,
+   "weak": false,
+   "steps": [
+    15
+   ],
+   "typed_in_steps": [],
+   "source_step": 15
+  },
+  {
+   "path": "points[8].dq_over_b",
+   "value": 3.25,
+   "weak": false,
+   "steps": [
+    11,
+    13,
+    15
+   ],
+   "typed_in_steps": [
+    11,
+    15
+   ],
+   "source_step": 13
+  },
+  {
+   "path": "points[8].e_over_b",
+   "value": 19.64,
+   "weak": false,
+   "steps": [
+    15
+   ],
+   "typed_in_steps": [],
+   "source_step": 15
+  }
+ ],
+ "summary": {
+  "n_steps": 16,
+  "n_scripts": 13,
+  "n_failed_steps": 6,
+  "n_values": 18,
+  "n_linked": 17,
+  "n_weak": 1,
+  "source_steps": [
+   13,
+   15
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares",
+   "typed_table"
+  ],
+  "edits_in_place": true
+ }
+}

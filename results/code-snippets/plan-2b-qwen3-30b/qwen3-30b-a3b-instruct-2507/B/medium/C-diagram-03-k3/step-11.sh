@@ -1,0 +1,1 @@
+ls -la <B_VENV>/lib/python3.14/site-packages/

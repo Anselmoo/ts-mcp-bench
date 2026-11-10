@@ -1,0 +1,1 @@
+echo $HOME; cd "$HOME" 2>/dev/null && touch x && echo writable; ls -ld /dev/shm 2>/dev/null; touch /dev/shm/t && echo shm-ok

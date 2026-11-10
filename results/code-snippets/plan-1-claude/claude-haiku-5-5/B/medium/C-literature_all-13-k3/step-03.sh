@@ -1,0 +1,1 @@
+cd "$(mktemp -d 2>/dev/null || echo /dev/shm)" 2>/dev/null; pwd; df -h . | tail -1; touch test_w && echo ok

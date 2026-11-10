@@ -1,0 +1,1 @@
+for d in /tmp /tmp/tsbench-home-xehwqch9 /var/tmp /dev/shm "$HOME" ; do printf "%s: " "$d"; (touch "$d/.wtest_$$" 2>&1 && echo ok && rm -f "$d/.wtest_$$") || echo fail; done; mount | grep -E " /tmp| / " | head

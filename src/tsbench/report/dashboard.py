@@ -1,13 +1,16 @@
 """The dashboard: one self-contained HTML page over one or more run sets.
 
     tsbench report dashboard --runs DIR [--runs DIR2 ...] [--out report.html] [--title T]
+                             [--split pilot|confirmatory] [--i-have-preregistered DOI]
 
 Inputs per run set (tsbench.score.run_sets, found under each `--runs` folder): scores.csv (scored on demand with
 tsbench.score.score.score_dir when missing), MANIFEST.json, plan.jsonl, metrics/*.csv and views/ (linked when present).
 What it shows: share correct per condition and the paired differences between conditions with their intervals, share
-correct and efficiency per model and condition, an outcome grid per task, the pilot tasks that were asked, every run in
-a sortable table, the images the models saved and the facts of each manifest. Task text comes only from the pilot split;
-rows whose task id is not a pilot task are shown by id and never looked up. The page is the template
+correct and efficiency per model and condition, an outcome grid per task, the tasks that were asked, every run in a
+sortable table, the images the models saved and the facts of each manifest. Task text comes only from the split of the
+page (`--split`, default pilot); rows whose task id is not a task of that split are shown by id and never looked up. A
+run set of the confirmatory split is refused without `--i-have-preregistered <DOI>`; its page names the DOI and shows
+the preregistered tests of each run set that holds hypotheses.json (report/prereg.py). The page is the template
 templates/dashboard.html.j2 (macros in dashboard_macros.html.j2); `context()` builds its data as plain strings, numbers,
 lists and dicts. The template escapes every datum; the page has inline CSS and JS, a strict Content-Security-Policy and
 no external resource.
@@ -23,17 +26,30 @@ import argparse
 import csv
 import json
 import pathlib
+import sys
 
 import numpy as np
 
-from tsbench.report import page
-from tsbench.report.base import HARNESS, as_bool, as_number, as_run_sets, median, share
+from tsbench.report import page, prereg
+from tsbench.report.base import (
+    HARNESS,
+    SPLITS,
+    as_bool,
+    as_number,
+    as_run_sets,
+    median,
+    model_key,
+    share,
+    solved,
+    split_refusal,
+    split_tasks,
+)
 from tsbench.report.page import href
 from tsbench.report.svg.base import round_half_up
 from tsbench.score.run_sets import run_sets_in
 from tsbench.stats import analysis
 
-__all__ = ["build_html", "collect", "context", "design", "load_pilot_tasks", "main"]
+__all__ = ["build_html", "collect", "context", "design", "load_pilot_tasks", "load_tasks", "main"]
 
 # The tools of each condition (src/tsbench/conditions; docs/methods.md, section 3).
 TOOLS = {"A": "none", "B": "Bash with Python (numpy, scipy, sympy, matplotlib)",
@@ -54,9 +70,13 @@ def _fmt(v, nd=0):
 
 
 def load_pilot_tasks() -> dict:
-    """Pilot tasks by id (only the pilot split is ever loaded)."""
-    from tsbench.tasks import load
-    return {t["id"]: t for t in load("pilot") if t.get("split", "pilot") == "pilot"}
+    """Pilot tasks by id."""
+    return split_tasks("pilot")
+
+
+def load_tasks(split: str = "pilot") -> dict:
+    """The tasks of `split` by id (`load_pilot_tasks` for the pilot)."""
+    return load_pilot_tasks() if split == "pilot" else split_tasks(split)
 
 
 def _read_csv(path: pathlib.Path) -> list[dict]:
@@ -71,14 +91,19 @@ def _read_json(path: pathlib.Path):
         return None
 
 
+SESSION_END = ("interrupted", "stop", "stopped_by_budget")  # the manifest fields that say how a session ended
+
+
 def read_manifest(d: pathlib.Path) -> dict | None:
     """The manifest of a run set folder over all its sessions, or None when it has none. `--resume` renames the
     manifest of the earlier session to `MANIFEST.prev-<stamp>.json` and starts a new one, so the run set is read from
     `MANIFEST.json` and every `MANIFEST.prev-*.json`: the fields are those of the last session, except the window
     (earliest start, latest end), the counts (summed over the sessions; `planned` the largest; `skipped` that of the
     first session, since the runs a later session skips are the ones an earlier session did), `flagged_runs` and
-    `aborted_cells` (joined without repeats). `total_cost_usd` is the last session's: a resumed session starts from the
-    cost of the runs already done. `sessions` is the number of manifests read."""
+    `aborted_cells` (joined without repeats). The counts `not_run_*` are those of the last session: a run an earlier
+    session left out and a later one ran is no run that was not started. `total_cost_usd` is the last session's: a
+    resumed session starts from the cost of the runs already done. `sessions` is the number of manifests read and
+    `earlier_sessions` says how each of them but the last ended (`interrupted`, `stop`, `stopped_by_budget`)."""
     sessions = [m for p in [*sorted(d.glob("MANIFEST.prev-*.json")), d / "MANIFEST.json"]
                 if p.is_file() and isinstance(m := _read_json(p), dict)]
     if not sessions:
@@ -95,6 +120,8 @@ def read_manifest(d: pathlib.Path) -> dict | None:
                 counts[key] = max(counts.get(key, 0), n) if key == "planned" else counts.get(key, 0) + n
     if "skipped" in counts:
         counts["skipped"] = (sessions[0].get("counts") or {}).get("skipped", 0)
+    for key in [k for k in counts if k.startswith("not_run_")]:
+        counts[key] = (last.get("counts") or {}).get(key, 0)
 
     def joined(key: str) -> list:
         out: list = []
@@ -109,7 +136,8 @@ def read_manifest(d: pathlib.Path) -> dict | None:
         flagged[f.get("run_id", len(flagged)) if isinstance(f, dict) else len(flagged)] = f
     merged = {**last, "start_time_utc": min(starts, default=None), "end_time_utc": max(ends, default=None),
               "flagged_runs": list(flagged.values()), "aborted_cells": joined("aborted_cells"),
-              "sessions": len(sessions)}
+              "sessions": len(sessions), "earlier_sessions": [{k: m.get(k) for k in SESSION_END}
+                                                              for m in sessions[:-1]]}
     if counts:
         merged["counts"] = counts
     return merged
@@ -336,7 +364,7 @@ def _text(v) -> str:
 def _facts(data) -> list:
     """The tiles about the runs: {label, value, caption}; the value stays short, the explanation is the caption."""
     sets, rows = data["sets"], data["rows"]
-    models = sorted({r.get("model", "") for r in rows})
+    models = sorted({r.get("model", "") for r in rows}, key=model_key)
     conds = sorted({r["_cond"] for r in rows}, key=lambda c: (c not in BASE, c))
     n_na = sum(r.get("_na") == "na429" for r in rows)
     n_resc = sum(bool(as_bool(r.get("rescued"))) for r in rows)
@@ -356,14 +384,16 @@ def _facts(data) -> list:
     return items
 
 
-def _stamp(data, period: str) -> str:
-    """The line under the title: what the page counts, before any number is read."""
+def _stamp(data, period: str, split: str = "pilot", doi: str | None = None) -> str:
+    """The line under the title: what the page counts, before any number is read. The split is named when every row
+    is a task of it; a confirmatory page names its preregistration."""
     rows = data["rows"]
     models = {r.get("model", "") for r in rows}
     tasks = {r.get("task_id") for r in rows}
     ks = [int(k) for k in (as_number(r.get("k_index")) for r in rows) if k is not None]
-    pilot = bool(rows) and all(r["_task"] is not None for r in rows)
-    parts = (["pilot split"] if pilot else []) + [page.plural(len(tasks), "task")] \
+    known = bool(rows) and all(r["_task"] is not None for r in rows)
+    parts = ([f"{split} split"] if known else []) + ([f"preregistered {doi}"] if split == "confirmatory" and doi
+                                                     else []) + [page.plural(len(tasks), "task")] \
         + ([f"k = {max(ks)}"] if ks else []) + [page.plural(len(rows), "run"), page.plural(len(models), "model"),
                                                 page.plural(len(data["sets"]), "run set"), period]
     return " · ".join(parts)
@@ -590,7 +620,7 @@ def _verdict(data) -> dict | None:
     if not rows:
         return None
     cells = _by_cell(rows)
-    models = sorted({m for m, _ in cells})
+    models = sorted({m for m, _ in cells}, key=model_key)
     ns = {m: max([len(cells.get((m, k), [])) for k in BASE] + [0]) for m in models}
     nmax = max([len(rs) for rs in cells.values()] + list(ns.values()) + [1])
     cards = []
@@ -615,9 +645,14 @@ def _tasks(data) -> list:
         refs = ", ".join(f"{k}={v}" for k, v in ref.items() if v is not None) or "none (out of scope)"
         if t.get("expect_out_of_scope"):
             refs = "out of scope"
-        schema = ", ".join(t.get("required") or []) + (" or out_of_scope" if t.get("expect_out_of_scope") else "")
+        scope = ["out_of_scope"] if t.get("expect_out_of_scope") else []
+        schema = " or ".join(x for x in (", ".join(t.get("required") or []), *scope) if x)
         if t.get("answer_schema") == "batch":  # keep long references out of the table
             refs, schema = f"{len(ref.get('values') or [])} computed values", "values (input, result)"
+        elif t.get("answer_schema") == "curve":
+            curve = t.get("reference_curve") or []
+            refs = f"{len(curve)} energies E/B at {len({p['dq_over_b'] for p in curve})} Dq/B points"
+            schema = "points (dq_over_b, term, e_over_b)"
         elif t.get("answer_schema") == "pairing":
             refs = f"{len(ref.get('nodes') or [])} term nodes, {len(ref.get('edges') or [])} shared-term edges"
             schema = "nodes, edges"
@@ -681,7 +716,7 @@ def _charts(data) -> dict | None:
     if not rows:
         return None
     cells = _by_cell(rows)
-    models = sorted({m for m, _ in cells})
+    models = sorted({m for m, _ in cells}, key=model_key)
     conds = sorted({c for _, c in cells}, key=lambda c: (c not in BASE, c))
 
     def med(col):
@@ -718,11 +753,14 @@ _GRID_ICON = {
 def _grid(data) -> dict | None:
     """Every task by class: one small table per task class, a row per task and a cell per model and condition with
     its outcome (icon and colour) and a mark when the run carries a flag (B ran no code, C made no TS-MCP call); the
-    last row counts correct of evaluable runs per column. None without runs."""
+    last row counts correct of evaluable runs per column. The outcome of a cell is the verdict of the report
+    (`base.solved`); a cell that is not solved is `harness` when one of its runs stopped so, else `wrong`. `heads` are
+    the model heads, in the order of the cells. None without runs."""
     rows = data["rows"]
     if not rows:
         return None
-    series = sorted({(_text(r.get("model")), r["_cond"]) for r in rows}, key=lambda x: (x[0], x[1] not in BASE, x[1]))
+    series = sorted({(_text(r.get("model")), r["_cond"]) for r in rows},
+                    key=lambda x: (model_key(x[0]), x[1] not in BASE, x[1]))
     idx: dict = {}
     for r in rows:
         idx.setdefault((r.get("task_id"), (_text(r.get("model")), r["_cond"])), []).append(r)
@@ -747,7 +785,7 @@ def _grid(data) -> dict | None:
                     k = "none"
                 else:
                     k = "na429" if not ev else (
-                        "correct" if all(x == "correct" for x in ev) else "harness" if "harness" in ev else "wrong")
+                        "correct" if solved(_evaluable(rs)) else "harness" if "harness" in ev else "wrong")
                 tot[j][0] += ev.count("correct")
                 tot[j][1] += len(ev)
                 flags = sorted({f for r in _evaluable(rs) for f in r["_flags"]})
@@ -760,10 +798,11 @@ def _grid(data) -> dict | None:
             body.append({"task": _text(t), "cells": cells})
         classes.append({"cls": cls, "n": len(body), "rows": body,
                         "total": [f"{c}/{n}" if n else "–" for c, n in tot]})
-    models = sorted({m for m, _ in series})
+    heads = {m: sum(s[0] == m for s in series) for m, _ in series}  # first seen in `series`, the order of the cells
     legend = [{"swatch": "notrun" if k == "none" else k, "icon": _GRID_ICON[k], "name": names[k]} for k in names
               if k in states]
-    return {"series": [{"model": m, "cond": c} for m, c in series], "models": models if len(models) > 1 else [],
+    return {"series": [{"model": m, "cond": c} for m, c in series],
+            "heads": list(heads.items()) if len(heads) > 1 else [],
             "classes": classes, "legend": legend, "flagged": flagged, "min": 120 + 34 * len(series)}
 
 
@@ -798,26 +837,29 @@ def _manifests(data) -> list:
 
 def default_title(data: dict) -> str:
     """'TS-MCP benchmark: qwen3.5-397b-a17b' for up to three models, else 'TS-MCP benchmark'."""
-    models = sorted({_text(r.get("model")) for r in data["rows"]})
+    models = sorted({_text(r.get("model")) for r in data["rows"]}, key=model_key)
     return "TS-MCP benchmark" + (f": {', '.join(models)}" if 0 < len(models) <= 3 else "")
 
 
-def context(data: dict, title: str | None = None) -> dict:
+def context(data: dict, title: str | None = None, split: str = "pilot", doi: str | None = None) -> dict:
     """The data of the page as plain strings, numbers, lists and dicts; templates/dashboard.html.j2 turns it into HTML.
-    `verdict`, `charts` and `grid` are None when there are no runs."""
+    `verdict`, `charts` and `grid` are None when there are no runs. `split` and `doi` are those of the page; the
+    preregistered tests (`prereg`) are read only for the confirmatory split."""
     provenance = _provenance(data)
     run_sets = _run_sets(data)
     n_sets = sum(len(f["sets"]) for f in run_sets)
-    return {"title": title or default_title(data), "stamp": _stamp(data, provenance["period"]), "facts": _facts(data),
+    tests = prereg.hypotheses([pathlib.Path(s["path"]) for s in data["sets"]]) if split == "confirmatory" else []
+    return {"title": title or default_title(data), "stamp": _stamp(data, provenance["period"], split, doi),
+            "split": split, "doi": doi, "prereg": tests, "facts": _facts(data),
             "run_sets": run_sets, "run_sets_head": f"{page.plural(n_sets, 'run set')} in "
                                                    f"{page.plural(len(run_sets), 'family', 'families')}",
             "notes": list(data["notes"]), "verdict": _verdict(data), "charts": _charts(data), "grid": _grid(data),
             "tasks": _tasks(data), "runs": _runs(data), "images": _images(data), "provenance": provenance}
 
 
-def design(data: dict) -> dict:
+def design(data: dict, split: str = "pilot", doi: str | None = None) -> dict:
     """The study design as the runs show it: per condition its tools, runs and evaluable runs; tasks, task classes,
-    models and the largest repetition index k."""
+    models and the largest repetition index k; the split of the page and, for the confirmatory split, its DOI."""
     rows = data["rows"]
     out = []
     for k in ("A", "B", "C"):
@@ -827,15 +869,16 @@ def design(data: dict) -> dict:
     tasks = {r.get("task_id") for r in rows}
     classes = {(r.get("_task") or {}).get("class") or r.get("class") for r in rows}
     ks = [int(float(r["k_index"])) for r in rows if str(r.get("k_index") or "").strip()]
-    models = sorted({r.get("model", "") for r in rows})
+    models = sorted({r.get("model", "") for r in rows}, key=model_key)
     return {"rows": out, "tasks": page.plural(len(tasks), "task"), "classes": page.plural(len(classes), "class",
                                                                                          "classes"),
-            "models": ", ".join(models), "n_models": len(models), "k": max(ks) if ks else None}
+            "models": ", ".join(models), "n_models": len(models), "k": max(ks) if ks else None,
+            "split": split, "doi": doi}
 
 
-def build_html(data: dict, title: str | None = None) -> str:
-    ctx = context(data, title)
-    return page.render("dashboard.html.j2", **ctx, ctx=ctx, design=design(data))
+def build_html(data: dict, title: str | None = None, split: str = "pilot", doi: str | None = None) -> str:
+    ctx = context(data, title, split, doi)
+    return page.render("dashboard.html.j2", **ctx, ctx=ctx, design=design(data, split, doi))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -846,14 +889,20 @@ def main(argv: list[str] | None = None) -> int:
         "--out", default=None, metavar="FILE", help="output file (default <first --runs folder>/report.html)"
     )
     ap.add_argument("--title", default=None, help="page title (default: TS-MCP benchmark and the models)")
+    ap.add_argument("--split", default="pilot", choices=SPLITS, help="the task split of the run sets (default pilot)")
+    ap.add_argument("--i-have-preregistered", dest="preregistered", metavar="DOI", default=None,
+                    help="the DOI of the preregistration; needed for the confirmatory split")
     a = ap.parse_args(argv)
     out = pathlib.Path(a.out) if a.out else pathlib.Path(a.runs[0]) / "report.html"
     run_sets = run_sets_in(a.runs)
     if not run_sets:
         ap.error("no run set found under --runs")
-    data = collect(run_sets, out, load_pilot_tasks())
+    if refused := split_refusal(run_sets, a.split, a.preregistered):
+        print(f"tsbench report dashboard: {refused}", file=sys.stderr)
+        return 2
+    data = collect(run_sets, out, load_tasks(a.split))
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(build_html(data, a.title), encoding="utf-8")
+    out.write_text(build_html(data, a.title, a.split, a.preregistered), encoding="utf-8")
     print(f"wrote {out} ({page.plural(len(data['rows']), 'run')} from {page.plural(len(data['sets']), 'run set')})")
     return 0
 

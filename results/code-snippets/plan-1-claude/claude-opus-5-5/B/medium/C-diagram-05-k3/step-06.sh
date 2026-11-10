@@ -1,0 +1,1 @@
+export MPLCONFIGDIR=$PWD/.mpl; sed -i 's/r=apply_ann(d,dd)$/r=apply_ann(d,c)/; s/s1,t=r; r=apply_ann(t,c)$/s1,t=r; r=apply_ann(t,dd)/' ts.py; grep -n "apply_ann(d,c)\|apply_ann(t,dd)" ts.py; python3 ts.py; sha256sum diagram.png

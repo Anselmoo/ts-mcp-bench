@@ -1,0 +1,1 @@
+touch /dev/shm/x && echo shm ok; touch $TMPDIR/x && echo tmpdir ok

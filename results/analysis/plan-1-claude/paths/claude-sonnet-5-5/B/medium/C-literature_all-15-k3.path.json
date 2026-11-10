@@ -1,0 +1,370 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-sonnet-5-5/B/medium/C-literature_all-15-k3.jsonl",
+ "transcript_sha256": "10c410d5e0e03173fb9e92b514f1a17e8bff1a30a49a9d70d49a7518965649b0",
+ "answer": {
+  "Dq": null,
+  "B": null,
+  "C": null,
+  "out_of_scope": true,
+  "reason": "The ⁴T₂ and ⁴A₂ assignments give Dq = 782.5 cm⁻¹ from the exact 10Dq splitting, but then ⁴T₂ = 8480 cm⁻¹ would need a negative B, so the data can't be fitted consistently."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|sympy|scipy\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(Bash completed with no output)",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "python3 -c \"import numpy,scipy,sympy;print(1)\"; which python3 pip",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n1\n<B_VENV>/bin/python3",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p /w && cd /w && cat > d7.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import sqrt, pi, N\nms=[2,1,0,-1,-2]\ndef ck(k,m1,m2):\n    # sqrt(4pi/(2k+1)) * int Y*_{2m1} Y_{k,m1-m2} Y_{2m2}\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    # int Y*_{l m1} Y_kq Y_{l m2} = (-1)^m1 gaunt(2,k,2,-m1,q,m2)\n    return float(N((-1)**m1*gaunt(2,k,2,-m1,q,m2)*sqrt(4*pi/(2*k+1))))\nC={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\nso=[(m,s) for s in (0,1) for m in ms]  # spin-orbital index\nidx={x:i for i,x in enumerate(so)}\ndef build(A,B,Cc,Dq):\n    F4=Cc/35; F2=B+5*F4\n    Fk={0:A+49*F4,2:49*F2,4:441*F4}\n    # F0 irrelevant constant (use A=0 -> F0=49F4 ; fine)\n    h=np.zeros((10,10))\n    V={2:1,1:-4,0:6,-1:-4,-2:1}\n    for s in (0,1):\n        for m in ms: h[idx[(m,s)],idx[(m,s)]]=V[m]*Dq\n        h[idx[(2,s)],idx[(-2,s)]]=5*Dq; h[idx[(-2,s)],idx[(2,s)]]=5*Dq\n    # two-electron <ab|cd> physics notation: a(1)b(2) c(1)d(2)\n    g=np.zeros((10,10,10,10))\n    for (a,sa) in so:\n      for (b,sb) in so:\n        for (c,sc) in so:\n          for (d,sd) in so:\n            if sa!=sc or sb!=sd or a+b!=c+d: continue\n            v=0\n            for k in (0,2,4):\n                v+=C[(k,a,c)]*C[(k,d,b)]*Fk[k]\n            g[idx[(a,sa)],idx[(b,sb)],idx[(c,sc)],idx[(d,sd)]]=v\n    return h,g\ndef dets(Ms2):\n    out=[]\n    for c in itertools.combinations(range(10),3 if False else 7):\n        n_up=sum(1 for i in c if i>=5); n_dn=7-n_up\n        if n_up-n_dn==Ms2: out.append(c)\n    return out\ndef ham(h,g,basis):\n    n=len(basis); pos={d:i for i,d in enumerate(basis)}\n    H=np.zeros((n,n))\n    def apply_ops(det,ops):\n        # ops list of (type,orb) applied right to left; returns sign,newdet\n        occ=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in occ: return 0,None\n                p=occ.index(o); sign*=(-1)**p; occ.pop(p)\n            else:\n                if o in occ: return 0,None\n                p=sum(1 for x in occ if x<o); sign*=(-1)**p; occ.insert(p,o)\n        return sign,tuple(occ)\n    for j,d in enumerate(basis):\n        for p in range(10):\n            for q in range(10):\n                if h[p,q]!=0:\n                    s,nd=apply_ops(d,[('c',p),('a',q)])\n                    if s: H[pos[nd],j]+=s*h[p,q]\n        for a in range(10):\n         for b in range(10):\n          for c in range(10):\n           for e in range(10):\n            v=g[a,b,c,e]\n            if v==0: continue\n            # 1/2 sum <ab|ce> a†a b†b e c  -> a†_a a†_b a_e a_c\n            s,nd=apply_ops(d,[('c',a),('c',b),('a',e),('a',c)])\n            if s and nd in pos: H[pos[nd],j]+=0.5*s*v\n    return H\nb32=dets(3);b12=dets(1)\nimport pickle\ndef levels(A,B,Cc,Dq):\n    h,g=build(A,B,Cc,Dq)\n    e4=np.linalg.eigvalsh(ham(h,g,b32))\n    e2=np.linalg.eigvalsh(ham(h,g,b12))\n    return e4,e2\nif __name__==\"__main__\":\n    e4,e2=levels(0,900,3900,900)\n    print(np.round(e4-e4[0],0)); print(np.round(e2-e4[0],0))\nE\npython3 d7.py",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "7d8a45e75bb28cdbdc515cad9811fc88b8192de94ef7b1bf1b1545406eb5edeb",
+     "lines": 80,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import sqrt, pi, N\nms=[2,1,0,-1,-2]\ndef ck(k,m1,m2):\n    # sqrt(4pi/(2k+1)) * int Y*_{2m1} Y_{k,m1-m2} Y_{2m2}\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    # int Y*_{l m1} Y_kq Y_{l m2} = (-1)^m1 gaunt(2,k,2,-m1,q,m2)\n    return float(N((-1)**m1*gaunt(2,k,2,-m1,q,m2)*sqrt(4*pi/(2*k+1))))\nC={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\nso=[(m,s) for s in (0,1) for m in ms]  # spin-orbital index\nidx={x:i for i,x in enumerate(so)}\ndef build(A,B,Cc,Dq):\n    F4=Cc/35; F2=B+5*F4\n    Fk={0:A+49*F4,2:49*F2,4:441*F4}\n    # F0 irrelevant constant (use A=0 -> F0=49F4 ; fine)\n    h=np.zeros((10,10))\n    V={2:1,1:-4,0:6,-1:-4,-2:1}\n    for s in (0,1):\n        for m in ms: h[idx[(m,s)],idx[(m,s)]]=V[m]*Dq\n        h[idx[(2,s)],idx[(-2,s)]]=5*Dq; h[idx[(-2,s)],idx[(2,s)]]=5*Dq\n    # two-electron <ab|cd> physics notation: a(1)b(2) c(1)d(2)\n    g=np.zeros((10,10,10,10))\n    for (a,sa) in so:\n      for (b,sb) in so:\n        for (c,sc) in so:\n          for (d,sd) in so:\n            if sa!=sc or sb!=sd or a+b!=c+d: continue\n            v=0\n            for k in (0,2,4):\n                v+=C[(k,a,c)]*C[(k,d,b)]*Fk[k]\n            g[idx[(a,sa)],idx[(b,sb)],idx[(c,sc)],idx[(d,sd)]]=v\n    return h,g\ndef dets(Ms2):\n    out=[]\n    for c in itertools.combinations(range(10),3 if False else 7):\n        n_up=sum(1 for i in c if i>=5); n_dn=7-n_up\n        if n_up-n_dn==Ms2: out.append(c)\n    return out\ndef ham(h,g,basis):\n    n=len(basis); pos={d:i for i,d in enumerate(basis)}\n    H=np.zeros((n,n))\n    def apply_ops(det,ops):\n        # ops list of (type,orb) applied right to left; returns sign,newdet\n        occ=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in occ: return 0,None\n                p=occ.index(o); sign*=(-1)**p; occ.pop(p)\n            else:\n                if o in occ: return 0,None\n                p=sum(1 for x in occ if x<o); sign*=(-1)**p; occ.insert(p,o)\n        return sign,tuple(occ)\n    for j,d in enumerate(basis):\n        for p in range(10):\n            for q in range(10):\n                if h[p,q]!=0:\n                    s,nd=apply_ops(d,[('c',p),('a',q)])\n                    if s: H[pos[nd],j]+=s*h[p,q]\n        for a in range(10):\n         for b in range(10):\n          for c in range(10):\n           for e in range(10):\n            v=g[a,b,c,e]\n            if v==0: continue\n            # 1/2 sum <ab|ce> a†a b†b e c  -> a†_a a†_b a_e a_c\n            s,nd=apply_ops(d,[('c',a),('c',b),('a',e),('a',c)])\n            if s and nd in pos: H[pos[nd],j]+=0.5*s*v\n    return H\nb32=dets(3);b12=dets(1)\nimport pickle\ndef levels(A,B,Cc,Dq):\n    h,g=build(A,B,Cc,Dq)\n    e4=np.linalg.eigvalsh(ham(h,g,b32))\n    e2=np.linalg.eigvalsh(ham(h,g,b12))\n    return e4,e2\nif __name__==\"__main__\":\n    e4,e2=levels(0,900,3900,900)\n    print(np.round(e4-e4[0],0)); print(np.round(e2-e4[0],0))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d7.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘/w’: Read-only file system\npython3: can't open file '/tmp/tsbench-run-f6r8fx4j/d7.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10))"
+    },
+    {
+     "script": "d7.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "g=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "d7.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H=np.zeros((n,n))"
+    },
+    {
+     "script": "d7.py",
+     "line": 75,
+     "method": "eigen_solver",
+     "text": "e4=np.linalg.eigvalsh(ham(h,g,b32))"
+    },
+    {
+     "script": "d7.py",
+     "line": 76,
+     "method": "eigen_solver",
+     "text": "e2=np.linalg.eigvalsh(ham(h,g,b12))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > d7.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import sqrt, pi, N\nms=[2,1,0,-1,-2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float(N((-1)**m1*gaunt(2,k,2,-m1,q,m2)*sqrt(4*pi/(2*k+1))))\nC={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\nso=[(m,s) for s in (0,1) for m in ms]\nidx={x:i for i,x in enumerate(so)}\ndef build(A,B,Cc,Dq):\n    F4=Cc/35; F2=B+5*F4\n    Fk={0:A+49*F4,2:49*F2,4:441*F4}\n    h=np.zeros((10,10))\n    V={2:1,1:-4,0:6,-1:-4,-2:1}\n    for s in (0,1):\n        for m in ms: h[idx[(m,s)],idx[(m,s)]]=V[m]*Dq\n        h[idx[(2,s)],idx[(-2,s)]]=5*Dq; h[idx[(-2,s)],idx[(2,s)]]=5*Dq\n    g=np.zeros((10,10,10,10))\n    for (a,sa) in so:\n      for (b,sb) in so:\n        for (c,sc) in so:\n          for (d,sd) in so:\n            if sa!=sc or sb!=sd or a+b!=c+d: continue\n            v=sum(C[(k,a,c)]*C[(k,d,b)]*Fk[k] for k in (0,2,4))\n            g[idx[(a,sa)],idx[(b,sb)],idx[(c,sc)],idx[(d,sd)]]=v\n    return h,g\ndef dets(Ms2):\n    return [c for c in itertools.combinations(range(10),7) if (2*sum(1 for i in c if i>=5)-7)==Ms2]\ndef ham(h,g,basis):\n    n=len(basis); pos={d:i for i,d in enumerate(basis)}\n    H=np.zeros((n,n))\n    def ap(det,ops):\n        occ=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in occ: return 0,None\n                p=occ.index(o); sign*=(-1)**p; occ.pop(p)\n            else:\n                if o in occ: return 0,None\n                p=sum(1 for x in occ if x<o); sign*=(-1)**p; occ.insert(p,o)\n        return sign,tuple(occ)\n    nz=list(zip(*np.nonzero(g)))\n    hz=list(zip(*np.nonzero(h)))\n    for j,d in enumerate(basis):\n        for p,q in hz:\n            s,nd=ap(d,[('c',p),('a',q)])\n            if s: H[pos[nd],j]+=s*h[p,q]\n        for a,b,c,e in nz:\n            s,nd=ap(d,[('c',a),('c',b),('a',e),('a',c)])\n            if s: H[pos[nd],j]+=0.5*s*g[a,b,c,e]\n    return H\nb32=dets(3);b12=dets(1)\ndef levels(A,B,Cc,Dq):\n    h,g=build(A,B,Cc,Dq)\n    return np.linalg.eigvalsh(ham(h,g,b32)),np.linalg.eigvalsh(ham(h,g,b12))\nif __name__==\"__main__\":\n    import time;t=time.time()\n    e4,e2=levels(0,900,3900,900)\n    print(time.time()-t)\n    print(np.round(e4-e4[0],0)); print(np.round(e2-e4[0],0))\nE\npython3 d7.py",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "1d919fe065f2c1f02df3f81a4727791f24fe909b8092ba62717003161925d21a",
+     "lines": 62,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import sqrt, pi, N\nms=[2,1,0,-1,-2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float(N((-1)**m1*gaunt(2,k,2,-m1,q,m2)*sqrt(4*pi/(2*k+1))))\nC={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\nso=[(m,s) for s in (0,1) for m in ms]\nidx={x:i for i,x in enumerate(so)}\ndef build(A,B,Cc,Dq):\n    F4=Cc/35; F2=B+5*F4\n    Fk={0:A+49*F4,2:49*F2,4:441*F4}\n    h=np.zeros((10,10))\n    V={2:1,1:-4,0:6,-1:-4,-2:1}\n    for s in (0,1):\n        for m in ms: h[idx[(m,s)],idx[(m,s)]]=V[m]*Dq\n        h[idx[(2,s)],idx[(-2,s)]]=5*Dq; h[idx[(-2,s)],idx[(2,s)]]=5*Dq\n    g=np.zeros((10,10,10,10))\n    for (a,sa) in so:\n      for (b,sb) in so:\n        for (c,sc) in so:\n          for (d,sd) in so:\n            if sa!=sc or sb!=sd or a+b!=c+d: continue\n            v=sum(C[(k,a,c)]*C[(k,d,b)]*Fk[k] for k in (0,2,4))\n            g[idx[(a,sa)],idx[(b,sb)],idx[(c,sc)],idx[(d,sd)]]=v\n    return h,g\ndef dets(Ms2):\n    return [c for c in itertools.combinations(range(10),7) if (2*sum(1 for i in c if i>=5)-7)==Ms2]\ndef ham(h,g,basis):\n    n=len(basis); pos={d:i for i,d in enumerate(basis)}\n    H=np.zeros((n,n))\n    def ap(det,ops):\n        occ=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in occ: return 0,None\n                p=occ.index(o); sign*=(-1)**p; occ.pop(p)\n            else:\n                if o in occ: return 0,None\n                p=sum(1 for x in occ if x<o); sign*=(-1)**p; occ.insert(p,o)\n        return sign,tuple(occ)\n    nz=list(zip(*np.nonzero(g)))\n    hz=list(zip(*np.nonzero(h)))\n    for j,d in enumerate(basis):\n        for p,q in hz:\n            s,nd=ap(d,[('c',p),('a',q)])\n            if s: H[pos[nd],j]+=s*h[p,q]\n        for a,b,c,e in nz:\n            s,nd=ap(d,[('c',a),('c',b),('a',e),('a',c)])\n            if s: H[pos[nd],j]+=0.5*s*g[a,b,c,e]\n    return H\nb32=dets(3);b12=dets(1)\ndef levels(A,B,Cc,Dq):\n    h,g=build(A,B,Cc,Dq)\n    return np.linalg.eigvalsh(ham(h,g,b32)),np.linalg.eigvalsh(ham(h,g,b12))\nif __name__==\"__main__\":\n    import time;t=time.time()\n    e4,e2=levels(0,900,3900,900)\n    print(time.time()-t)\n    print(np.round(e4-e4[0],0)); print(np.round(e2-e4[0],0))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d7.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\npython3: can't open file '/tmp/tsbench-run-f6r8fx4j/d7.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10))"
+    },
+    {
+     "script": "d7.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "g=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "d7.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "H=np.zeros((n,n))"
+    },
+    {
+     "script": "d7.py",
+     "line": 57,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(ham(h,g,b32)),np.linalg.eigvalsh(ham(h,g,b12))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd $HOME 2>/dev/null && pwd; touch x && echo ok; echo $TMPDIR; ls -ld /tmp /dev/shm . ",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 'x': Read-only file system\n<SANDBOX_TMP>\ndrwx------  6 <USER>  <USER>     4096 Nov  3 07:57 .\ndrwxr-xr-x  2 <USER>  <USER>       40 Nov  4 15:03 /dev/shm\ndrwxrwxrwt 32 nobody nogroup 884736 Nov  4 15:02 /tmp\nShell cwd was reset to /tmp/tsbench-run-f6r8fx4j",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "touch /dev/shm/x && echo shm ok; touch $TMPDIR/x && echo tmpdir ok",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "shm ok\ntmpdir ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p /dev/shm/w && cd /dev/shm/w && cat > d7.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import sqrt, pi, N\nms=[2,1,0,-1,-2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float(N((-1)**m1*gaunt(2,k,2,-m1,q,m2)*sqrt(4*pi/(2*k+1))))\nC={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\nso=[(m,s) for s in (0,1) for m in ms]\nidx={x:i for i,x in enumerate(so)}\ndef build(A,B,Cc,Dq):\n    F4=Cc/35; F2=B+5*F4\n    Fk={0:A+49*F4,2:49*F2,4:441*F4}\n    h=np.zeros((10,10))\n    V={2:1,1:-4,0:6,-1:-4,-2:1}\n    for s in (0,1):\n        for m in ms: h[idx[(m,s)],idx[(m,s)]]=V[m]*Dq\n        h[idx[(2,s)],idx[(-2,s)]]=5*Dq; h[idx[(-2,s)],idx[(2,s)]]=5*Dq\n    g=np.zeros((10,10,10,10))\n    for (a,sa) in so:\n      for (b,sb) in so:\n        for (c,sc) in so:\n          for (d,sd) in so:\n            if sa!=sc or sb!=sd or a+b!=c+d: continue\n            v=sum(C[(k,a,c)]*C[(k,d,b)]*Fk[k] for k in (0,2,4))\n            g[idx[(a,sa)],idx[(b,sb)],idx[(c,sc)],idx[(d,sd)]]=v\n    return h,g\ndef dets(Ms2):\n    return [c for c in itertools.combinations(range(10),7) if (2*sum(1 for i in c if i>=5)-7)==Ms2]\ndef ham(h,g,basis):\n    n=len(basis); pos={d:i for i,d in enumerate(basis)}\n    H=np.zeros((n,n))\n    def ap(det,ops):\n        occ=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in occ: return 0,None\n                p=occ.index(o); sign*=(-1)**p; occ.pop(p)\n            else:\n                if o in occ: return 0,None\n                p=sum(1 for x in occ if x<o); sign*=(-1)**p; occ.insert(p,o)\n        return sign,tuple(occ)\n    nz=list(zip(*np.nonzero(g)))\n    hz=list(zip(*np.nonzero(h)))\n    for j,d in enumerate(basis):\n        for p,q in hz:\n            s,nd=ap(d,[('c',p),('a',q)])\n            if s: H[pos[nd],j]+=s*h[p,q]\n        for a,b,c,e in nz:\n            s,nd=ap(d,[('c',a),('c',b),('a',e),('a',c)])\n            if s: H[pos[nd],j]+=0.5*s*g[a,b,c,e]\n    return H\nb32=dets(3);b12=dets(1)\ndef levels(A,B,Cc,Dq):\n    h,g=build(A,B,Cc,Dq)\n    return np.linalg.eigvalsh(ham(h,g,b32)),np.linalg.eigvalsh(ham(h,g,b12))\nif __name__==\"__main__\":\n    import time;t=time.time()\n    e4,e2=levels(0,900,3900,900)\n    print(time.time()-t)\n    print(np.round(e4-e4[0],0)); print(np.round(e2-e4[0],0))\nE\npython3 d7.py",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "1d919fe065f2c1f02df3f81a4727791f24fe909b8092ba62717003161925d21a",
+     "lines": 62,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import sqrt, pi, N\nms=[2,1,0,-1,-2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float(N((-1)**m1*gaunt(2,k,2,-m1,q,m2)*sqrt(4*pi/(2*k+1))))\nC={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\nso=[(m,s) for s in (0,1) for m in ms]\nidx={x:i for i,x in enumerate(so)}\ndef build(A,B,Cc,Dq):\n    F4=Cc/35; F2=B+5*F4\n    Fk={0:A+49*F4,2:49*F2,4:441*F4}\n    h=np.zeros((10,10))\n    V={2:1,1:-4,0:6,-1:-4,-2:1}\n    for s in (0,1):\n        for m in ms: h[idx[(m,s)],idx[(m,s)]]=V[m]*Dq\n        h[idx[(2,s)],idx[(-2,s)]]=5*Dq; h[idx[(-2,s)],idx[(2,s)]]=5*Dq\n    g=np.zeros((10,10,10,10))\n    for (a,sa) in so:\n      for (b,sb) in so:\n        for (c,sc) in so:\n          for (d,sd) in so:\n            if sa!=sc or sb!=sd or a+b!=c+d: continue\n            v=sum(C[(k,a,c)]*C[(k,d,b)]*Fk[k] for k in (0,2,4))\n            g[idx[(a,sa)],idx[(b,sb)],idx[(c,sc)],idx[(d,sd)]]=v\n    return h,g\ndef dets(Ms2):\n    return [c for c in itertools.combinations(range(10),7) if (2*sum(1 for i in c if i>=5)-7)==Ms2]\ndef ham(h,g,basis):\n    n=len(basis); pos={d:i for i,d in enumerate(basis)}\n    H=np.zeros((n,n))\n    def ap(det,ops):\n        occ=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in occ: return 0,None\n                p=occ.index(o); sign*=(-1)**p; occ.pop(p)\n            else:\n                if o in occ: return 0,None\n                p=sum(1 for x in occ if x<o); sign*=(-1)**p; occ.insert(p,o)\n        return sign,tuple(occ)\n    nz=list(zip(*np.nonzero(g)))\n    hz=list(zip(*np.nonzero(h)))\n    for j,d in enumerate(basis):\n        for p,q in hz:\n            s,nd=ap(d,[('c',p),('a',q)])\n            if s: H[pos[nd],j]+=s*h[p,q]\n        for a,b,c,e in nz:\n            s,nd=ap(d,[('c',a),('c',b),('a',e),('a',c)])\n            if s: H[pos[nd],j]+=0.5*s*g[a,b,c,e]\n    return H\nb32=dets(3);b12=dets(1)\ndef levels(A,B,Cc,Dq):\n    h,g=build(A,B,Cc,Dq)\n    return np.linalg.eigvalsh(ham(h,g,b32)),np.linalg.eigvalsh(ham(h,g,b12))\nif __name__==\"__main__\":\n    import time;t=time.time()\n    e4,e2=levels(0,900,3900,900)\n    print(time.time()-t)\n    print(np.round(e4-e4[0],0)); print(np.round(e2-e4[0],0))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d7.py",
+     "written_in_step": 6
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0.045191287994384766\n[    0.     0.     0.  7862.  7862.  7862. 16862. 20225. 20225. 20225.]\n[   -0.    -0.     0.  7862.  7862.  7862.  9291.  9291. 16450. 16450.\n 16450. 16836. 16836. 16836. 16862. 20225. 20225. 20225. 21186. 21186.\n 21186. 23162. 25411. 25411. 25411. 26611. 26611. 26611. 28564. 28564.\n 31551. 31551. 31551. 32770. 32770. 32770. 34056. 34056. 38360. 38360.\n 38360. 41162. 41295. 41295. 41295. 60640. 60640. 61556. 61556. 61556.]\nShell cwd was reset to /tmp/tsbench-run-f6r8fx4j",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10))"
+    },
+    {
+     "script": "d7.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "g=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "d7.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "H=np.zeros((n,n))"
+    },
+    {
+     "script": "d7.py",
+     "line": 57,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(ham(h,g,b32)),np.linalg.eigvalsh(ham(h,g,b12))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm/w && cat > fit.py <<'E'\nfrom d7 import *\nfrom scipy.optimize import least_squares\nobs=np.array([8480,16305,20360,21001.])\ndef model(p):\n    Dq,B,Cc=p\n    e4,e2=levels(0,B,Cc,Dq)\n    g=e4[0]\n    q=sorted(set(np.round(e4-g,3)))\n    # quartets: ground, 4T2, 4A2, 4T1(2)\n    qs=[e4[3]-g,e4[6]-g,e4[7]-g]\n    d=np.round(e2-g,2)\n    # 2T1(2): triplet after the quartet-4T1(2)-ish: pick 2nd triplet above 2T2(1) -> index in e2 \n    # e2 index: 15-17 (quartet 4T1(2)), 18-20 -> 21186 triplet\n    return np.array(qs+[e2[18]-g])\nfor x0 in [(900,900,3900),(1000,800,3500),(800,950,4000)]:\n    r=least_squares(lambda p:model(p)-obs,x0,x_scale=[100,100,300])\n    print(r.x,r.fun,model(r.x))\nE\npython3 fit.py",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "847642b6199615937085e35f3ccc5b2554903fa4d6f12555908384edf1df8404",
+     "lines": 17,
+     "code": "from d7 import *\nfrom scipy.optimize import least_squares\nobs=np.array([8480,16305,20360,21001.])\ndef model(p):\n    Dq,B,Cc=p\n    e4,e2=levels(0,B,Cc,Dq)\n    g=e4[0]\n    q=sorted(set(np.round(e4-g,3)))\n    # quartets: ground, 4T2, 4A2, 4T1(2)\n    qs=[e4[3]-g,e4[6]-g,e4[7]-g]\n    d=np.round(e2-g,2)\n    # 2T1(2): triplet after the quartet-4T1(2)-ish: pick 2nd triplet above 2T2(1) -> index in e2 \n    # e2 index: 15-17 (quartet 4T1(2)), 18-20 -> 21186 triplet\n    return np.array(qs+[e2[18]-g])\nfor x0 in [(900,900,3900),(1000,800,3500),(800,950,4000)]:\n    r=least_squares(lambda p:model(p)-obs,x0,x_scale=[100,100,300])\n    print(r.x,r.fun,model(r.x))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 20: cd: /dev/shm/w: No such file or directory\npython3: can't open file '/tmp/tsbench-run-f6r8fx4j/fit.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit.py",
+     "line": 16,
+     "method": "least_squares",
+     "text": "r=least_squares(lambda p:model(p)-obs,x0,x_scale=[100,100,300])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > <SANDBOX_TMP>/all.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import sqrt, pi, N\nfrom scipy.optimize import least_squares\nms=[2,1,0,-1,-2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float(N((-1)**m1*gaunt(2,k,2,-m1,q,m2)*sqrt(4*pi/(2*k+1))))\nC={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\nso=[(m,s) for s in (0,1) for m in ms]\nidx={x:i for i,x in enumerate(so)}\ndef build(A,B,Cc,Dq):\n    F4=Cc/35; F2=B+5*F4\n    Fk={0:A+49*F4,2:49*F2,4:441*F4}\n    h=np.zeros((10,10))\n    V={2:1,1:-4,0:6,-1:-4,-2:1}\n    for s in (0,1):\n        for m in ms: h[idx[(m,s)],idx[(m,s)]]=V[m]*Dq\n        h[idx[(2,s)],idx[(-2,s)]]=5*Dq; h[idx[(-2,s)],idx[(2,s)]]=5*Dq\n    g=np.zeros((10,10,10,10))\n    for (a,sa) in so:\n      for (b,sb) in so:\n        for (c,sc) in so:\n          for (d,sd) in so:\n            if sa!=sc or sb!=sd or a+b!=c+d: continue\n            v=sum(C[(k,a,c)]*C[(k,d,b)]*Fk[k] for k in (0,2,4))\n            g[idx[(a,sa)],idx[(b,sb)],idx[(c,sc)],idx[(d,sd)]]=v\n    return h,g\ndef dets(Ms2):\n    return [c for c in itertools.combinations(range(10),7) if (2*sum(1 for i in c if i>=5)-7)==Ms2]\ndef ham(h,g,basis):\n    n=len(basis); pos={d:i for i,d in enumerate(basis)}\n    H=np.zeros((n,n))\n    def ap(det,ops):\n        occ=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in occ: return 0,None\n                p=occ.index(o); sign*=(-1)**p; occ.pop(p)\n            else:\n                if o in occ: return 0,None\n                p=sum(1 for x in occ if x<o); sign*=(-1)**p; occ.insert(p,o)\n        return sign,tuple(occ)\n    nz=list(zip(*np.nonzero(g))); hz=list(zip(*np.nonzero(h)))\n    for j,d in enumerate(basis):\n        for p,q in hz:\n            s,nd=ap(d,[('c',p),('a',q)])\n            if s: H[pos[nd],j]+=s*h[p,q]\n        for a,b,c,e in nz:\n            s,nd=ap(d,[('c',a),('c',b),('a',e),('a',c)])\n            if s: H[pos[nd],j]+=0.5*s*g[a,b,c,e]\n    return H\nb32=dets(3);b12=dets(1)\ndef levels(A,B,Cc,Dq):\n    h,g=build(A,B,Cc,Dq)\n    return np.linalg.eigvalsh(ham(h,g,b32)),np.linalg.eigvalsh(ham(h,g,b12))\nobs=np.array([8480,16305,20360,21001.])\ndef model(p):\n    Dq,B,Cc=p\n    e4,e2=levels(0,B,Cc,Dq); g=e4[0]\n    return np.array([e4[3]-g,e4[6]-g,e4[7]-g,e2[18]-g])\nfor x0 in [(900,900,3900),(1000,800,3500),(800,950,4000)]:\n    r=least_squares(lambda p:model(p)-obs,x0,x_scale=[100,100,300])\n    print(r.x,r.fun)\nE\npython3 <SANDBOX_TMP>/all.py",
+   "scripts": [
+    {
+     "name": "all.py",
+     "sha256": "32cecf5e55b0d571e48797a141ed1c051a9abaaf17a1233e0ae5d87f06d022e5",
+     "lines": 65,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import sqrt, pi, N\nfrom scipy.optimize import least_squares\nms=[2,1,0,-1,-2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float(N((-1)**m1*gaunt(2,k,2,-m1,q,m2)*sqrt(4*pi/(2*k+1))))\nC={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\nso=[(m,s) for s in (0,1) for m in ms]\nidx={x:i for i,x in enumerate(so)}\ndef build(A,B,Cc,Dq):\n    F4=Cc/35; F2=B+5*F4\n    Fk={0:A+49*F4,2:49*F2,4:441*F4}\n    h=np.zeros((10,10))\n    V={2:1,1:-4,0:6,-1:-4,-2:1}\n    for s in (0,1):\n        for m in ms: h[idx[(m,s)],idx[(m,s)]]=V[m]*Dq\n        h[idx[(2,s)],idx[(-2,s)]]=5*Dq; h[idx[(-2,s)],idx[(2,s)]]=5*Dq\n    g=np.zeros((10,10,10,10))\n    for (a,sa) in so:\n      for (b,sb) in so:\n        for (c,sc) in so:\n          for (d,sd) in so:\n            if sa!=sc or sb!=sd or a+b!=c+d: continue\n            v=sum(C[(k,a,c)]*C[(k,d,b)]*Fk[k] for k in (0,2,4))\n            g[idx[(a,sa)],idx[(b,sb)],idx[(c,sc)],idx[(d,sd)]]=v\n    return h,g\ndef dets(Ms2):\n    return [c for c in itertools.combinations(range(10),7) if (2*sum(1 for i in c if i>=5)-7)==Ms2]\ndef ham(h,g,basis):\n    n=len(basis); pos={d:i for i,d in enumerate(basis)}\n    H=np.zeros((n,n))\n    def ap(det,ops):\n        occ=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in occ: return 0,None\n                p=occ.index(o); sign*=(-1)**p; occ.pop(p)\n            else:\n                if o in occ: return 0,None\n                p=sum(1 for x in occ if x<o); sign*=(-1)**p; occ.insert(p,o)\n        return sign,tuple(occ)\n    nz=list(zip(*np.nonzero(g))); hz=list(zip(*np.nonzero(h)))\n    for j,d in enumerate(basis):\n        for p,q in hz:\n            s,nd=ap(d,[('c',p),('a',q)])\n            if s: H[pos[nd],j]+=s*h[p,q]\n        for a,b,c,e in nz:\n            s,nd=ap(d,[('c',a),('c',b),('a',e),('a',c)])\n            if s: H[pos[nd],j]+=0.5*s*g[a,b,c,e]\n    return H\nb32=dets(3);b12=dets(1)\ndef levels(A,B,Cc,Dq):\n    h,g=build(A,B,Cc,Dq)\n    return np.linalg.eigvalsh(ham(h,g,b32)),np.linalg.eigvalsh(ham(h,g,b12))\nobs=np.array([8480,16305,20360,21001.])\ndef model(p):\n    Dq,B,Cc=p\n    e4,e2=levels(0,B,Cc,Dq); g=e4[0]\n    return np.array([e4[3]-g,e4[6]-g,e4[7]-g,e2[18]-g])\nfor x0 in [(900,900,3900),(1000,800,3500),(800,950,4000)]:\n    r=least_squares(lambda p:model(p)-obs,x0,x_scale=[100,100,300])\n    print(r.x,r.fun)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[ 889.62285315  914.97037236 3793.86734059] [-7.20392745e+02  3.50835786e+02 -1.24584364e+01  6.40267899e-06]\n[ 890.60283362  937.20594852 3053.82867336] [-721.75128998  359.27704624  308.55831168 -332.44168832]\n[ 889.62285128  914.97037666 3793.86733192] [-7.20392764e+02  3.50835748e+02 -1.24583918e+01  1.96343644e-05]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "all.py",
+     "line": 4,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "all.py",
+     "line": 16,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10))"
+    },
+    {
+     "script": "all.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "g=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "all.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "H=np.zeros((n,n))"
+    },
+    {
+     "script": "all.py",
+     "line": 57,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(ham(h,g,b32)),np.linalg.eigvalsh(ham(h,g,b12))"
+    },
+    {
+     "script": "all.py",
+     "line": 64,
+     "method": "least_squares",
+     "text": "r=least_squares(lambda p:model(p)-obs,x0,x_scale=[100,100,300])"
+    }
+   ],
+   "produces": []
+  }
+ ],
+ "values": [],
+ "summary": {
+  "n_steps": 9,
+  "n_scripts": 5,
+  "n_failed_steps": 4,
+  "n_values": 0,
+  "n_linked": 0,
+  "n_weak": 0,
+  "source_steps": [],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

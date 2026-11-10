@@ -1,0 +1,1 @@
+pwd; touch d7test.txt && echo writable_cwd && rm d7test.txt

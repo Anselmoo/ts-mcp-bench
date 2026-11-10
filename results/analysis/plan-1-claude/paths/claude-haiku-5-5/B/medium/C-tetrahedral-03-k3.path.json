@@ -1,0 +1,434 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-tetrahedral-03-k3.jsonl",
+ "transcript_sha256": "0925079a3a1868a5a4d5eec89e4cba1518b9cd0437d039774dd10f17147d34ce",
+ "answer": {
+  "Dq": 427.0,
+  "B": 899.0,
+  "C": null,
+  "out_of_scope": false,
+  "reason": "Fitting the three spin-allowed triplet bands of tetrahedral d8 to a full d-electron ligand-field matrix determines Dq and B, but C does not affect triplet-only transitions and is undetermined."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy, sympy, scipy availability",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|sympy|scipy\" ; python3 -c \"import numpy, sympy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d8 Hamiltonian in Sz=1 sector and check free-ion levels",
+   "command": "mkdir -p /w && cat > /w/d8.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nl=2\nms=list(range(-2,3))\ndef Ck(k):\n    M={}\n    for q in range(-k,k+1):\n        A=np.zeros((5,5))\n        for i,m in enumerate(ms):\n            for j,mp in enumerate(ms):\n                if -m+q+mp==0 and abs(m)<=2 and abs(mp)<=2:\n                    A[i,j]=float((-1)**(l-m)*5*wigner_3j(l,k,l,-m,q,mp))\n        M[q]=A\n    return M\nC={k:Ck(k) for k in (0,2,4)}\n# angular coefficient tensors f_k[a,c,b,d]\ndef fk(k):\n    f=np.zeros((5,5,5,5))\n    for q in range(-k,k+1):\n        f+= (-1)**q*np.einsum('ac,bd->acbd',C[k][q],C[k][-q])\n    return f\nf2,f4=fk(2),fk(4)\nf0=fk(0)\n# spin orbitals: idx=2*mi+s, s=0 up,1 down\nN=10\ndef eri(F2,F4,F0=0):\n    V=np.zeros((N,N,N,N))\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        sa,sb,sc,sd=a%2,b%2,c%2,d%2\n        if sa!=sc or sb!=sd: continue\n        ma,mb,mc,md=a//2,b//2,c//2,d//2\n        V[a,b,c,d]=F0*f0[ma,mc,mb,md]+F2*f2[ma,mc,mb,md]+F4*f4[ma,mc,mb,md]\n    return V\n# one-electron tetrahedral LF: e (dz2 m=0, dx2-y2 (|2>+|-2>)/sqrt2) at -6Dq; t2 at +4Dq\nPe=np.zeros((5,5)); Pe[2,2]=1\nv=np.zeros(5); v[0]=1; v[4]=1; v/=np.sqrt(2); Pe=np.outer(np.eye(5)[2],np.eye(5)[2])+np.outer(v,v)\nPt=np.eye(5)-Pe\ndef h1(Dq):\n    return -6*Dq*Pe+4*Dq*Pt\n# determinants: 8 electrons among 10 spin orbitals, Sz=1 sector: n_up=5,n_down=3\ndets=[]\nfor occ in itertools.combinations(range(N),8):\n    nup=sum(1 for o in occ if o%2==0)\n    if nup==5: dets.append(occ)\nidx={d:i for i,d in enumerate(dets)}\ndef apply_ops(state_occ, ops):\n    # ops list of (type,orb) applied right-to-left; state as sorted tuple -> (sign, newtuple) or None\n    pass\ndef H_matrix(Dq,F2,F4):\n    V=eri(F2,F4)\n    h=np.zeros((N,N))\n    H1=h1(Dq)\n    for a in range(N):\n        for c in range(N):\n            if a%2==c%2: h[a,c]=H1[a//2,c//2]\n    n=len(dets); H=np.zeros((n,n))\n    def annihilate(occ,p):\n        if p not in occ: return None\n        s=sum(1 for o in occ if o<p)\n        return ((-1)**s, tuple(o for o in occ if o!=p))\n    def create(occ,p):\n        if p in occ: return None\n        s=sum(1 for o in occ if o<p)\n        return ((-1)**s, tuple(sorted(occ+(p,))))\n    for j,occ in enumerate(dets):\n        # one-body\n        for a in range(N):\n            for c in range(N):\n                if h[a,c]==0: continue\n                r=annihilate(occ,c)\n                if r is None: continue\n                s1,o1=r\n                r2=create(o1,a)\n                if r2 is None: continue\n                s2,o2=r2\n                if o2 in idx: H[idx[o2],j]+=s1*s2*h[a,c]\n        # two-body: 1/2 sum V_abcd a+_a a+_b a_d a_c\n        for a,b,c,d in itertools.product(range(N),repeat=4):\n            if V[a,b,c,d]==0 or a==b or c==d: continue\n            r=annihilate(occ,c)\n            if r is None: continue\n            s1,o1=r\n            r=annihilate(o1,d)\n            if r is None: continue\n            s2,o2=r\n            r=create(o2,b)\n            if r is None: continue\n            s3,o3=r\n            r=create(o3,a)\n            if r is None: continue\n            s4,o4=r\n            if o4 in idx: H[idx[o4],j]+=0.5*V[a,b,c,d]*s1*s2*s3*s4\n    return H\nEOF\ncd /w && python3 -c \"\nfrom d8 import *\nimport numpy as np\nH=H_matrix(0.0,1.0,0.0)\nprint(len(dets)); print(np.round(np.linalg.eigvalsh(H),4))\n\"",
+   "scripts": [
+    {
+     "name": "d8.py",
+     "sha256": "420f7a924ab846fb1f3345f1831461eac0e9f53b80654730e623456e704ca655",
+     "lines": 94,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nl=2\nms=list(range(-2,3))\ndef Ck(k):\n    M={}\n    for q in range(-k,k+1):\n        A=np.zeros((5,5))\n        for i,m in enumerate(ms):\n            for j,mp in enumerate(ms):\n                if -m+q+mp==0 and abs(m)<=2 and abs(mp)<=2:\n                    A[i,j]=float((-1)**(l-m)*5*wigner_3j(l,k,l,-m,q,mp))\n        M[q]=A\n    return M\nC={k:Ck(k) for k in (0,2,4)}\n# angular coefficient tensors f_k[a,c,b,d]\ndef fk(k):\n    f=np.zeros((5,5,5,5))\n    for q in range(-k,k+1):\n        f+= (-1)**q*np.einsum('ac,bd->acbd',C[k][q],C[k][-q])\n    return f\nf2,f4=fk(2),fk(4)\nf0=fk(0)\n# spin orbitals: idx=2*mi+s, s=0 up,1 down\nN=10\ndef eri(F2,F4,F0=0):\n    V=np.zeros((N,N,N,N))\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        sa,sb,sc,sd=a%2,b%2,c%2,d%2\n        if sa!=sc or sb!=sd: continue\n        ma,mb,mc,md=a//2,b//2,c//2,d//2\n        V[a,b,c,d]=F0*f0[ma,mc,mb,md]+F2*f2[ma,mc,mb,md]+F4*f4[ma,mc,mb,md]\n    return V\n# one-electron tetrahedral LF: e (dz2 m=0, dx2-y2 (|2>+|-2>)/sqrt2) at -6Dq; t2 at +4Dq\nPe=np.zeros((5,5)); Pe[2,2]=1\nv=np.zeros(5); v[0]=1; v[4]=1; v/=np.sqrt(2); Pe=np.outer(np.eye(5)[2],np.eye(5)[2])+np.outer(v,v)\nPt=np.eye(5)-Pe\ndef h1(Dq):\n    return -6*Dq*Pe+4*Dq*Pt\n# determinants: 8 electrons among 10 spin orbitals, Sz=1 sector: n_up=5,n_down=3\ndets=[]\nfor occ in itertools.combinations(range(N),8):\n    nup=sum(1 for o in occ if o%2==0)\n    if nup==5: dets.append(occ)\nidx={d:i for i,d in enumerate(dets)}\ndef apply_ops(state_occ, ops):\n    # ops list of (type,orb) applied right-to-left; state as sorted tuple -> (sign, newtuple) or None\n    pass\ndef H_matrix(Dq,F2,F4):\n    V=eri(F2,F4)\n    h=np.zeros((N,N))\n    H1=h1(Dq)\n    for a in range(N):\n        for c in range(N):\n            if a%2==c%2: h[a,c]=H1[a//2,c//2]\n    n=len(dets); H=np.zeros((n,n))\n    def annihilate(occ,p):\n        if p not in occ: return None\n        s=sum(1 for o in occ if o<p)\n        return ((-1)**s, tuple(o for o in occ if o!=p))\n    def create(occ,p):\n        if p in occ: return None\n        s=sum(1 for o in occ if o<p)\n        return ((-1)**s, tuple(sorted(occ+(p,))))\n    for j,occ in enumerate(dets):\n        # one-body\n        for a in range(N):\n            for c in range(N):\n                if h[a,c]==0: continue\n                r=annihilate(occ,c)\n                if r is None: continue\n                s1,o1=r\n                r2=create(o1,a)\n                if r2 is None: continue\n                s2,o2=r2\n                if o2 in idx: H[idx[o2],j]+=s1*s2*h[a,c]\n        # two-body: 1/2 sum V_abcd a+_a a+_b a_d a_c\n        for a,b,c,d in itertools.product(range(N),repeat=4):\n            if V[a,b,c,d]==0 or a==b or c==d: continue\n            r=annihilate(occ,c)\n            if r is None: continue\n            s1,o1=r\n            r=annihilate(o1,d)\n            if r is None: continue\n            s2,o2=r\n            r=create(o2,b)\n            if r is None: continue\n            s3,o3=r\n            r=create(o3,a)\n            if r is None: continue\n            s4,o4=r\n            if o4 in idx: H[idx[o4],j]+=0.5*V[a,b,c,d]*s1*s2*s3*s4\n    return H\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 198: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d8.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d8.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5))"
+    },
+    {
+     "script": "d8.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "A[i,j]=float((-1)**(l-m)*5*wigner_3j(l,k,l,-m,q,mp))"
+    },
+    {
+     "script": "d8.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "f=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d8.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "V=np.zeros((N,N,N,N))"
+    },
+    {
+     "script": "d8.py",
+     "line": 36,
+     "method": "matrix",
+     "text": "Pe=np.zeros((5,5)); Pe[2,2]=1"
+    },
+    {
+     "script": "d8.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "h=np.zeros((N,N))"
+    },
+    {
+     "script": "d8.py",
+     "line": 57,
+     "method": "matrix",
+     "text": "n=len(dets); H=np.zeros((n,n))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d8 Hamiltonian in Sz=1 sector and check free-ion levels",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > d8.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Ck(k):\n    M={}\n    for q in range(-k,k+1):\n        A=np.zeros((5,5))\n        for i,m in enumerate(ms):\n            for j,mp in enumerate(ms):\n                if -m+q+mp==0:\n                    A[i,j]=float((-1)**(l-m)*5*wigner_3j(l,k,l,-m,q,mp))\n        M[q]=A\n    return M\nC={k:Ck(k) for k in (0,2,4)}\ndef fk(k):\n    f=np.zeros((5,5,5,5))\n    for q in range(-k,k+1):\n        f+= (-1)**q*np.einsum('ac,bd->acbd',C[k][q],C[k][-q])\n    return f\nf0,f2,f4=fk(0),fk(2),fk(4)\nN=10\ndef eri(F2,F4,F0=0):\n    V=np.zeros((N,N,N,N))\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        if a%2!=c%2 or b%2!=d%2: continue\n        ma,mb,mc,md=a//2,b//2,c//2,d//2\n        V[a,b,c,d]=F0*f0[ma,mc,mb,md]+F2*f2[ma,mc,mb,md]+F4*f4[ma,mc,mb,md]\n    return V\nPe=np.zeros((5,5))\nv=np.zeros(5); v[0]=1; v[4]=1; v/=np.sqrt(2)\nPe=np.outer(np.eye(5)[2],np.eye(5)[2])+np.outer(v,v)\nPt=np.eye(5)-Pe\ndets=[]\nfor occ in itertools.combinations(range(N),8):\n    if sum(1 for o in occ if o%2==0)==5: dets.append(occ)\nidx={d:i for i,d in enumerate(dets)}\ndef annihilate(occ,p):\n    if p not in occ: return None\n    s=sum(1 for o in occ if o<p)\n    return ((-1)**s, tuple(o for o in occ if o!=p))\ndef create(occ,p):\n    if p in occ: return None\n    s=sum(1 for o in occ if o<p)\n    return ((-1)**s, tuple(sorted(occ+(p,))))\ndef H_matrix(Dq,F2,F4):\n    V=eri(F2,F4)\n    H1=-6*Dq*Pe+4*Dq*Pt\n    h=np.zeros((N,N))\n    for a in range(N):\n        for c in range(N):\n            if a%2==c%2: h[a,c]=H1[a//2,c//2]\n    n=len(dets); H=np.zeros((n,n))\n    for j,occ in enumerate(dets):\n        for a in range(N):\n            for c in range(N):\n                if h[a,c]==0: continue\n                r=annihilate(occ,c)\n                if r is None: continue\n                s1,o1=r\n                r2=create(o1,a)\n                if r2 is None: continue\n                s2,o2=r2\n                if o2 in idx: H[idx[o2],j]+=s1*s2*h[a,c]\n        for a,b,c,d in itertools.product(range(N),repeat=4):\n            if V[a,b,c,d]==0: continue\n            r=annihilate(occ,c)\n            if r is None: continue\n            s1,o1=r\n            r=annihilate(o1,d)\n            if r is None: continue\n            s2,o2=r\n            r=create(o2,b)\n            if r is None: continue\n            s3,o3=r\n            r=create(o3,a)\n            if r is None: continue\n            s4,o4=r\n            if o4 in idx: H[idx[o4],j]+=0.5*V[a,b,c,d]*s1*s2*s3*s4\n    return H\nEOF\npython3 -c \"\nfrom d8 import *\nH=H_matrix(0.0,1.0,0.0)\nprint(len(dets)); print(np.round(np.linalg.eigvalsh(H),4))\n\"",
+   "scripts": [
+    {
+     "name": "d8.py",
+     "sha256": "2396fad42f19758c7cd14eafc0be1e7347e833b6042809b185da3bc95964f196",
+     "lines": 80,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Ck(k):\n    M={}\n    for q in range(-k,k+1):\n        A=np.zeros((5,5))\n        for i,m in enumerate(ms):\n            for j,mp in enumerate(ms):\n                if -m+q+mp==0:\n                    A[i,j]=float((-1)**(l-m)*5*wigner_3j(l,k,l,-m,q,mp))\n        M[q]=A\n    return M\nC={k:Ck(k) for k in (0,2,4)}\ndef fk(k):\n    f=np.zeros((5,5,5,5))\n    for q in range(-k,k+1):\n        f+= (-1)**q*np.einsum('ac,bd->acbd',C[k][q],C[k][-q])\n    return f\nf0,f2,f4=fk(0),fk(2),fk(4)\nN=10\ndef eri(F2,F4,F0=0):\n    V=np.zeros((N,N,N,N))\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        if a%2!=c%2 or b%2!=d%2: continue\n        ma,mb,mc,md=a//2,b//2,c//2,d//2\n        V[a,b,c,d]=F0*f0[ma,mc,mb,md]+F2*f2[ma,mc,mb,md]+F4*f4[ma,mc,mb,md]\n    return V\nPe=np.zeros((5,5))\nv=np.zeros(5); v[0]=1; v[4]=1; v/=np.sqrt(2)\nPe=np.outer(np.eye(5)[2],np.eye(5)[2])+np.outer(v,v)\nPt=np.eye(5)-Pe\ndets=[]\nfor occ in itertools.combinations(range(N),8):\n    if sum(1 for o in occ if o%2==0)==5: dets.append(occ)\nidx={d:i for i,d in enumerate(dets)}\ndef annihilate(occ,p):\n    if p not in occ: return None\n    s=sum(1 for o in occ if o<p)\n    return ((-1)**s, tuple(o for o in occ if o!=p))\ndef create(occ,p):\n    if p in occ: return None\n    s=sum(1 for o in occ if o<p)\n    return ((-1)**s, tuple(sorted(occ+(p,))))\ndef H_matrix(Dq,F2,F4):\n    V=eri(F2,F4)\n    H1=-6*Dq*Pe+4*Dq*Pt\n    h=np.zeros((N,N))\n    for a in range(N):\n        for c in range(N):\n            if a%2==c%2: h[a,c]=H1[a//2,c//2]\n    n=len(dets); H=np.zeros((n,n))\n    for j,occ in enumerate(dets):\n        for a in range(N):\n            for c in range(N):\n                if h[a,c]==0: continue\n                r=annihilate(occ,c)\n                if r is None: continue\n                s1,o1=r\n                r2=create(o1,a)\n                if r2 is None: continue\n                s2,o2=r2\n                if o2 in idx: H[idx[o2],j]+=s1*s2*h[a,c]\n        for a,b,c,d in itertools.product(range(N),repeat=4):\n            if V[a,b,c,d]==0: continue\n            r=annihilate(occ,c)\n            if r is None: continue\n            s1,o1=r\n            r=annihilate(o1,d)\n            if r is None: continue\n            s2,o2=r\n            r=create(o2,b)\n            if r is None: continue\n            s3,o3=r\n            r=create(o3,a)\n            if r is None: continue\n            s4,o4=r\n            if o4 in idx: H[idx[o4],j]+=0.5*V[a,b,c,d]*s1*s2*s3*s4\n    return H\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    from d8 import *\nModuleNotFoundError: No module named 'd8'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d8.py",
+     "line": 8,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5))"
+    },
+    {
+     "script": "d8.py",
+     "line": 12,
+     "method": "matrix",
+     "text": "A[i,j]=float((-1)**(l-m)*5*wigner_3j(l,k,l,-m,q,mp))"
+    },
+    {
+     "script": "d8.py",
+     "line": 17,
+     "method": "matrix",
+     "text": "f=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d8.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "V=np.zeros((N,N,N,N))"
+    },
+    {
+     "script": "d8.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "Pe=np.zeros((5,5))"
+    },
+    {
+     "script": "d8.py",
+     "line": 49,
+     "method": "matrix",
+     "text": "h=np.zeros((N,N))"
+    },
+    {
+     "script": "d8.py",
+     "line": 53,
+     "method": "matrix",
+     "text": "n=len(dets); H=np.zeros((n,n))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find a writable directory",
+   "command": "cd ~ 2>/dev/null && pwd; touch ~/x_test 2>&1 && echo writable_home; echo $TMPDIR; df -h /tmp | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch '/tmp/tsbench-home-xehwqch9/x_test': Read-only file system\n<SANDBOX_TMP>\n/dev/vda1       158G   88G   64G  59% /\nShell cwd was reset to /tmp/tsbench-run-el_nzhwd",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Try writing into claude temp directory",
+   "command": "cd <SANDBOX_TMP> 2>/dev/null && mkdir -p w && cd w && pwd && touch t && echo ok",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "<SANDBOX_TMP>/w\nok\nShell cwd was reset to /tmp/tsbench-run-el_nzhwd",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Build d8 Hamiltonian in Sz=1 sector and check free-ion levels",
+   "command": "cd <SANDBOX_TMP>/w && cat > d8.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Ck(k):\n    M={}\n    for q in range(-k,k+1):\n        A=np.zeros((5,5))\n        for i,m in enumerate(ms):\n            for j,mp in enumerate(ms):\n                if -m+q+mp==0:\n                    A[i,j]=float((-1)**(l-m)*5*wigner_3j(l,k,l,-m,q,mp))\n        M[q]=A\n    return M\nC={k:Ck(k) for k in (0,2,4)}\ndef fk(k):\n    f=np.zeros((5,5,5,5))\n    for q in range(-k,k+1):\n        f+= (-1)**q*np.einsum('ac,bd->acbd',C[k][q],C[k][-q])\n    return f\nf0,f2,f4=fk(0),fk(2),fk(4)\nN=10\ndef eri(F2,F4,F0=0):\n    V=np.zeros((N,N,N,N))\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        if a%2!=c%2 or b%2!=d%2: continue\n        ma,mb,mc,md=a//2,b//2,c//2,d//2\n        V[a,b,c,d]=F0*f0[ma,mc,mb,md]+F2*f2[ma,mc,mb,md]+F4*f4[ma,mc,mb,md]\n    return V\nv=np.zeros(5); v[0]=1; v[4]=1; v/=np.sqrt(2)\nPe=np.outer(np.eye(5)[2],np.eye(5)[2])+np.outer(v,v)\nPt=np.eye(5)-Pe\ndets=[]\nfor occ in itertools.combinations(range(N),8):\n    if sum(1 for o in occ if o%2==0)==5: dets.append(occ)\nidx={d:i for i,d in enumerate(dets)}\ndef annihilate(occ,p):\n    if p not in occ: return None\n    s=sum(1 for o in occ if o<p)\n    return ((-1)**s, tuple(o for o in occ if o!=p))\ndef create(occ,p):\n    if p in occ: return None\n    s=sum(1 for o in occ if o<p)\n    return ((-1)**s, tuple(sorted(occ+(p,))))\ndef H_matrix(Dq,F2,F4):\n    V=eri(F2,F4)\n    H1=-6*Dq*Pe+4*Dq*Pt\n    h=np.zeros((N,N))\n    for a in range(N):\n        for c in range(N):\n            if a%2==c%2: h[a,c]=H1[a//2,c//2]\n    n=len(dets); H=np.zeros((n,n))\n    for j,occ in enumerate(dets):\n        for a in range(N):\n            for c in range(N):\n                if h[a,c]==0: continue\n                r=annihilate(occ,c)\n                if r is None: continue\n                s1,o1=r\n                r2=create(o1,a)\n                if r2 is None: continue\n                s2,o2=r2\n                if o2 in idx: H[idx[o2],j]+=s1*s2*h[a,c]\n        for a,b,c,d in itertools.product(range(N),repeat=4):\n            if V[a,b,c,d]==0: continue\n            r=annihilate(occ,c)\n            if r is None: continue\n            s1,o1=r\n            r=annihilate(o1,d)\n            if r is None: continue\n            s2,o2=r\n            r=create(o2,b)\n            if r is None: continue\n            s3,o3=r\n            r=create(o3,a)\n            if r is None: continue\n            s4,o4=r\n            if o4 in idx: H[idx[o4],j]+=0.5*V[a,b,c,d]*s1*s2*s3*s4\n    return H\nEOF\npython3 -c \"\nfrom d8 import *\nH=H_matrix(0.0,1.0,0.0)\nprint(len(dets)); print(np.round(np.linalg.eigvalsh(H),4))\n\"",
+   "scripts": [
+    {
+     "name": "d8.py",
+     "sha256": "8435311a1444dc661c85736193e0650db1a7d948f8281a284e3a89510c17cd2f",
+     "lines": 79,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Ck(k):\n    M={}\n    for q in range(-k,k+1):\n        A=np.zeros((5,5))\n        for i,m in enumerate(ms):\n            for j,mp in enumerate(ms):\n                if -m+q+mp==0:\n                    A[i,j]=float((-1)**(l-m)*5*wigner_3j(l,k,l,-m,q,mp))\n        M[q]=A\n    return M\nC={k:Ck(k) for k in (0,2,4)}\ndef fk(k):\n    f=np.zeros((5,5,5,5))\n    for q in range(-k,k+1):\n        f+= (-1)**q*np.einsum('ac,bd->acbd',C[k][q],C[k][-q])\n    return f\nf0,f2,f4=fk(0),fk(2),fk(4)\nN=10\ndef eri(F2,F4,F0=0):\n    V=np.zeros((N,N,N,N))\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        if a%2!=c%2 or b%2!=d%2: continue\n        ma,mb,mc,md=a//2,b//2,c//2,d//2\n        V[a,b,c,d]=F0*f0[ma,mc,mb,md]+F2*f2[ma,mc,mb,md]+F4*f4[ma,mc,mb,md]\n    return V\nv=np.zeros(5); v[0]=1; v[4]=1; v/=np.sqrt(2)\nPe=np.outer(np.eye(5)[2],np.eye(5)[2])+np.outer(v,v)\nPt=np.eye(5)-Pe\ndets=[]\nfor occ in itertools.combinations(range(N),8):\n    if sum(1 for o in occ if o%2==0)==5: dets.append(occ)\nidx={d:i for i,d in enumerate(dets)}\ndef annihilate(occ,p):\n    if p not in occ: return None\n    s=sum(1 for o in occ if o<p)\n    return ((-1)**s, tuple(o for o in occ if o!=p))\ndef create(occ,p):\n    if p in occ: return None\n    s=sum(1 for o in occ if o<p)\n    return ((-1)**s, tuple(sorted(occ+(p,))))\ndef H_matrix(Dq,F2,F4):\n    V=eri(F2,F4)\n    H1=-6*Dq*Pe+4*Dq*Pt\n    h=np.zeros((N,N))\n    for a in range(N):\n        for c in range(N):\n            if a%2==c%2: h[a,c]=H1[a//2,c//2]\n    n=len(dets); H=np.zeros((n,n))\n    for j,occ in enumerate(dets):\n        for a in range(N):\n            for c in range(N):\n                if h[a,c]==0: continue\n                r=annihilate(occ,c)\n                if r is None: continue\n                s1,o1=r\n                r2=create(o1,a)\n                if r2 is None: continue\n                s2,o2=r2\n                if o2 in idx: H[idx[o2],j]+=s1*s2*h[a,c]\n        for a,b,c,d in itertools.product(range(N),repeat=4):\n            if V[a,b,c,d]==0: continue\n            r=annihilate(occ,c)\n            if r is None: continue\n            s1,o1=r\n            r=annihilate(o1,d)\n            if r is None: continue\n            s2,o2=r\n            r=create(o2,b)\n            if r is None: continue\n            s3,o3=r\n            r=create(o3,a)\n            if r is None: continue\n            s4,o4=r\n            if o4 in idx: H[idx[o4],j]+=0.5*V[a,b,c,d]*s1*s2*s3*s4\n    return H\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "10\n[-17.8571 -17.8571 -17.8571 -17.8571 -17.8571 -17.8571 -17.8571 -12.5\n -12.5    -12.5   ]\nShell cwd was reset to /tmp/tsbench-run-el_nzhwd",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d8.py",
+     "line": 8,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5))"
+    },
+    {
+     "script": "d8.py",
+     "line": 12,
+     "method": "matrix",
+     "text": "A[i,j]=float((-1)**(l-m)*5*wigner_3j(l,k,l,-m,q,mp))"
+    },
+    {
+     "script": "d8.py",
+     "line": 17,
+     "method": "matrix",
+     "text": "f=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d8.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "V=np.zeros((N,N,N,N))"
+    },
+    {
+     "script": "d8.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "h=np.zeros((N,N))"
+    },
+    {
+     "script": "d8.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "n=len(dets); H=np.zeros((n,n))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Test Slater-integral scaling of Ee matrix",
+   "command": "cd <SANDBOX_TMP>/w && python3 -c \"\nfrom d8 import *\nfor F2,F4 in [(1,0),(0,1)]:\n    H=H_matrix(0.0,F2,F4)\n    print(F2,F4,np.round(np.linalg.eigvalsh(H),5))\nprint(np.round(f2[2,2,2,2],5), 2/35*25, np.round(f4[2,2,2,2],5))\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1 0 [-17.85714 -17.85714 -17.85714 -17.85714 -17.85714 -17.85714 -17.85714\n -12.5     -12.5     -12.5    ]\n0 1 [-18.33333 -18.33333 -18.33333 -15.35714 -15.35714 -15.35714 -15.35714\n -15.35714 -15.35714 -15.35714]\n1.42857 1.4285714285714286 1.42857\nShell cwd was reset to /tmp/tsbench-run-el_nzhwd",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Compute tetrahedral d8 level structure for trial parameters",
+   "command": "cd <SANDBOX_TMP>/w && cat > fit.py << 'EOF'\nfrom d8 import *\nfrom scipy.optimize import least_squares\ndef levels(Dq,B,C):\n    F2=49*B+7*C; F4=12.6*C\n    H=H_matrix(Dq,F2/17.5,F4/17.5)\n    w,v=np.linalg.eigh(H)\n    # group degenerate levels\n    lv=[]\n    for x in w:\n        if not lv or abs(x-lv[-1][0])>1e-6: lv.append([x,1])\n        else: lv[-1][1]+=1\n    return lv\nlv=levels(500,800,3200)\nfor x,n in lv: print(round(x,3),n)\nEOF\npython3 fit.py",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "ee22db6c08575bff57305b46b7c595272dae9dd8cbdaff6f21fcbef48af7bfbf",
+     "lines": 14,
+     "code": "from d8 import *\nfrom scipy.optimize import least_squares\ndef levels(Dq,B,C):\n    F2=49*B+7*C; F4=12.6*C\n    H=H_matrix(Dq,F2/17.5,F4/17.5)\n    w,v=np.linalg.eigh(H)\n    # group degenerate levels\n    lv=[]\n    for x in w:\n        if not lv or abs(x-lv[-1][0])>1e-6: lv.append([x,1])\n        else: lv[-1][1]+=1\n    return lv\nlv=levels(500,800,3200)\nfor x,n in lv: print(round(x,3),n)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "-101502.087 3\n-97240.0 3\n-92240.0 1\n-85977.913 3\nShell cwd was reset to /tmp/tsbench-run-el_nzhwd",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit.py",
+     "line": 6,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Fit Dq, B, C to the three observed bands",
+   "command": "cd <SANDBOX_TMP>/w && cat > fit2.py << 'EOF'\nfrom fit import levels\nfrom scipy.optimize import least_squares\nobs=np.array([3600,7870,16410.])\ndef bands(p):\n    Dq,B,C=p\n    lv=levels(Dq,B,C)\n    g=lv[0][0]\n    return np.array([lv[1][0]-g, lv[2][0]-g, lv[3][0]-g])\ndef res(p): return (bands(p)-obs)/obs\nfor C0 in [3000,4000,5000]:\n    s=least_squares(res,[400,800,C0],x_scale=[100,100,500])\n    print(np.round(s.x,2), np.round(bands(s.x),2), np.max(np.abs(s.fun)))\nEOF\npython3 fit2.py 2>&1 | grep -v Shell | tail -5",
+   "scripts": [
+    {
+     "name": "fit2.py",
+     "sha256": "98861b28cbbec8a4cbeeec92d17865ad8f145200fddfa5b9788ff21f81dd0cbc",
+     "lines": 12,
+     "code": "from fit import levels\nfrom scipy.optimize import least_squares\nobs=np.array([3600,7870,16410.])\ndef bands(p):\n    Dq,B,C=p\n    lv=levels(Dq,B,C)\n    g=lv[0][0]\n    return np.array([lv[1][0]-g, lv[2][0]-g, lv[3][0]-g])\ndef res(p): return (bands(p)-obs)/obs\nfor C0 in [3000,4000,5000]:\n    s=least_squares(res,[400,800,C0],x_scale=[100,100,500])\n    print(np.round(s.x,2), np.round(bands(s.x),2), np.max(np.abs(s.fun)))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit2.py",
+     "written_in_step": 8
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Traceback (most recent call last):\n  File \"<SANDBOX_TMP>/w/fit2.py\", line 3, in <module>\n    obs=np.array([3600,7870,16410.])\n        ^^\nNameError: name 'np' is not defined\nShell cwd was reset to /tmp/tsbench-run-el_nzhwd",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit2.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit2.py",
+     "line": 11,
+     "method": "least_squares",
+     "text": "s=least_squares(res,[400,800,C0],x_scale=[100,100,500])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Rerun fit with numpy import fixed",
+   "command": "cd <SANDBOX_TMP>/w && sed -i '1i import numpy as np' fit2.py && sed -i 's/^lv=levels(500,800,3200)/if __name__==\"__main__\":\\n    lv=levels(500,800,3200)/; s/^for x,n in lv: print/    for x,n in lv: print/' fit.py && python3 fit2.py 2>&1 | grep -v Shell | tail -5",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "fit2.py",
+     "written_in_step": 8
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[  427.36   899.04 -2409.74] [ 3598.9   7872.47 16409.86] 0.0003134656371981909\n[  427.36   899.04 -2022.05] [ 3598.9   7872.46 16409.86] 0.00031313608132057467\n[  427.36   899.04 25104.9 ] [ 3598.9   7872.46 16409.88] 0.0003129951836774422\nShell cwd was reset to /tmp/tsbench-run-el_nzhwd",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": [
+    "Dq",
+    "B"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 427.0,
+   "weak": false,
+   "steps": [
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "B",
+   "value": 899.0,
+   "weak": false,
+   "steps": [
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  }
+ ],
+ "summary": {
+  "n_steps": 10,
+  "n_scripts": 5,
+  "n_failed_steps": 2,
+  "n_values": 2,
+  "n_linked": 2,
+  "n_weak": 0,
+  "source_steps": [
+   9
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": true
+ }
+}

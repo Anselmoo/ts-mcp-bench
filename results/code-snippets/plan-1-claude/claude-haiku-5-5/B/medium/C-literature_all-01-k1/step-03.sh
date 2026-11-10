@@ -1,0 +1,1 @@
+cd /tmp/tsbench-home-xehwqch9 2>/dev/null && pwd; touch /tmp/tsbench-run-de_x16pn/x 2>&1 && echo ok_run; python3 -c "import numpy,scipy;print(numpy.__version__,scipy.__version__)"

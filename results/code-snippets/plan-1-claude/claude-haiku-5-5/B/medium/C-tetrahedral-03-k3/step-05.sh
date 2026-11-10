@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> 2>/dev/null && mkdir -p w && cd w && pwd && touch t && echo ok

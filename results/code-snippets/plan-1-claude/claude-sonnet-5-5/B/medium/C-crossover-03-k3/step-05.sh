@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>; sed -i 's/^Fk=.*/Fk={2:B+C\/7,4:C\/35}/; s/(-1)\*\*m\*2\*gaunt(2,k,2,-m,m-mp,mp)/(-1)**m*np.sqrt(4*np.pi\/(2*k+1))*gaunt(2,k,2,-m,m-mp,mp)/' a.py; sed -i 's/800,3000/300,3000/' a.py; python3 a.py

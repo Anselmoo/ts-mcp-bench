@@ -1,0 +1,1 @@
+ls /dev/shm /tmp | head; echo $TMPDIR

@@ -1,0 +1,1 @@
+touch t && echo ok_run; cd /tmp && touch x && echo ok_tmp; mount | grep -E " / | /tmp" | head

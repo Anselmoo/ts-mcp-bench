@@ -1,0 +1,1 @@
+pwd; ls -ld . ; touch ./t.txt && echo ok

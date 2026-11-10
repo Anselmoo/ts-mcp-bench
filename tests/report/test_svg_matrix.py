@@ -117,3 +117,10 @@ def test_the_count_in_every_cell_reads_at_4_5_to_1_in_both_themes():
     for fg, plate, ink in themes.values():
         for op in ops:
             assert _contrast(_blend(fg, plate, op), tuple(int(ink[i:i + 2], 16) for i in (1, 3, 5))) >= 4.5, op
+
+
+def test_one_top_gives_several_matrices_one_colour_scale():
+    counts = {("a", "b"): 3}
+    alone = matrix.transition_matrix(["a", "b"], counts)
+    shared = matrix.transition_matrix(["a", "b"], counts, top=30)
+    assert 'fill-opacity="0.54"' in alone and 'fill-opacity="0.54"' not in shared

@@ -385,3 +385,42 @@ def test_a_tracked_file_missing_from_the_work_tree_is_skipped(repo, capsys):
     (repo / "docs" / "a.md").unlink()
     assert gate.main([]) == 0
     assert capsys.readouterr().out.startswith("clean:")
+
+
+def test_run_data_under_results_skips_the_text_rules(repo, capsys):
+    """Model output under results/ may hold symbols like D2, umlauts and process words: they are run data."""
+    put(repo, "results/confirmatory/p/m/B/medium/t-k1.jsonl",
+        '{"text": "point group D2 (D2), 3T2-8100, Schrödinger, a worktree"}\n')
+    put(repo, "results/code-snippets/p/m/B/medium/t-k1/step-01.sh", "echo D5 und T2-7400\n")
+    assert gate.main([]) == 0
+    assert capsys.readouterr().out.startswith("clean:")
+
+
+def test_run_data_under_results_still_fails_on_home_paths_and_names(repo, capsys, monkeypatch):
+    monkeypatch.setenv("TSBENCH_GATE_DENY", "zorblax")
+    put(repo, "results/confirmatory/p/run.log", "File \"/home/jdoe/venv/x.py\"\nhost zorblax\n")
+    assert gate.main([]) == 1
+    assert hits(capsys) == ["results/confirmatory/p/run.log:1: home path: '/home/jdoe/'",
+                            "results/confirmatory/p/run.log:2: name: '***'"]
+
+
+def test_the_published_analysis_under_results_is_not_private(repo, capsys):
+    add(repo, "results/analysis/plan-1/effort/README.md", "results/analysis/plan-1/strategy/runs.csv")
+    assert gate.main([]) == 0
+    assert capsys.readouterr().out.startswith("clean:")
+
+
+@pytest.mark.parametrize("name", ["analysis/out.csv", "src/results/analysis/out.csv", "results/pilot/x.csv",
+                                  "results/analysis/pilot/x.csv", "results/analysis/plan-1/.claude/x.json",
+                                  "results/analysis/.env"])
+def test_only_the_analysis_folder_of_results_leaves_the_private_rule(repo, capsys, name):
+    add(repo, name)
+    assert gate.main([]) == 1
+    out = capsys.readouterr().out
+    assert f"  {name}\n" in out and f"  archive: {name}\n" in out
+
+
+def test_the_same_text_outside_results_still_fails(repo, capsys):
+    put(repo, "docs/a.md", "point group (D2)\n")
+    assert gate.main([]) == 1
+    assert hits(capsys) == ["docs/a.md:1: id: 'D2'"]

@@ -1,0 +1,1 @@
+cd /dev/shm && sed -i '/^Sp=/d;/^np.savez/d' a.py && sed -i 's/==1\]/==MS]/;s/^orbs=/import sys;MS=int(sys.argv[1])\norbs=/' a.py && echo "np.savez('m%d.npz'%MS,hd=hd,T2=T2,T4=T4)" >> a.py && python3 a.py 1 && python3 a.py 3 && ls

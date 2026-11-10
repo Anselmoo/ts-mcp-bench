@@ -1,0 +1,1 @@
+cd $TMPDIR && sed -i 's/return (-1)\*\*q\*ck/return ck/' a.py && python3 b.py

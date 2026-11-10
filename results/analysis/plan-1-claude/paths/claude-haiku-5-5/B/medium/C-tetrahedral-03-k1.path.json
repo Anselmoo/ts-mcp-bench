@@ -1,0 +1,273 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-tetrahedral-03-k1.jsonl",
+ "transcript_sha256": "2af1137f21b58274f87946000e4e198cd09d82fe6ead466fd05318d4a5dcd7ca",
+ "answer": {
+  "Dq": 427.0,
+  "B": 899.0,
+  "C": null,
+  "out_of_scope": false,
+  "reason": "Full d8 Td ligand-field diagonalization fitted to the three triplet bands gives Dq ≈ 427 and B ≈ 899 cm⁻¹; C is not determined by triplet levels."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy and scipy availability",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy\" ; python3 -c \"import numpy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d8 ligand-field Hamiltonian and test",
+   "command": "mkdir -p /w && cat > /w/lf.py << 'EOF'\nimport numpy as np, itertools\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom scipy.sparse.linalg import eigsh\nfrom scipy.optimize import least_squares\nfrom numpy.polynomial.legendre import leggauss\n\n# angular quadrature on sphere\nnt, nphi = 16, 32\nxg, wg = leggauss(nt)\nphis = np.arange(nphi)*2*np.pi/nphi\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in phis:\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nfuncs=[x*y, y*z, z*x, x*x-y*y, 2*z*z-x*x-y*y]  # xy,yz,zx,x2-y2,z2\nnames=['xy','yz','zx','x2-y2','z2']\nF=[]\nfor f in funcs:\n    n=np.sum(W*f*f); F.append(f/np.sqrt(n))\nF=np.array(F)  # 5 x Npts\n# Legendre P_k(cos gamma) between pts: use matrix via dot products\ncosg = P@P.T\nfrom numpy.polynomial import legendre as L\ndef Pk(k,c): \n    coeffs=np.zeros(k+1); coeffs[k]=1\n    return L.legval(c,coeffs)\nAk={}\nfor k in [0,2,4]:\n    K=Pk(k,cosg)  # pts x pts\n    # A[a,c,b,d] = sum_{i,j} F_a(i)F_c(i) W_i * K_ij * F_b(j)F_d(j) W_j\n    G=np.einsum('ai,ci,i->aci',F,F,W)  # 5x5xN\n    Ak[k]=np.einsum('aci,ij,bdj->acbd',G,K*W[None,:],G)  # careful weights\n# Ak[k][a,c,b,d] = int int Y_a(1)Y_c(1) P_k Y_b(2) Y_d(2)\n# so <ab|1/r|cd> with a(1)->c(1): V[a,b,c,d] = sum_k F_k * Ak[k][a,c,b,d]\ndef Vspatial(Fk):\n    return sum(Fk[k]*Ak[k] for k in Fk)  # returns [a,c,b,d]\n\n# Slater integrals from B,C: F2,F4 with F4/F2 chosen via C: B=(9F2-5F4)/441, C=35F4/441\ndef slater(B,C):\n    F4=441*C/35.0\n    F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\n\n# Fock space: 10 spin orbitals index = 2*orb + spin (spin 0 up, 1 down)\nM=10\ndef cop(i):\n    # annihilation on JW\n    I2=identity(2,format='csr'); Z=csr_matrix(np.diag([1.,-1.]))\n    a=csr_matrix(np.array([[0,1.],[0,0]]))  # annihilates |1>->|0>, basis (|0>,|1>)\n    ops=[]\n    mats=[]\n    for j in range(M):\n        mats.append(Z if j<i else (a if j==i else I2))\n    out=mats[0]\n    for m in mats[1:]: out=kron(out,m,format='csr')\n    return out\nc=[cop(i) for i in range(M)]\ncd=[m.T.tocsr() for m in c]\n# number operator check\n# occupation basis: index bit ordering: state |n> with basis (|0>,|1>) where |1> occupied\nNop=sum(cd[i]@c[i] for i in range(M))\nnd=Nop.diagonal()\nsector=np.where(np.isclose(nd,8))[0]\n\ndef spin(s): return s  # s=0 up,1 down\ndef build_H(B,C,Dq):\n    Fk=slater(B,C)\n    V=Vspatial(Fk)\n    # spin-orbital one-body\n    h=np.zeros((10,10))\n    # Td: t2 (xy,yz,zx) = +6Dq ; e (x2-y2,z2) = -4Dq\n    eps=[6*Dq,6*Dq,6*Dq,-4*Dq,-4*Dq]\n    H=csr_matrix((1024,1024))\n    for o in range(5):\n        for s in range(2):\n            i=2*o+s\n            H=H+eps[o]*(cd[i]@c[i])\n    Hee=csr_matrix((1024,1024))\n    for a in range(5):\n     for b in range(5):\n      for cc in range(5):\n       for d in range(5):\n        v=V[a,cc,b,d]\n        if abs(v)<1e-12: continue\n        for s in range(2):\n         for t in range(2):\n          # sum over spins: a s,c s' ... <ab|cd> with spin conservation: spin(a)=spin(c), spin(b)=spin(d)\n          i=2*a+s; j=2*b+t; k=2*cc+s; l=2*d+t\n          Hee=Hee+0.5*v*(cd[i]@cd[j]@c[l]@c[k])\n    H=H+Hee\n    return H\ndef levels(B,C,Dq):\n    H=build_H(B,C,Dq)\n    # Ms=1 sector: n_up=5,n_down=3\n    up=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\n    Nup=sum(cd[i]@c[i] for i in up).diagonal()\n    Ndn=sum(cd[i]@c[i] for i in dn).diagonal()\n    idx=np.where(np.isclose(Nup,5)&np.isclose(Ndn,3))[0]\n    Hs=H[idx][:,idx].toarray()\n    return np.sort(np.linalg.eigvalsh(Hs))\nif __name__=='__main__':\n    # test: Oh-like check via pure Dq-only: levels\n    ev=levels(1000.,4000.,0.)\n    print(np.round(ev,3))\nEOF\ncd /w && python3 lf.py",
+   "scripts": [
+    {
+     "name": "lf.py",
+     "sha256": "5cbbb2e751371316da0202a868a8a0a14e7f53b5969c02f06d703bc970bc11ab",
+     "lines": 107,
+     "code": "import numpy as np, itertools\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom scipy.sparse.linalg import eigsh\nfrom scipy.optimize import least_squares\nfrom numpy.polynomial.legendre import leggauss\n\n# angular quadrature on sphere\nnt, nphi = 16, 32\nxg, wg = leggauss(nt)\nphis = np.arange(nphi)*2*np.pi/nphi\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in phis:\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nfuncs=[x*y, y*z, z*x, x*x-y*y, 2*z*z-x*x-y*y]  # xy,yz,zx,x2-y2,z2\nnames=['xy','yz','zx','x2-y2','z2']\nF=[]\nfor f in funcs:\n    n=np.sum(W*f*f); F.append(f/np.sqrt(n))\nF=np.array(F)  # 5 x Npts\n# Legendre P_k(cos gamma) between pts: use matrix via dot products\ncosg = P@P.T\nfrom numpy.polynomial import legendre as L\ndef Pk(k,c): \n    coeffs=np.zeros(k+1); coeffs[k]=1\n    return L.legval(c,coeffs)\nAk={}\nfor k in [0,2,4]:\n    K=Pk(k,cosg)  # pts x pts\n    # A[a,c,b,d] = sum_{i,j} F_a(i)F_c(i) W_i * K_ij * F_b(j)F_d(j) W_j\n    G=np.einsum('ai,ci,i->aci',F,F,W)  # 5x5xN\n    Ak[k]=np.einsum('aci,ij,bdj->acbd',G,K*W[None,:],G)  # careful weights\n# Ak[k][a,c,b,d] = int int Y_a(1)Y_c(1) P_k Y_b(2) Y_d(2)\n# so <ab|1/r|cd> with a(1)->c(1): V[a,b,c,d] = sum_k F_k * Ak[k][a,c,b,d]\ndef Vspatial(Fk):\n    return sum(Fk[k]*Ak[k] for k in Fk)  # returns [a,c,b,d]\n\n# Slater integrals from B,C: F2,F4 with F4/F2 chosen via C: B=(9F2-5F4)/441, C=35F4/441\ndef slater(B,C):\n    F4=441*C/35.0\n    F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\n\n# Fock space: 10 spin orbitals index = 2*orb + spin (spin 0 up, 1 down)\nM=10\ndef cop(i):\n    # annihilation on JW\n    I2=identity(2,format='csr'); Z=csr_matrix(np.diag([1.,-1.]))\n    a=csr_matrix(np.array([[0,1.],[0,0]]))  # annihilates |1>->|0>, basis (|0>,|1>)\n    ops=[]\n    mats=[]\n    for j in range(M):\n        mats.append(Z if j<i else (a if j==i else I2))\n    out=mats[0]\n    for m in mats[1:]: out=kron(out,m,format='csr')\n    return out\nc=[cop(i) for i in range(M)]\ncd=[m.T.tocsr() for m in c]\n# number operator check\n# occupation basis: index bit ordering: state |n> with basis (|0>,|1>) where |1> occupied\nNop=sum(cd[i]@c[i] for i in range(M))\nnd=Nop.diagonal()\nsector=np.where(np.isclose(nd,8))[0]\n\ndef spin(s): return s  # s=0 up,1 down\ndef build_H(B,C,Dq):\n    Fk=slater(B,C)\n    V=Vspatial(Fk)\n    # spin-orbital one-body\n    h=np.zeros((10,10))\n    # Td: t2 (xy,yz,zx) = +6Dq ; e (x2-y2,z2) = -4Dq\n    eps=[6*Dq,6*Dq,6*Dq,-4*Dq,-4*Dq]\n    H=csr_matrix((1024,1024))\n    for o in range(5):\n        for s in range(2):\n            i=2*o+s\n            H=H+eps[o]*(cd[i]@c[i])\n    Hee=csr_matrix((1024,1024))\n    for a in range(5):\n     for b in range(5):\n      for cc in range(5):\n       for d in range(5):\n        v=V[a,cc,b,d]\n        if abs(v)<1e-12: continue\n        for s in range(2):\n         for t in range(2):\n          # sum over spins: a s,c s' ... <ab|cd> with spin conservation: spin(a)=spin(c), spin(b)=spin(d)\n          i=2*a+s; j=2*b+t; k=2*cc+s; l=2*d+t\n          Hee=Hee+0.5*v*(cd[i]@cd[j]@c[l]@c[k])\n    H=H+Hee\n    return H\ndef levels(B,C,Dq):\n    H=build_H(B,C,Dq)\n    # Ms=1 sector: n_up=5,n_down=3\n    up=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\n    Nup=sum(cd[i]@c[i] for i in up).diagonal()\n    Ndn=sum(cd[i]@c[i] for i in dn).diagonal()\n    idx=np.where(np.isclose(Nup,5)&np.isclose(Ndn,3))[0]\n    Hs=H[idx][:,idx].toarray()\n    return np.sort(np.linalg.eigvalsh(Hs))\nif __name__=='__main__':\n    # test: Oh-like check via pure Dq-only: levels\n    ev=levels(1000.,4000.,0.)\n    print(np.round(ev,3))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "lf.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 219: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "lf.py",
+     "line": 4,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "lf.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "a=csr_matrix(np.array([[0,1.],[0,0]]))  # annihilates |1>->|0>, basis (|0>,|1>)"
+    },
+    {
+     "script": "lf.py",
+     "line": 73,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10))"
+    },
+    {
+     "script": "lf.py",
+     "line": 103,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh(Hs))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d8 ligand-field Hamiltonian in temp dir and test",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > lf.py << 'EOF'\nimport numpy as np\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom scipy.optimize import least_squares\nfrom numpy.polynomial.legendre import leggauss\nfrom numpy.polynomial import legendre as L\n\nnt, nphi = 16, 32\nxg, wg = leggauss(nt)\nphis = np.arange(nphi)*2*np.pi/nphi\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in phis:\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nfuncs=[x*y, y*z, z*x, x*x-y*y, 2*z*z-x*x-y*y]\nF=[]\nfor f in funcs:\n    n=np.sum(W*f*f); F.append(f/np.sqrt(n))\nF=np.array(F)\ncosg = np.clip(P@P.T,-1,1)\ndef Pk(k,c):\n    coeffs=np.zeros(k+1); coeffs[k]=1\n    return L.legval(c,coeffs)\nAk={}\nG=np.einsum('ai,ci,i->aci',F,F,W)\nfor k in [0,2,4]:\n    K=Pk(k,cosg)\n    Ak[k]=np.einsum('aci,ij,bdj->acbd',G,K,G)\nM=10\nI2=identity(2,format='csr'); Z=csr_matrix(np.diag([1.,-1.]))\na_=csr_matrix(np.array([[0,1.],[0,0]]))\ndef cop(i):\n    mats=[Z if j<i else (a_ if j==i else I2) for j in range(M)]\n    out=mats[0]\n    for m in mats[1:]: out=kron(out,m,format='csr')\n    return out\nc=[cop(i) for i in range(M)]\ncd=[m.T.tocsr() for m in c]\nnum=[cd[i]@c[i] for i in range(M)]\ndef build_H(B,C,Dq):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    Fk={0:0.0,2:F2,4:F4}\n    V=sum(Fk[k]*Ak[k] for k in Fk)\n    eps=[6*Dq,6*Dq,6*Dq,-4*Dq,-4*Dq]\n    H=csr_matrix((1024,1024))\n    for o in range(5):\n        for s in range(2):\n            H=H+eps[o]*num[2*o+s]\n    Hee=csr_matrix((1024,1024))\n    for a in range(5):\n     for b in range(5):\n      for cc in range(5):\n       for d in range(5):\n        v=V[a,cc,b,d]\n        if abs(v)<1e-10: continue\n        for s in range(2):\n         for t in range(2):\n          i=2*a+s; j=2*b+t; k=2*cc+s; l=2*d+t\n          Hee=Hee+0.5*v*(cd[i]@cd[j]@c[l]@c[k])\n    return H+Hee\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nNup=sum(num[i] for i in up).diagonal(); Ndn=sum(num[i] for i in dn).diagonal()\nidx=np.where(np.isclose(Nup,5)&np.isclose(Ndn,3))[0]\ndef levels(B,C,Dq):\n    H=build_H(B,C,Dq)\n    Hs=H[idx][:,idx].toarray()\n    return np.sort(np.linalg.eigvalsh(Hs))\nif __name__=='__main__':\n    print(len(idx))\n    print(np.round(levels(1000.,4000.,0.),2))\n    print(np.round(levels(1000.,4000.,1000.),2))\nEOF\npython3 lf.py",
+   "scripts": [
+    {
+     "name": "lf.py",
+     "sha256": "2095e453c2f40b1515f2f6d78c55c1810efe44bc5baa98c1a4c8de450e91c7ea",
+     "lines": 73,
+     "code": "import numpy as np\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom scipy.optimize import least_squares\nfrom numpy.polynomial.legendre import leggauss\nfrom numpy.polynomial import legendre as L\n\nnt, nphi = 16, 32\nxg, wg = leggauss(nt)\nphis = np.arange(nphi)*2*np.pi/nphi\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in phis:\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nfuncs=[x*y, y*z, z*x, x*x-y*y, 2*z*z-x*x-y*y]\nF=[]\nfor f in funcs:\n    n=np.sum(W*f*f); F.append(f/np.sqrt(n))\nF=np.array(F)\ncosg = np.clip(P@P.T,-1,1)\ndef Pk(k,c):\n    coeffs=np.zeros(k+1); coeffs[k]=1\n    return L.legval(c,coeffs)\nAk={}\nG=np.einsum('ai,ci,i->aci',F,F,W)\nfor k in [0,2,4]:\n    K=Pk(k,cosg)\n    Ak[k]=np.einsum('aci,ij,bdj->acbd',G,K,G)\nM=10\nI2=identity(2,format='csr'); Z=csr_matrix(np.diag([1.,-1.]))\na_=csr_matrix(np.array([[0,1.],[0,0]]))\ndef cop(i):\n    mats=[Z if j<i else (a_ if j==i else I2) for j in range(M)]\n    out=mats[0]\n    for m in mats[1:]: out=kron(out,m,format='csr')\n    return out\nc=[cop(i) for i in range(M)]\ncd=[m.T.tocsr() for m in c]\nnum=[cd[i]@c[i] for i in range(M)]\ndef build_H(B,C,Dq):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    Fk={0:0.0,2:F2,4:F4}\n    V=sum(Fk[k]*Ak[k] for k in Fk)\n    eps=[6*Dq,6*Dq,6*Dq,-4*Dq,-4*Dq]\n    H=csr_matrix((1024,1024))\n    for o in range(5):\n        for s in range(2):\n            H=H+eps[o]*num[2*o+s]\n    Hee=csr_matrix((1024,1024))\n    for a in range(5):\n     for b in range(5):\n      for cc in range(5):\n       for d in range(5):\n        v=V[a,cc,b,d]\n        if abs(v)<1e-10: continue\n        for s in range(2):\n         for t in range(2):\n          i=2*a+s; j=2*b+t; k=2*cc+s; l=2*d+t\n          Hee=Hee+0.5*v*(cd[i]@cd[j]@c[l]@c[k])\n    return H+Hee\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nNup=sum(num[i] for i in up).diagonal(); Ndn=sum(num[i] for i in dn).diagonal()\nidx=np.where(np.isclose(Nup,5)&np.isclose(Ndn,3))[0]\ndef levels(B,C,Dq):\n    H=build_H(B,C,Dq)\n    Hs=H[idx][:,idx].toarray()\n    return np.sort(np.linalg.eigvalsh(Hs))\nif __name__=='__main__':\n    print(len(idx))\n    print(np.round(levels(1000.,4000.,0.),2))\n    print(np.round(levels(1000.,4000.,1000.),2))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "lf.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\npython3: can't open file '/tmp/tsbench-run-zshj4a0b/lf.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "lf.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "lf.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "a_=csr_matrix(np.array([[0,1.],[0,0]]))"
+    },
+    {
+     "script": "lf.py",
+     "line": 69,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh(Hs))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Run d8 Hamiltonian calculation inline",
+   "command": "cd ~ 2>/dev/null; pwd; cat > /dev/null << 'EOF'\nEOF\npython3 - << 'EOF'\nimport numpy as np\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom numpy.polynomial.legendre import leggauss\nfrom numpy.polynomial import legendre as L\nnt, nphi = 16, 32\nxg, wg = leggauss(nt)\nphis = np.arange(nphi)*2*np.pi/nphi\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in phis:\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nfuncs=[x*y, y*z, z*x, x*x-y*y, 2*z*z-x*x-y*y]\nF=np.array([f/np.sqrt(np.sum(W*f*f)) for f in funcs])\ncosg=np.clip(P@P.T,-1,1)\ndef Pk(k,c):\n    co=np.zeros(k+1); co[k]=1; return L.legval(c,co)\nG=np.einsum('ai,ci,i->aci',F,F,W)\nAk={k:np.einsum('aci,ij,bdj->acbd',G,Pk(k,cosg),G) for k in [0,2,4]}\nM=10\nI2=identity(2,format='csr'); Z=csr_matrix(np.diag([1.,-1.])); am=csr_matrix(np.array([[0,1.],[0,0]]))\ndef cop(i):\n    mats=[Z if j<i else (am if j==i else I2) for j in range(M)]\n    out=mats[0]\n    for m in mats[1:]: out=kron(out,m,format='csr')\n    return out\nc=[cop(i) for i in range(M)]\ncd=[m.T.tocsr() for m in c]\nnum=[cd[i]@c[i] for i in range(M)]\n# precompute two-body terms\nterms=[]\nfor a in range(5):\n for b in range(5):\n  for cc in range(5):\n   for d in range(5):\n    for s in range(2):\n     for t in range(2):\n      i=2*a+s; j=2*b+t; k=2*cc+s; l=2*d+t\n      terms.append((a,cc,b,d,0.5*cd[i]@cd[j]@c[l]@c[k]))\ndef build_H(B,C,Dq):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    Fk={0:0.0,2:F2,4:F4}\n    V=sum(Fk[k]*Ak[k] for k in Fk)\n    eps=[6*Dq]*3+[-4*Dq]*2\n    H=csr_matrix((1024,1024))\n    for o in range(5):\n        for s in range(2): H=H+eps[o]*num[2*o+s]\n    for (a,cc,b,d,op) in terms:\n        v=V[a,cc,b,d]\n        if abs(v)>1e-10: H=H+v*op\n    return H\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nNup=sum(num[i] for i in up).diagonal(); Ndn=sum(num[i] for i in dn).diagonal()\nidx=np.where(np.isclose(Nup,5)&np.isclose(Ndn,3))[0]\nNt=sum(num).diagonal(); idx8=np.where(np.isclose(Nt,8))[0]\ndef levels(B,C,Dq):\n    H=build_H(B,C,Dq)\n    Hs=H[idx][:,idx].toarray()\n    return np.sort(np.linalg.eigvalsh(Hs))\nprint(len(idx))\n# check free ion: Dq=0 levels\nev=levels(1000.,4000.,0.)\nprint(np.round(ev,2))\nEOF",
+   "scripts": [
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "946251cdba981c439960cc65bbf1cc9c0e06fa41af6c5cafd39d5dee36b52093",
+     "lines": 65,
+     "code": "import numpy as np\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom numpy.polynomial.legendre import leggauss\nfrom numpy.polynomial import legendre as L\nnt, nphi = 16, 32\nxg, wg = leggauss(nt)\nphis = np.arange(nphi)*2*np.pi/nphi\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in phis:\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nfuncs=[x*y, y*z, z*x, x*x-y*y, 2*z*z-x*x-y*y]\nF=np.array([f/np.sqrt(np.sum(W*f*f)) for f in funcs])\ncosg=np.clip(P@P.T,-1,1)\ndef Pk(k,c):\n    co=np.zeros(k+1); co[k]=1; return L.legval(c,co)\nG=np.einsum('ai,ci,i->aci',F,F,W)\nAk={k:np.einsum('aci,ij,bdj->acbd',G,Pk(k,cosg),G) for k in [0,2,4]}\nM=10\nI2=identity(2,format='csr'); Z=csr_matrix(np.diag([1.,-1.])); am=csr_matrix(np.array([[0,1.],[0,0]]))\ndef cop(i):\n    mats=[Z if j<i else (am if j==i else I2) for j in range(M)]\n    out=mats[0]\n    for m in mats[1:]: out=kron(out,m,format='csr')\n    return out\nc=[cop(i) for i in range(M)]\ncd=[m.T.tocsr() for m in c]\nnum=[cd[i]@c[i] for i in range(M)]\n# precompute two-body terms\nterms=[]\nfor a in range(5):\n for b in range(5):\n  for cc in range(5):\n   for d in range(5):\n    for s in range(2):\n     for t in range(2):\n      i=2*a+s; j=2*b+t; k=2*cc+s; l=2*d+t\n      terms.append((a,cc,b,d,0.5*cd[i]@cd[j]@c[l]@c[k]))\ndef build_H(B,C,Dq):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    Fk={0:0.0,2:F2,4:F4}\n    V=sum(Fk[k]*Ak[k] for k in Fk)\n    eps=[6*Dq]*3+[-4*Dq]*2\n    H=csr_matrix((1024,1024))\n    for o in range(5):\n        for s in range(2): H=H+eps[o]*num[2*o+s]\n    for (a,cc,b,d,op) in terms:\n        v=V[a,cc,b,d]\n        if abs(v)>1e-10: H=H+v*op\n    return H\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nNup=sum(num[i] for i in up).diagonal(); Ndn=sum(num[i] for i in dn).diagonal()\nidx=np.where(np.isclose(Nup,5)&np.isclose(Ndn,3))[0]\nNt=sum(num).diagonal(); idx8=np.where(np.isclose(Nt,8))[0]\ndef levels(B,C,Dq):\n    H=build_H(B,C,Dq)\n    Hs=H[idx][:,idx].toarray()\n    return np.sort(np.linalg.eigvalsh(Hs))\nprint(len(idx))\n# check free ion: Dq=0 levels\nev=levels(1000.,4000.,0.)\nprint(np.round(ev,2))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\n10\n[-122800. -122800. -122800. -122800. -122800. -122800. -122800. -107800.\n -107800. -107800.]\nShell cwd was reset to /tmp/tsbench-run-zshj4a0b",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 23,
+     "method": "matrix",
+     "text": "I2=identity(2,format='csr'); Z=csr_matrix(np.diag([1.,-1.])); am=csr_matrix(np.array([[0,1.],[0,0]]))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 61,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh(Hs))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Fit Dq, B, C to three observed Ni(II) bands",
+   "command": "python3 - << 'EOF'\nimport numpy as np\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom numpy.polynomial.legendre import leggauss\nfrom numpy.polynomial import legendre as L\nfrom scipy.optimize import least_squares\nnt, nphi = 16, 32\nxg, wg = leggauss(nt)\nphis = np.arange(nphi)*2*np.pi/nphi\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in phis:\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nfuncs=[x*y, y*z, z*x, x*x-y*y, 2*z*z-x*x-y*y]\nF=np.array([f/np.sqrt(np.sum(W*f*f)) for f in funcs])\ncosg=np.clip(P@P.T,-1,1)\ndef Pk(k,c):\n    co=np.zeros(k+1); co[k]=1; return L.legval(c,co)\nG=np.einsum('ai,ci,i->aci',F,F,W)\nAk={k:np.einsum('aci,ij,bdj->acbd',G,Pk(k,cosg),G) for k in [2,4]}\nM=10\nI2=identity(2,format='csr'); Z=csr_matrix(np.diag([1.,-1.])); am=csr_matrix(np.array([[0,1.],[0,0]]))\ndef cop(i):\n    mats=[Z if j<i else (am if j==i else I2) for j in range(M)]\n    out=mats[0]\n    for m in mats[1:]: out=kron(out,m,format='csr')\n    return out\nc=[cop(i) for i in range(M)]\ncd=[m.T.tocsr() for m in c]\nnum=[cd[i]@c[i] for i in range(M)]\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nNup=sum(num[i] for i in up).diagonal(); Ndn=sum(num[i] for i in dn).diagonal()\nidx=np.where(np.isclose(Nup,5)&np.isclose(Ndn,3))[0]\n# precompute operator pieces restricted to sector: one-body and two-body k=2,4 parts\ndef restrict(Mat): return Mat[idx][:,idx].toarray()\none={}\nfor o in range(5):\n    for s in range(2):\n        one[o]=one.get(o,0)+restrict(num[2*o+s])\nOps={2:0,4:0}\nterms=[]\nfor a in range(5):\n for b in range(5):\n  for cc in range(5):\n   for d in range(5):\n    for s in range(2):\n     for t in range(2):\n      i=2*a+s; j=2*b+t; k=2*cc+s; l=2*d+t\n      terms.append((a,cc,b,d,restrict(0.5*cd[i]@cd[j]@c[l]@c[k])))\n# accumulate\nHk={2:np.zeros((len(idx),)*2),4:np.zeros((len(idx),)*2)}\nfor (a,cc,b,d,op) in terms:\n    for k in [2,4]:\n        v=Ak[k][a,cc,b,d]\n        if abs(v)>1e-10: Hk[k]+=v*op\nt2=one[0]+one[1]+one[2]; eg=one[3]+one[4]\ndef H(B,C,Dq):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return F2*Hk[2]+F4*Hk[4]+6*Dq*t2-4*Dq*eg\ndef levels(p):\n    B,C,Dq=p\n    return np.linalg.eigvalsh(H(B,C,Dq))\ndef distinct(ev,tol=1e-3):\n    out=[]\n    for e in ev:\n        if not out or abs(e-out[-1][0])>tol: out.append([e,1])\n        else: out[-1][1]+=1\n    return out\nev=levels((1000,4000,0))\nprint(distinct(ev))\nobs=np.array([3600.,7870.,16410.])\ndef resid(p,perm):\n    ev=levels(p); d=distinct(ev)\n    e0=d[0][0]\n    ex=[dd[0]-e0 for dd in d[1:]]\n    if len(ex)<3: return np.ones(3)*1e6\n    pred=np.array([ex[i] for i in perm])\n    return (pred-obs)/obs\nimport itertools\nsols=[]\nfor perm in [(0,1,2)]:\n  for g in [(800,3000,360),(700,4000,600),(900,3500,400),(600,3000,1000)]:\n    r=least_squares(resid,g,args=(perm,),bounds=([100,500,-5000],[5000,10000,5000]))\n    sols.append((r.cost,r.x))\nfor s in sols: print(s)\nd=distinct(levels(sols[0][1]))\nprint([ (round(e-d[0][0],1),n) for e,n in d])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "e48ec94e97bda66ad83c831e16d530066f7a4afe40599052dea74087ff5f3d29",
+     "lines": 89,
+     "code": "import numpy as np\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom numpy.polynomial.legendre import leggauss\nfrom numpy.polynomial import legendre as L\nfrom scipy.optimize import least_squares\nnt, nphi = 16, 32\nxg, wg = leggauss(nt)\nphis = np.arange(nphi)*2*np.pi/nphi\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in phis:\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nfuncs=[x*y, y*z, z*x, x*x-y*y, 2*z*z-x*x-y*y]\nF=np.array([f/np.sqrt(np.sum(W*f*f)) for f in funcs])\ncosg=np.clip(P@P.T,-1,1)\ndef Pk(k,c):\n    co=np.zeros(k+1); co[k]=1; return L.legval(c,co)\nG=np.einsum('ai,ci,i->aci',F,F,W)\nAk={k:np.einsum('aci,ij,bdj->acbd',G,Pk(k,cosg),G) for k in [2,4]}\nM=10\nI2=identity(2,format='csr'); Z=csr_matrix(np.diag([1.,-1.])); am=csr_matrix(np.array([[0,1.],[0,0]]))\ndef cop(i):\n    mats=[Z if j<i else (am if j==i else I2) for j in range(M)]\n    out=mats[0]\n    for m in mats[1:]: out=kron(out,m,format='csr')\n    return out\nc=[cop(i) for i in range(M)]\ncd=[m.T.tocsr() for m in c]\nnum=[cd[i]@c[i] for i in range(M)]\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nNup=sum(num[i] for i in up).diagonal(); Ndn=sum(num[i] for i in dn).diagonal()\nidx=np.where(np.isclose(Nup,5)&np.isclose(Ndn,3))[0]\n# precompute operator pieces restricted to sector: one-body and two-body k=2,4 parts\ndef restrict(Mat): return Mat[idx][:,idx].toarray()\none={}\nfor o in range(5):\n    for s in range(2):\n        one[o]=one.get(o,0)+restrict(num[2*o+s])\nOps={2:0,4:0}\nterms=[]\nfor a in range(5):\n for b in range(5):\n  for cc in range(5):\n   for d in range(5):\n    for s in range(2):\n     for t in range(2):\n      i=2*a+s; j=2*b+t; k=2*cc+s; l=2*d+t\n      terms.append((a,cc,b,d,restrict(0.5*cd[i]@cd[j]@c[l]@c[k])))\n# accumulate\nHk={2:np.zeros((len(idx),)*2),4:np.zeros((len(idx),)*2)}\nfor (a,cc,b,d,op) in terms:\n    for k in [2,4]:\n        v=Ak[k][a,cc,b,d]\n        if abs(v)>1e-10: Hk[k]+=v*op\nt2=one[0]+one[1]+one[2]; eg=one[3]+one[4]\ndef H(B,C,Dq):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return F2*Hk[2]+F4*Hk[4]+6*Dq*t2-4*Dq*eg\ndef levels(p):\n    B,C,Dq=p\n    return np.linalg.eigvalsh(H(B,C,Dq))\ndef distinct(ev,tol=1e-3):\n    out=[]\n    for e in ev:\n        if not out or abs(e-out[-1][0])>tol: out.append([e,1])\n        else: out[-1][1]+=1\n    return out\nev=levels((1000,4000,0))\nprint(distinct(ev))\nobs=np.array([3600.,7870.,16410.])\ndef resid(p,perm):\n    ev=levels(p); d=distinct(ev)\n    e0=d[0][0]\n    ex=[dd[0]-e0 for dd in d[1:]]\n    if len(ex)<3: return np.ones(3)*1e6\n    pred=np.array([ex[i] for i in perm])\n    return (pred-obs)/obs\nimport itertools\nsols=[]\nfor perm in [(0,1,2)]:\n  for g in [(800,3000,360),(700,4000,600),(900,3500,400),(600,3000,1000)]:\n    r=least_squares(resid,g,args=(perm,),bounds=([100,500,-5000],[5000,10000,5000]))\n    sols.append((r.cost,r.x))\nfor s in sols: print(s)\nd=distinct(levels(sols[0][1]))\nprint([ (round(e-d[0][0],1),n) for e,n in d])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[[np.float64(-122799.99999999959), 7], [np.float64(-107799.99999999958), 3]]\n(np.float64(9.579241287085472e-08), array([899.04194122, 500.00001432, 427.35663413]))\n(np.float64(9.579241286480148e-08), array([ 899.04194045, 6769.25654386,  427.35663401]))\n(np.float64(9.579241286734034e-08), array([ 899.04194031, 7269.24847096,  427.3566345 ]))\n(np.float64(9.579241287398121e-08), array([ 899.04194139, 2697.897627  ,  427.35663417]))\n[(np.float64(0.0), 3), (np.float64(3598.9), 3), (np.float64(7872.5), 1), (np.float64(16409.9), 3)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 5,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "I2=identity(2,format='csr'); Z=csr_matrix(np.diag([1.,-1.])); am=csr_matrix(np.array([[0,1.],[0,0]]))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(H(B,C,Dq))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 85,
+     "method": "least_squares",
+     "text": "r=least_squares(resid,g,args=(perm,),bounds=([100,500,-5000],[5000,10000,5000]))"
+    }
+   ],
+   "produces": [
+    "Dq"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 427.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "B",
+   "value": 899.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 5,
+  "n_scripts": 5,
+  "n_failed_steps": 2,
+  "n_values": 2,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   4
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

@@ -1,0 +1,2 @@
+
+cd /tmp/tsbench-run-711ytt10/w && sed -i 's/A = np.zeros((5,5,5,5))/A = np.zeros((5,5,5,5),dtype=complex)/' d7.py && sed -i 's/    return A\*4\*pi\/(2\*k+1)/    return (A*4*pi\/(2*k+1)).real/' d7.py && time python3 run.py | head -60

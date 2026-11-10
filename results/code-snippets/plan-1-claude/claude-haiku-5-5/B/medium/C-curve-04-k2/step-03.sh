@@ -1,0 +1,1 @@
+mkdir -p /tmp/work && cd /tmp/work && echo ok && python -c "import numpy, scipy, sympy; print(numpy.__version__, scipy.__version__, sympy.__version__)"

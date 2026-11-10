@@ -1,0 +1,1 @@
+cd $HOME 2>/dev/null && pwd; touch "$HOME/x" 2>&1; echo $HOME; ls -ld /tmp $HOME 2>&1

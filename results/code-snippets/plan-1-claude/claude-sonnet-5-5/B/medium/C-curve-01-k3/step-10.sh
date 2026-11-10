@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>; sed -i 's/F={2:F2,4:F4}/F={2:49*F2,4:441*F4}/' a.py; python3 a.py

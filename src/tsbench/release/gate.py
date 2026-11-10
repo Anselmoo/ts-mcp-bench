@@ -2,30 +2,35 @@
 """Release gate: fail if private material or forbidden text is tracked by git or would enter a release archive.
 
 Private material: a pilot/, seed/, analysis/ or .claude/ folder at any depth, and a .env file (not .env.example).
+The folder results/analysis/ is the published analysis of the run data, not the private analysis/ folder.
 Forbidden text, in the path and the content of every other tracked text file: German words and umlauts, home folders
 of real users (/home/<name>/, /Users/<name>/) and /opt/homebrew/, the names listed in $TSBENCH_GATE_DENY, review and
 decision ids, and words of the development process (worktree, handoff, subagent, the folder of a planning tool, ...).
 $TSBENCH_GATE_DENY holds plain names, separated by commas or whitespace, and is set outside the repository (a local
 shell, a masked CI variable). A name matches as a whole token, in any case. Exempt: this file and its tests (they
-spell the patterns out), the vendored d3.min.js and binary files.
+spell the patterns out), the vendored d3.min.js and binary files. Files under results/ are run data (model input and
+output, and what is derived from it): only home paths and the names of $TSBENCH_GATE_DENY are checked there.
 Run before every tag that Zenodo archives:  tsbench release gate
 Exit 0 = clean. Exit 1 = private material or forbidden text found (listed). Exit 2 = not a git repository.
 """
 from __future__ import annotations
 
 import argparse
-import io
 import os
 import pathlib
 import re
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 PRIVATE_DIRS = frozenset({"pilot", "seed", "analysis", ".claude"})
 EXEMPT = frozenset({"src/tsbench/release/gate.py", "tests/release/test_gate.py",
                     "src/tsbench/_vendor/figura/js/d3.min.js"})
 DENY_VAR = "TSBENCH_GATE_DENY"
+RUN_DATA = "results/"  # model output: German words, ids and process words may occur in it
+RUN_DATA_KINDS = frozenset({"home path", "name"})
+PUBLISHED_ANALYSIS = "results/analysis/"
 
 GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(?:und|nicht|keine|oder|siehe|datei|zeilen|richtig|falsch|gegen)\b", re.I)
 HOME_PATH = re.compile(r"(?<![\w.~-])/(?:home|Users)/(?P<user>[A-Za-z0-9_][\w.-]*)/|/opt/homebrew/")
@@ -41,7 +46,7 @@ AGENT = re.compile(r'(?<!")\bworktrees?\b(?!")|\bhand-?offs?\b|\bsub-?agents?\b|
 
 def is_private(path: str) -> bool:
     """A file inside a private folder at any depth, or a .env file other than .env.example."""
-    *dirs, name = path.split("/")
+    *dirs, name = path.removeprefix(PUBLISHED_ANALYSIS).split("/")
     env = name == ".env" or (name.startswith(".env.") and name != ".env.example")
     return env or any(d in PRIVATE_DIRS for d in dirs)
 
@@ -93,13 +98,15 @@ def forbidden_text(top: pathlib.Path, tracked: list[str], env=None) -> list[str]
     for rel in tracked:
         if rel in EXEMPT or is_private(rel):
             continue
-        out += [f"{rel}: {kind}: {_shown(kind, match)}" for kind, match in find_forbidden(rel, deny=deny)]
+        kinds = RUN_DATA_KINDS if rel.startswith(RUN_DATA) else None
+        out += [f"{rel}: {kind}: {_shown(kind, match)}" for kind, match in find_forbidden(rel, deny=deny)
+                if kinds is None or kind in kinds]
         text = _text_of(top / rel)
         if text is None:
             continue
         for number, line in enumerate(text.splitlines(), 1):
             out += [f"{rel}:{number}: {kind}: {_shown(kind, match)}"
-                    for kind, match in find_forbidden(line, deny=deny)]
+                    for kind, match in find_forbidden(line, deny=deny) if kinds is None or kind in kinds]
     return out
 
 
@@ -116,13 +123,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     tracked = [name.decode("utf-8", errors="surrogateescape") for name in listing.split(b"\0") if name]
     bad = [p for p in tracked if is_private(p)]
-    try:
-        archive = subprocess.run(["git", "-C", top, "archive", "--format=tar", "HEAD"], capture_output=True,
-                                 check=True).stdout
-        names = [m.name for m in tarfile.open(fileobj=io.BytesIO(archive)).getmembers() if not m.isdir()]
-        bad += [f"archive: {n}" for n in names if is_private(n)]
-    except subprocess.CalledProcessError:
-        pass  # no commit yet
+    # on disk, not in memory: with the run data the archive has more than a gigabyte
+    with tempfile.TemporaryFile() as archive:
+        try:
+            subprocess.run(["git", "-C", top, "archive", "--format=tar", "HEAD"], stdout=archive,
+                           stderr=subprocess.DEVNULL, check=True)
+            archive.seek(0)
+            names = [m.name for m in tarfile.open(fileobj=archive).getmembers() if not m.isdir()]
+            bad += [f"archive: {n}" for n in names if is_private(n)]
+        except subprocess.CalledProcessError:
+            pass  # no commit yet
     text_hits = forbidden_text(pathlib.Path(top), tracked)
     if bad:
         print("private material would be published:", *bad, sep="\n  ")

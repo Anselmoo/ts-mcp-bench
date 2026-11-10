@@ -1,0 +1,1 @@
+which python3; python3 -c "import numpy,sympy;print('ok')"

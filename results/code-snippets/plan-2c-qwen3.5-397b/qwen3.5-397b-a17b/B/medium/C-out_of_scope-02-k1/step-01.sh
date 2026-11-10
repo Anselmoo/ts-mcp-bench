@@ -1,0 +1,1 @@
+python3 -c "import json; print(json.dumps({'Dq': 1472, 'B': None, 'C': None, 'out_of_scope': False, 'reason': 'B cannot be determined for d9 configuration as there is only one d-hole and no multiplet structure dependent on interelectronic repulsion parameters.'}))"

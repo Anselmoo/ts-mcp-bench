@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>; sed -i 's/F2=49\*(B+5\*F4\/441)/F2=49*(B+5*C\/35)/' a.py; python3 a.py

@@ -1,0 +1,947 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-literature_all-11-k2.jsonl",
+ "transcript_sha256": "957edbae1a925897379f12f49a7c9efac23bc208e4dcbc3a73c4d4ab8455d539",
+ "answer": {
+  "Dq": 1845.0,
+  "B": 727.0,
+  "C": 3273.0,
+  "out_of_scope": false,
+  "reason": "Full d6 ligand-field diagonalization with C=4.5B, fitting the 1T1 and 1T2 band positions for Dq and B."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy, sympy, scipy availability",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|sympy|scipy\" ; python3 -c \"import numpy, sympy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d6 Hamiltonian and print singlet energies",
+   "command": "mkdir -p /w && cat > /w/d6.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq, fsolve\nfrom math import sqrt\nl=2\nms=list(range(-2,3))\ndef ang(k,m1,m3):  # <l m1|C^k_q|l m3> as function of q\n    pass\n# Gaunt-like angular coefficient for Coulomb: A_k(m1,m2,m3,m4)=sum_q (-1)^q <m1|C^k_q|m3><m2|C^k_-q|m4>\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    s=0.0\n    for q in range(-k,k+1):\n        s+=(-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4)\n    return s\n# complex-basis Coulomb tensor per F^k\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2!=m3+m4: continue\n                    Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\n# real orbital basis: rows = real orbitals in complex basis coefficients\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)  # order: z2, x2-y2, xy, xz, yz\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\ndef tor(V):\n    # phi_a = sum_m U[a,m] |m>; <ab|cd>=sum conj(U_a m1) conj(U_b m2) U_c m3 U_d m4 V\n    return np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,V)\nVr={k:tor(Vk[k]).real for k in Vk}\n# check imaginary part small\nfor k in Vk: assert np.abs(tor(Vk[k]).imag).max()<1e-10\n# spin orbitals: index = 2*orb + spin (0 up,1 down)\nnorb=5\nstates=[c for c in itertools.combinations(range(10),6)]\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    # ops: list of (index, dagger bool) applied right-to-left as given in list order (leftmost first)\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        if dag:\n            if p in occ: return None,0\n            # insert p: sign = (-1)^(number of occupied below p)\n            n=sum(1 for o in occ if o<p)\n            sign*= (-1)**n\n            occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            n=sum(1 for o in occ if o<p)\n            sign*= (-1)**n\n            occ.remove(p)\n    return tuple(occ),sign\ndef build(Dq,B,C):\n    F4=C*441/35.0\n    F2=(B*441+5*F4)/9.0\n    F0=0.0\n    Vs=Vr[0]*F0+Vr[2]*F2+Vr[4]*F4\n    # one-body cubic field: eg (orb 0,1) +6Dq, t2g (2,3,4) -4Dq\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    N=len(states); H=np.zeros((N,N))\n    for j,st in enumerate(states):\n        # one-body\n        for p in range(10):\n            for q in range(10):\n                if p%2!=q%2: continue\n                hv=h[p//2,q//2]\n                if hv==0: continue\n                if p//2!=q//2 and hv==0: continue\n                new,sg=apply_ops([(p,True),(q,False)],st)\n                if new is None: continue\n                H[sidx[new],j]+=sg*hv\n        # two-body: 1/2 sum V_{abcd} a+_a a+_c a_d a_b  with spatial <ab|cd>, spins\n        for a in range(10):\n            for b in range(10):\n                for c in range(10):\n                    for d in range(10):\n                        if a%2!=c%2 or b%2!=d%2: continue\n                        v=Vs[a//2,b//2,c//2,d//2]\n                        if abs(v)<1e-12: continue\n                        new,sg=apply_ops([(a,True),(c,True),(d,False),(b,False)],st)\n                        if new is None: continue\n                        H[sidx[new],j]+=0.5*sg*v\n    # S^2 operator and Ms=0 restriction\n    S2=np.zeros((N,N))\n    Sz=lambda s: 0.5*(1 if s%2==0 else -1)\n    # S+ S- : S^2 = Sz^2 + (S+S- + S-S+)/2 ; build S+ S-\n    for j,st in enumerate(states):\n        # diagonal Sz^2 part with Ms\n        Ms=sum(Sz(p) for p in st)\n        S2[j,j]+=Ms**2\n        for p in range(0,10,2):  # spin up orb p -> p+1 down? index 2*orb+spin\n            pass\n    S2=np.zeros((N,N))\n    for j,st in enumerate(states):\n        Ms=sum(Sz(p) for p in st)\n        S2[j,j]+=Ms*Ms\n        # S+ S- : sum_{i,k} a+_i up a_i' ... implement via S- S+ = sum_{ij} a+_{j dn}a_{j up}...\n        for o1 in range(5):\n            for o2 in range(5):\n                # S+ S- = sum a+_{o1 up} a_{o1 dn} a+_{o2 dn} a_{o2 up}\n                new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n                if new is not None: S2[sidx[new],j]+=sg\n    return H,S2\ndef singlet_levels(Dq,B,C,n=4):\n    H,S2=build(Dq,B,C)\n    # Ms=0 subspace\n    Ms0=[j for j,st in enumerate(states) if sum(1 if p%2==0 else -1 for p in st)==0]\n    Hm=H[np.ix_(Ms0,Ms0)]; Sm=S2[np.ix_(Ms0,Ms0)]\n    w,v=np.linalg.eigh(Sm)\n    null=v[:,np.abs(w)<1e-8]\n    Hs=null.T@Hm@null\n    e,vec=np.linalg.eigh(Hs)\n    return e[:n], vec, null, Ms0, H\nif __name__==\"__main__\":\n    e,_,_,_,_=singlet_levels(1000,1000,4500,n=12)\n    print(np.round(e,1))\nEOF\ncd /w && time python3 d6.py",
+   "scripts": [
+    {
+     "name": "d6.py",
+     "sha256": "38b493a54c5c5c87617a978ec38120bbec65959c9a96992e49803ce24629b2c6",
+     "lines": 125,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq, fsolve\nfrom math import sqrt\nl=2\nms=list(range(-2,3))\ndef ang(k,m1,m3):  # <l m1|C^k_q|l m3> as function of q\n    pass\n# Gaunt-like angular coefficient for Coulomb: A_k(m1,m2,m3,m4)=sum_q (-1)^q <m1|C^k_q|m3><m2|C^k_-q|m4>\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    s=0.0\n    for q in range(-k,k+1):\n        s+=(-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4)\n    return s\n# complex-basis Coulomb tensor per F^k\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2!=m3+m4: continue\n                    Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\n# real orbital basis: rows = real orbitals in complex basis coefficients\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)  # order: z2, x2-y2, xy, xz, yz\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\ndef tor(V):\n    # phi_a = sum_m U[a,m] |m>; <ab|cd>=sum conj(U_a m1) conj(U_b m2) U_c m3 U_d m4 V\n    return np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,V)\nVr={k:tor(Vk[k]).real for k in Vk}\n# check imaginary part small\nfor k in Vk: assert np.abs(tor(Vk[k]).imag).max()<1e-10\n# spin orbitals: index = 2*orb + spin (0 up,1 down)\nnorb=5\nstates=[c for c in itertools.combinations(range(10),6)]\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    # ops: list of (index, dagger bool) applied right-to-left as given in list order (leftmost first)\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        if dag:\n            if p in occ: return None,0\n            # insert p: sign = (-1)^(number of occupied below p)\n            n=sum(1 for o in occ if o<p)\n            sign*= (-1)**n\n            occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            n=sum(1 for o in occ if o<p)\n            sign*= (-1)**n\n            occ.remove(p)\n    return tuple(occ),sign\ndef build(Dq,B,C):\n    F4=C*441/35.0\n    F2=(B*441+5*F4)/9.0\n    F0=0.0\n    Vs=Vr[0]*F0+Vr[2]*F2+Vr[4]*F4\n    # one-body cubic field: eg (orb 0,1) +6Dq, t2g (2,3,4) -4Dq\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    N=len(states); H=np.zeros((N,N))\n    for j,st in enumerate(states):\n        # one-body\n        for p in range(10):\n            for q in range(10):\n                if p%2!=q%2: continue\n                hv=h[p//2,q//2]\n                if hv==0: continue\n                if p//2!=q//2 and hv==0: continue\n                new,sg=apply_ops([(p,True),(q,False)],st)\n                if new is None: continue\n                H[sidx[new],j]+=sg*hv\n        # two-body: 1/2 sum V_{abcd} a+_a a+_c a_d a_b  with spatial <ab|cd>, spins\n        for a in range(10):\n            for b in range(10):\n                for c in range(10):\n                    for d in range(10):\n                        if a%2!=c%2 or b%2!=d%2: continue\n                        v=Vs[a//2,b//2,c//2,d//2]\n                        if abs(v)<1e-12: continue\n                        new,sg=apply_ops([(a,True),(c,True),(d,False),(b,False)],st)\n                        if new is None: continue\n                        H[sidx[new],j]+=0.5*sg*v\n    # S^2 operator and Ms=0 restriction\n    S2=np.zeros((N,N))\n    Sz=lambda s: 0.5*(1 if s%2==0 else -1)\n    # S+ S- : S^2 = Sz^2 + (S+S- + S-S+)/2 ; build S+ S-\n    for j,st in enumerate(states):\n        # diagonal Sz^2 part with Ms\n        Ms=sum(Sz(p) for p in st)\n        S2[j,j]+=Ms**2\n        for p in range(0,10,2):  # spin up orb p -> p+1 down? index 2*orb+spin\n            pass\n    S2=np.zeros((N,N))\n    for j,st in enumerate(states):\n        Ms=sum(Sz(p) for p in st)\n        S2[j,j]+=Ms*Ms\n        # S+ S- : sum_{i,k} a+_i up a_i' ... implement via S- S+ = sum_{ij} a+_{j dn}a_{j up}...\n        for o1 in range(5):\n            for o2 in range(5):\n                # S+ S- = sum a+_{o1 up} a_{o1 dn} a+_{o2 dn} a_{o2 up}\n                new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n                if new is not None: S2[sidx[new],j]+=sg\n    return H,S2\ndef singlet_levels(Dq,B,C,n=4):\n    H,S2=build(Dq,B,C)\n    # Ms=0 subspace\n    Ms0=[j for j,st in enumerate(states) if sum(1 if p%2==0 else -1 for p in st)==0]\n    Hm=H[np.ix_(Ms0,Ms0)]; Sm=S2[np.ix_(Ms0,Ms0)]\n    w,v=np.linalg.eigh(Sm)\n    null=v[:,np.abs(w)<1e-8]\n    Hs=null.T@Hm@null\n    e,vec=np.linalg.eigh(Hs)\n    return e[:n], vec, null, Ms0, H\nif __name__==\"__main__\":\n    e,_,_,_,_=singlet_levels(1000,1000,4500,n=12)\n    print(np.round(e,1))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d6.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 255: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d6.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import brentq, fsolve"
+    },
+    {
+     "script": "d6.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "d6.py",
+     "line": 29,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)  # order: z2, x2-y2, xy, xz, yz"
+    },
+    {
+     "script": "d6.py",
+     "line": 69,
+     "method": "matrix",
+     "text": "N=len(states); H=np.zeros((N,N))"
+    },
+    {
+     "script": "d6.py",
+     "line": 93,
+     "method": "matrix",
+     "text": "S2=np.zeros((N,N))"
+    },
+    {
+     "script": "d6.py",
+     "line": 99,
+     "method": "matrix",
+     "text": "S2[j,j]+=Ms**2"
+    },
+    {
+     "script": "d6.py",
+     "line": 102,
+     "method": "matrix",
+     "text": "S2=np.zeros((N,N))"
+    },
+    {
+     "script": "d6.py",
+     "line": 105,
+     "method": "matrix",
+     "text": "S2[j,j]+=Ms*Ms"
+    },
+    {
+     "script": "d6.py",
+     "line": 118,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(Sm)"
+    },
+    {
+     "script": "d6.py",
+     "line": 121,
+     "method": "eigen_solver",
+     "text": "e,vec=np.linalg.eigh(Hs)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Create working directory in /tmp",
+   "command": "cd /tmp && mkdir -p w && echo ok && pwd",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘w’: Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Check writable locations and python",
+   "command": "cd ~ 2>/dev/null && pwd; touch /tmp/x 2>&1; python3 -c \"print('py ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch '/tmp/x': Read-only file system\npy ok\nShell cwd was reset to /tmp/tsbench-run-j2jcep8r",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Compute d6 singlet energy levels with Slater-determinant method",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve\nfrom math import sqrt\nl=2\nms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4:\n                        Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\ndef tor(V):\n    return np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,V)\nVr={k:tor(Vk[k]).real for k in Vk}\nfor k in Vk: assert np.abs(tor(Vk[k]).imag).max()<1e-10\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\n# precompute two-body operator list\nquads=[]\nfor a in range(10):\n  for b in range(10):\n    for c in range(10):\n      for d in range(10):\n        if a%2!=c%2 or b%2!=d%2: continue\n        quads.append((a,b,c,d))\nN=len(states)\ndef build(Dq,B,C):\n    F4=C*441/35.0\n    F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N)); S2=np.zeros((N,N))\n    for j,st in enumerate(states):\n        for p in range(10):\n            for q in range(10):\n                if p%2!=q%2: continue\n                hv=h[p//2,q//2]\n                if hv==0: continue\n                new,sg=apply_ops([(p,True),(q,False)],st)\n                if new is not None: H[sidx[new],j]+=sg*hv\n        for (a,b,c,d) in quads:\n            v=Vs[a//2,b//2,c//2,d//2]\n            if abs(v)<1e-12: continue\n            new,sg=apply_ops([(a,True),(c,True),(d,False),(b,False)],st)\n            if new is not None: H[sidx[new],j]+=0.5*sg*v\n        Ms=sum(0.5 if p%2==0 else -0.5 for p in st)\n        S2[j,j]+=Ms*Ms\n        for o1 in range(5):\n            for o2 in range(5):\n                new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n                if new is not None: S2[sidx[new],j]+=sg\n    return H,S2\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\ndef singlets(Dq,B,C,n=12):\n    H,S2=build(Dq,B,C)\n    Hm=H[np.ix_(Ms0,Ms0)]; Sm=S2[np.ix_(Ms0,Ms0)]\n    w,v=np.linalg.eigh(Sm)\n    null=v[:,np.abs(w)<1e-8]\n    e=np.linalg.eigvalsh(null.T@Hm@null)\n    return e[:n]\ne=singlets(1000,1000,4500)\nprint(\"free-check singlet levels (Dq=1000,B=1000,C=4500):\")\nprint(np.round(e-e[0],1))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "d2ee7a86834da0b06d80d057941ea125e2d9ac05c21db14c9a85ea26d8d315f6",
+     "lines": 90,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve\nfrom math import sqrt\nl=2\nms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4:\n                        Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\ndef tor(V):\n    return np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,V)\nVr={k:tor(Vk[k]).real for k in Vk}\nfor k in Vk: assert np.abs(tor(Vk[k]).imag).max()<1e-10\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\n# precompute two-body operator list\nquads=[]\nfor a in range(10):\n  for b in range(10):\n    for c in range(10):\n      for d in range(10):\n        if a%2!=c%2 or b%2!=d%2: continue\n        quads.append((a,b,c,d))\nN=len(states)\ndef build(Dq,B,C):\n    F4=C*441/35.0\n    F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N)); S2=np.zeros((N,N))\n    for j,st in enumerate(states):\n        for p in range(10):\n            for q in range(10):\n                if p%2!=q%2: continue\n                hv=h[p//2,q//2]\n                if hv==0: continue\n                new,sg=apply_ops([(p,True),(q,False)],st)\n                if new is not None: H[sidx[new],j]+=sg*hv\n        for (a,b,c,d) in quads:\n            v=Vs[a//2,b//2,c//2,d//2]\n            if abs(v)<1e-12: continue\n            new,sg=apply_ops([(a,True),(c,True),(d,False),(b,False)],st)\n            if new is not None: H[sidx[new],j]+=0.5*sg*v\n        Ms=sum(0.5 if p%2==0 else -0.5 for p in st)\n        S2[j,j]+=Ms*Ms\n        for o1 in range(5):\n            for o2 in range(5):\n                new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n                if new is not None: S2[sidx[new],j]+=sg\n    return H,S2\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\ndef singlets(Dq,B,C,n=12):\n    H,S2=build(Dq,B,C)\n    Hm=H[np.ix_(Ms0,Ms0)]; Sm=S2[np.ix_(Ms0,Ms0)]\n    w,v=np.linalg.eigh(Sm)\n    null=v[:,np.abs(w)<1e-8]\n    e=np.linalg.eigvalsh(null.T@Hm@null)\n    return e[:n]\ne=singlets(1000,1000,4500)\nprint(\"free-check singlet levels (Dq=1000,B=1000,C=4500):\")\nprint(np.round(e-e[0],1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "free-check singlet levels (Dq=1000,B=1000,C=4500):\n[    0. 10000. 10000. 10000. 10000. 10000. 10000. 20000. 20000. 20000.\n 20000. 20000.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 12,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 59,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N)); S2=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 74,
+     "method": "matrix",
+     "text": "S2[j,j]+=Ms*Ms"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 84,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(Sm)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 86,
+     "method": "eigen_solver",
+     "text": "e=np.linalg.eigvalsh(null.T@Hm@null)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Debug Wigner 3j values",
+   "command": "python3 - << 'EOF'\nimport numpy as np\nfrom sympy.physics.wigner import wigner_3j\nprint(float(wigner_3j(2,2,2,0,0,0)), float(wigner_3j(2,2,0,0,0,0)))\nl=2;k=2\nprint(float((-1)**(l-0)*wigner_3j(l,k,l,0,0,0)*wigner_3j(l,k,l,0,0,0)*(2*l+1)))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "33a86cefe3a691a9eb778ba8182ca1896359063dfcd6792d59ab38caa11e013d",
+     "lines": 5,
+     "code": "import numpy as np\nfrom sympy.physics.wigner import wigner_3j\nprint(float(wigner_3j(2,2,2,0,0,0)), float(wigner_3j(2,2,0,0,0,0)))\nl=2;k=2\nprint(float((-1)**(l-0)*wigner_3j(l,k,l,0,0,0)*wigner_3j(l,k,l,0,0,0)*(2*l+1)))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "-0.23904572186687872 0.4472135954999579\n0.2857142857142857",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Check Coulomb angular coefficients",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nprint(Acoef(0,0,0,0,0), Acoef(2,0,0,0,0), Acoef(2,2,-2,2,-2), Acoef(4,2,-2,2,-2))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "6fc813a19a280491e655c3e5b0fcb61a8680ec99ef2a126160e6e2c0aa5275d4",
+     "lines": 9,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nprint(Acoef(0,0,0,0,0), Acoef(2,0,0,0,0), Acoef(2,2,-2,2,-2), Acoef(4,2,-2,2,-2))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1.0 0.08163265306122448 0.08163265306122448 0.0022675736961451243",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Check nonzero Coulomb tensor entries",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\nprint([np.abs(Vk[k]).max() for k in Vk], [np.count_nonzero(Vk[k]) for k in Vk])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "f2f92dfc35ee07ab27e75801558a453183e4c76e7107010ca21706b1dc4db747",
+     "lines": 16,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\nprint([np.abs(Vk[k]).max() for k in Vk], [np.count_nonzero(Vk[k]) for k in Vk])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[np.float64(1.0), np.float64(0.12244897959183675), np.float64(0.15873015873015872)] [np.int64(25), np.int64(75), np.int64(85)]",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Debug fermionic operator application and Ms=0 count",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nst=states[5]; print(st, apply_ops([(0,True),(1,False)],st))\n# test number op on all\nprint(apply_ops([(3,True),(3,False)],st))\nMs0=[j for j,s in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in s)==0]\nprint(len(states),len(Ms0))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "f7cb46abba65b4e31f9bdc6034d88e668221146a133ff269032591d3e8b97aaa",
+     "lines": 19,
+     "code": "import numpy as np, itertools\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nst=states[5]; print(st, apply_ops([(0,True),(1,False)],st))\n# test number op on all\nprint(apply_ops([(3,True),(3,False)],st))\nMs0=[j for j,s in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in s)==0]\nprint(len(states),len(Ms0))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(0, 1, 2, 3, 5, 6) (None, 0)\n((0, 1, 2, 3, 5, 6), 1)\n210 100",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Inspect real-basis Coulomb tensor and unitarity",
+   "command": "python3 - << 'EOF'\nimport numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nprint(np.round(U@U.conj().T,6))\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]) for k in Vk}\nfor k in Vr: print(k, np.abs(Vr[k]).max(), np.abs(Vr[k].imag).max())\nprint(np.round(Vr[2][0,0,0,0].real,5), np.round(Vr[2][2,2,2,2].real,5), np.round(Vr[2][2,3,2,3].real,5))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "f2861b05a3415ab27c9f002e89b6a5cd150f668d8a64fcc69ce50f830f10c853",
+     "lines": 28,
+     "code": "import numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nprint(np.round(U@U.conj().T,6))\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]) for k in Vk}\nfor k in Vr: print(k, np.abs(Vr[k]).max(), np.abs(Vr[k].imag).max())\nprint(np.round(Vr[2][0,0,0,0].real,5), np.round(Vr[2][2,2,2,2].real,5), np.round(Vr[2][2,3,2,3].real,5))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[[1.+0.j 0.+0.j 0.+0.j 0.+0.j 0.+0.j]\n [0.+0.j 1.+0.j 0.+0.j 0.+0.j 0.+0.j]\n [0.+0.j 0.-0.j 1.+0.j 0.+0.j 0.+0.j]\n [0.+0.j 0.+0.j 0.+0.j 1.+0.j 0.+0.j]\n [0.+0.j 0.+0.j 0.+0.j 0.-0.j 1.+0.j]]\n0 1.0 0.0\n2 0.08163265306122448 1.734723475976807e-18\n4 0.08163265306122448 3.469446951953614e-18\n0.08163 0.08163 -0.04082",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "Test two-body Hamiltonian alone for symmetry and spectrum",
+   "command": "cat > /tmp/nonexist 2>/dev/null; python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nF2=1.0; F4=0.0\nVs=Vr[2]*F2\nH=np.zeros((N,N))\nquads=[(a,b,c,d) for a in range(10) for b in range(10) for c in range(10) for d in range(10) if a%2==c%2 and b%2==d%2]\nfor j,st in enumerate(states):\n    for (a,b,c,d) in quads:\n        v=Vs[a//2,b//2,c//2,d//2]\n        if abs(v)<1e-12: continue\n        new,sg=apply_ops([(a,True),(c,True),(d,False),(b,False)],st)\n        if new is not None: H[sidx[new],j]+=0.5*sg*v\nprint(\"nonzero H:\",np.count_nonzero(np.abs(H)>1e-12), \"maxabs\",np.abs(H).max())\nprint(\"sym err\", np.abs(H-H.T).max())\nprint(np.round(np.linalg.eigvalsh(H)[:20],4))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "7a8b4f042995bc0469aca647442353803ea96a66e34f7ef425c31dc0a8c51aa3",
+     "lines": 52,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nF2=1.0; F4=0.0\nVs=Vr[2]*F2\nH=np.zeros((N,N))\nquads=[(a,b,c,d) for a in range(10) for b in range(10) for c in range(10) for d in range(10) if a%2==c%2 and b%2==d%2]\nfor j,st in enumerate(states):\n    for (a,b,c,d) in quads:\n        v=Vs[a//2,b//2,c//2,d//2]\n        if abs(v)<1e-12: continue\n        new,sg=apply_ops([(a,True),(c,True),(d,False),(b,False)],st)\n        if new is not None: H[sidx[new],j]+=0.5*sg*v\nprint(\"nonzero H:\",np.count_nonzero(np.abs(H)>1e-12), \"maxabs\",np.abs(H).max())\nprint(\"sym err\", np.abs(H-H.T).max())\nprint(np.round(np.linalg.eigvalsh(H)[:20],4))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 54: /tmp/nonexist: Read-only file system\nnonzero H: 0 maxabs 2.0816681711721685e-17\nsym err 0.0\n[-0. -0. -0. -0. -0. -0. -0. -0. -0. -0. -0. -0. -0. -0. -0. -0. -0. -0.\n -0. -0.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "eigen_solver",
+     "text": "print(np.round(np.linalg.eigvalsh(H)[:20],4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 11,
+   "tool": "Bash",
+   "description": "Recompute d6 singlet spectrum with corrected operator indices",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\n# operator (1/2) sum_{p,q,r,s} <pq|rs> a+_p a+_q a_s a_r ; spin p=r, q=s\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N)); S2=np.zeros((N,N))\n    for j,st in enumerate(states):\n        for p in range(10):\n            for q in range(10):\n                if p%2!=q%2: continue\n                hv=h[p//2,q//2]\n                if hv==0: continue\n                new,sg=apply_ops([(p,True),(q,False)],st)\n                if new is not None: H[sidx[new],j]+=sg*hv\n        for (p,q,r,s) in quads:\n            v=Vs[p//2,q//2,r//2,s//2]\n            if abs(v)<1e-12: continue\n            new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n            if new is not None: H[sidx[new],j]+=0.5*sg*v\n        Ms=sum(0.5 if p%2==0 else -0.5 for p in st)\n        S2[j,j]+=Ms*Ms\n        for o1 in range(5):\n            for o2 in range(5):\n                new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n                if new is not None: S2[sidx[new],j]+=sg\n    return H,S2\ndef singlets(Dq,B,C):\n    H,S2=build(Dq,B,C)\n    Hm=H[np.ix_(Ms0,Ms0)]; Sm=S2[np.ix_(Ms0,Ms0)]\n    w,v=np.linalg.eigh(Sm)\n    null=v[:,np.abs(w)<1e-8]\n    return np.linalg.eigvalsh(null.T@Hm@null), null.shape[1]\ne,dim=singlets(0,1000,4500)\nprint(\"dim singlets\",dim)\nprint(\"B=1000,C=4500,Dq=0 singlet levels rel:\", np.round(e-e[0],1)[:20])\n# Tanabe-Sugano check: free ion d6 singlet term energies: 1S=15B+... check lowest sets\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "807d9206a594c2d5a1208d281434d38d59cd105b04a2311a7b5ec43616b8ae42",
+     "lines": 78,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\n# operator (1/2) sum_{p,q,r,s} <pq|rs> a+_p a+_q a_s a_r ; spin p=r, q=s\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N)); S2=np.zeros((N,N))\n    for j,st in enumerate(states):\n        for p in range(10):\n            for q in range(10):\n                if p%2!=q%2: continue\n                hv=h[p//2,q//2]\n                if hv==0: continue\n                new,sg=apply_ops([(p,True),(q,False)],st)\n                if new is not None: H[sidx[new],j]+=sg*hv\n        for (p,q,r,s) in quads:\n            v=Vs[p//2,q//2,r//2,s//2]\n            if abs(v)<1e-12: continue\n            new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n            if new is not None: H[sidx[new],j]+=0.5*sg*v\n        Ms=sum(0.5 if p%2==0 else -0.5 for p in st)\n        S2[j,j]+=Ms*Ms\n        for o1 in range(5):\n            for o2 in range(5):\n                new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n                if new is not None: S2[sidx[new],j]+=sg\n    return H,S2\ndef singlets(Dq,B,C):\n    H,S2=build(Dq,B,C)\n    Hm=H[np.ix_(Ms0,Ms0)]; Sm=S2[np.ix_(Ms0,Ms0)]\n    w,v=np.linalg.eigh(Sm)\n    null=v[:,np.abs(w)<1e-8]\n    return np.linalg.eigvalsh(null.T@Hm@null), null.shape[1]\ne,dim=singlets(0,1000,4500)\nprint(\"dim singlets\",dim)\nprint(\"B=1000,C=4500,Dq=0 singlet levels rel:\", np.round(e-e[0],1)[:20])\n# Tanabe-Sugano check: free ion d6 singlet term energies: 1S=15B+... check lowest sets\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "dim singlets 50\nB=1000,C=4500,Dq=0 singlet levels rel: [   0.    0.    0.    0.    0.    0.    0.    0.    0.    0.    0.    0.\n    0. 2291. 2291. 2291. 2291. 2291. 2291. 2291.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N)); S2=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 63,
+     "method": "matrix",
+     "text": "S2[j,j]+=Ms*Ms"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(Sm)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 74,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(null.T@Hm@null), null.shape[1]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 12,
+   "tool": "Bash",
+   "description": "Check Hamiltonian symmetry and S^2 commutation",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\nF2=1000.;F4=0.\nVs=Vr[2]*F2+Vr[4]*F4\nH=np.zeros((N,N)); S2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        v=Vs[p//2,q//2,r//2,s//2]\n        if abs(v)<1e-12: continue\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: H[sidx[new],j]+=0.5*sg*v\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nprint(\"sym H\",np.abs(H-H.T).max(),\"sym S2\",np.abs(S2-S2.T).max())\nprint(\"comm\",np.abs(H@S2-S2@H).max())\nw=np.linalg.eigvalsh(H); print(np.round(w,1)[:5], np.round(w,1)[-5:])\nprint(np.unique(np.round(w,3),return_counts=True))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "aaf9cbb388e44a02c908b402c03446fac0fe41641877fd2f7546958c04350604",
+     "lines": 58,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\nF2=1000.;F4=0.\nVs=Vr[2]*F2+Vr[4]*F4\nH=np.zeros((N,N)); S2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        v=Vs[p//2,q//2,r//2,s//2]\n        if abs(v)<1e-12: continue\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: H[sidx[new],j]+=0.5*sg*v\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nprint(\"sym H\",np.abs(H-H.T).max(),\"sym S2\",np.abs(S2-S2.T).max())\nprint(\"comm\",np.abs(H@S2-S2@H).max())\nw=np.linalg.eigvalsh(H); print(np.round(w,1)[:5], np.round(w,1)[-5:])\nprint(np.unique(np.round(w,3),return_counts=True))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "sym H 0.0 sym S2 0.0\ncomm 3.410605131648481e-13\n[-714.3 -714.3 -714.3 -714.3 -714.3] [265.3 265.3 265.3 265.3 485.4]\n(array([-714.286, -695.912, -659.268, -648.671, -640.19 , -632.653,\n       -591.837, -530.612, -469.388, -387.755, -285.714, -135.32 ,\n       -116.242,  -79.599,  265.306,  485.406]), array([25,  9,  9,  1, 21, 33, 13, 27,  5, 15,  7, 21,  9,  9,  5,  1]))",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N)); S2=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 57,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(H); print(np.round(w,1)[:5], np.round(w,1)[-5:])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 13,
+   "tool": "Bash",
+   "description": "Count S^2 eigenvalue multiplicities to verify spin states",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\nF2=1000.;F4=0.\nVs=Vr[2]*F2+Vr[4]*F4\nH=np.zeros((N,N)); S2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        v=Vs[p//2,q//2,r//2,s//2]\n        if abs(v)<1e-12: continue\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: H[sidx[new],j]+=0.5*sg*v\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nw,v=np.linalg.eigh(S2)\nprint(\"S2 eigen counts:\", np.unique(np.round(w,6),return_counts=True))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "f10c0a53a0af5c3c60e69d91d32b46d01fbf045efc4d4c8aeab6cd96c42fb040",
+     "lines": 56,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\nF2=1000.;F4=0.\nVs=Vr[2]*F2+Vr[4]*F4\nH=np.zeros((N,N)); S2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        v=Vs[p//2,q//2,r//2,s//2]\n        if abs(v)<1e-12: continue\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: H[sidx[new],j]+=0.5*sg*v\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nw,v=np.linalg.eigh(S2)\nprint(\"S2 eigen counts:\", np.unique(np.round(w,6),return_counts=True))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "S2 eigen counts: (array([0., 1., 2., 3., 4., 5., 6., 7., 8.]), array([50, 45, 45, 45,  5,  5,  5,  5,  5]))",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N)); S2=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 55,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(S2)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 14,
+   "tool": "Bash",
+   "description": "Build precomputed operators and check singlet levels at Dq=0",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve, brentq\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\n# precompute sparse operator pieces\ntwo=[]  # (idx_from, idx_to, sign, orbital tuple)\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: two.append((j,sidx[new],0.5*sg,(p//2,q//2,r//2,s//2)))\none=[]\nfor j,st in enumerate(states):\n    for p in range(10):\n        for q in range(10):\n            if p%2!=q%2: continue\n            new,sg=apply_ops([(p,True),(q,False)],st)\n            if new is not None: one.append((j,sidx[new],sg,(p//2,q//2)))\nS2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\nw,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N))\n    for (j,i,sg,(a,b,c,d)) in two: H[i,j]+=sg*Vs[a,b,c,d]\n    for (j,i,sg,(a,b)) in one: H[i,j]+=sg*h[a,b]\n    return H\ndef levels(Dq,B,C):\n    H=build(Dq,B,C)\n    Hs=null.T@H[np.ix_(Ms0,Ms0)]@null\n    return np.linalg.eigvalsh(Hs)\ne=levels(0,1000,4500); print(\"Dq=0 levels rel:\", np.round(e-e[0],1))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "7915285d7db1b4f09cfce055c5c6b52fc05d9e4b700cfadece3d745d8257086f",
+     "lines": 76,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve, brentq\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\n# precompute sparse operator pieces\ntwo=[]  # (idx_from, idx_to, sign, orbital tuple)\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: two.append((j,sidx[new],0.5*sg,(p//2,q//2,r//2,s//2)))\none=[]\nfor j,st in enumerate(states):\n    for p in range(10):\n        for q in range(10):\n            if p%2!=q%2: continue\n            new,sg=apply_ops([(p,True),(q,False)],st)\n            if new is not None: one.append((j,sidx[new],sg,(p//2,q//2)))\nS2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\nw,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N))\n    for (j,i,sg,(a,b,c,d)) in two: H[i,j]+=sg*Vs[a,b,c,d]\n    for (j,i,sg,(a,b)) in one: H[i,j]+=sg*h[a,b]\n    return H\ndef levels(Dq,B,C):\n    H=build(Dq,B,C)\n    Hs=null.T@H[np.ix_(Ms0,Ms0)]@null\n    return np.linalg.eigvalsh(Hs)\ne=levels(0,1000,4500); print(\"Dq=0 levels rel:\", np.round(e-e[0],1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq=0 levels rel: [    0.      0.      0.      0.      0.      0.      0.      0.      0.\n     0.      0.      0.      0.   2291.   2291.   2291.   2291.   2291.\n  2291.   2291.   2291.   2291.   7786.4  9523.5  9523.5  9523.5  9523.5\n  9523.5 15000.  15000.  15000.  15000.  15000.  15000.  15000.  31209.\n 31209.  31209.  31209.  31209.  31209.  31209.  31209.  31209.  51976.5\n 51976.5 51976.5 51976.5 51976.5 78213.6]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve, brentq"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 55,
+     "method": "matrix",
+     "text": "S2=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 63,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 68,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 75,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(Hs)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 15,
+   "tool": "Bash",
+   "description": "Sanity-check singlet levels for limiting cases",
+   "command": "cat << 'EOF' > /dev/null\nEOF\npython3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\ntwo=[];one=[]\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: two.append((j,sidx[new],0.5*sg,(p//2,q//2,r//2,s//2)))\n    for p in range(10):\n        for q in range(10):\n            if p%2!=q%2: continue\n            new,sg=apply_ops([(p,True),(q,False)],st)\n            if new is not None: one.append((j,sidx[new],sg,(p//2,q//2)))\nS2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\nw,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N))\n    for (j,i,sg,(a,b,c,d)) in two: H[i,j]+=sg*Vs[a,b,c,d]\n    for (j,i,sg,(a,b)) in one: H[i,j]+=sg*h[a,b]\n    return H\n# full singlet levels: check degeneracy at pure Dq=10 with B=0 (sanity) and with Racah B\ndef levels(Dq,B,C):\n    H=build(Dq,B,C)\n    return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)\n# Sanity: at B=0,C=0, singlet levels should be 0,10Dq*..., check t2g6 ground\ne=levels(1000,0,0); print(\"B=C=0:\",np.round(e-e[0],1)[:14])\n# Free ion check B only (Dq=0) — term energies relative: print all\nprint(\"free ion B=1000,C=4500 levels:\",np.round(levels(0,1000,4500)-levels(0,1000,4500)[0],1))\nEOF",
+   "scripts": [
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "acf6b1e9f80c86d62971416a69354f674d52b244dfb4d7988f21b15a4f4663e4",
+     "lines": 76,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\ntwo=[];one=[]\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: two.append((j,sidx[new],0.5*sg,(p//2,q//2,r//2,s//2)))\n    for p in range(10):\n        for q in range(10):\n            if p%2!=q%2: continue\n            new,sg=apply_ops([(p,True),(q,False)],st)\n            if new is not None: one.append((j,sidx[new],sg,(p//2,q//2)))\nS2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\nw,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N))\n    for (j,i,sg,(a,b,c,d)) in two: H[i,j]+=sg*Vs[a,b,c,d]\n    for (j,i,sg,(a,b)) in one: H[i,j]+=sg*h[a,b]\n    return H\n# full singlet levels: check degeneracy at pure Dq=10 with B=0 (sanity) and with Racah B\ndef levels(Dq,B,C):\n    H=build(Dq,B,C)\n    return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)\n# Sanity: at B=0,C=0, singlet levels should be 0,10Dq*..., check t2g6 ground\ne=levels(1000,0,0); print(\"B=C=0:\",np.round(e-e[0],1)[:14])\n# Free ion check B only (Dq=0) — term energies relative: print all\nprint(\"free ion B=1000,C=4500 levels:\",np.round(levels(0,1000,4500)-levels(0,1000,4500)[0],1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "B=C=0: [    0. 10000. 10000. 10000. 10000. 10000. 10000. 20000. 20000. 20000.\n 20000. 20000. 20000. 20000.]\nfree ion B=1000,C=4500 levels: [    0.      0.      0.      0.      0.      0.      0.      0.      0.\n     0.      0.      0.      0.   2291.   2291.   2291.   2291.   2291.\n  2291.   2291.   2291.   2291.   7786.4  9523.5  9523.5  9523.5  9523.5\n  9523.5 15000.  15000.  15000.  15000.  15000.  15000.  15000.  31209.\n 31209.  31209.  31209.  31209.  31209.  31209.  31209.  31209.  51976.5\n 51976.5 51976.5 51976.5 51976.5 78213.6]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "S2=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 60,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 72,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 16,
+   "tool": "Bash",
+   "description": "Scan singlet levels vs Dq/B to identify T-state ordering",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\ntwo=[];one=[]\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: two.append((j,sidx[new],0.5*sg,(p//2,q//2,r//2,s//2)))\n    for p in range(10):\n        for q in range(10):\n            if p%2!=q%2: continue\n            new,sg=apply_ops([(p,True),(q,False)],st)\n            if new is not None: one.append((j,sidx[new],sg,(p//2,q//2)))\nS2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\nw,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N))\n    for (j,i,sg,(a,b,c,d)) in two: H[i,j]+=sg*Vs[a,b,c,d]\n    for (j,i,sg,(a,b)) in one: H[i,j]+=sg*h[a,b]\n    return H\ndef levels(Dq,B,C):\n    H=build(Dq,B,C)\n    return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)\ndef groups(e,tol=1.0):\n    out=[];i=0\n    while i<len(e):\n        j=i\n        while j+1<len(e) and abs(e[j+1]-e[i])<tol: j+=1\n        out.append((e[i],j-i+1)); i=j+1\n    return out\n# scan Dq/B with B=1000 scale\nfor x in [10,15,20,25,30]:\n    B=1000.; Dq=x*B\n    e=levels(Dq,B,4.5*B)\n    g=groups(e-e[0])\n    print(x, [(round(a),n) for a,n in g[:8]])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "79a29d7c33c0e5af5dbd52999335f7924ebf866d52a4da602ced280d67f1bfb6",
+     "lines": 84,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\ntwo=[];one=[]\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: two.append((j,sidx[new],0.5*sg,(p//2,q//2,r//2,s//2)))\n    for p in range(10):\n        for q in range(10):\n            if p%2!=q%2: continue\n            new,sg=apply_ops([(p,True),(q,False)],st)\n            if new is not None: one.append((j,sidx[new],sg,(p//2,q//2)))\nS2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\nw,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N))\n    for (j,i,sg,(a,b,c,d)) in two: H[i,j]+=sg*Vs[a,b,c,d]\n    for (j,i,sg,(a,b)) in one: H[i,j]+=sg*h[a,b]\n    return H\ndef levels(Dq,B,C):\n    H=build(Dq,B,C)\n    return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)\ndef groups(e,tol=1.0):\n    out=[];i=0\n    while i<len(e):\n        j=i\n        while j+1<len(e) and abs(e[j+1]-e[i])<tol: j+=1\n        out.append((e[i],j-i+1)); i=j+1\n    return out\n# scan Dq/B with B=1000 scale\nfor x in [10,15,20,25,30]:\n    B=1000.; Dq=x*B\n    e=levels(Dq,B,4.5*B)\n    g=groups(e-e[0])\n    print(x, [(round(a),n) for a,n in g[:8]])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "10 [(0, 1), (96262, 3), (111369, 3), (194328, 3), (195337, 2), (196660, 1), (204320, 3), (204712, 1)]\n15 [(0, 1), (146051, 3), (161463, 3), (293964, 3), (295031, 2), (296372, 1), (304267, 3), (304535, 1)]\n20 [(0, 1), (195932, 3), (211493, 3), (393766, 3), (394861, 2), (396211, 1), (404223, 3), (404427, 1)]\n25 [(0, 1), (245855, 3), (261505, 3), (493641, 3), (494752, 2), (496108, 1), (504190, 3), (504354, 1)]\n30 [(0, 1), (295801, 3), (311510, 3), (593555, 3), (594677, 2), (596037, 1), (604165, 3), (604302, 1)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "S2=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 60,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 71,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 17,
+   "tool": "Bash",
+   "description": "Scan weak-to-intermediate fields for singlet T-state energies",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\ntwo=[];one=[]\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: two.append((j,sidx[new],0.5*sg,(p//2,q//2,r//2,s//2)))\n    for p in range(10):\n        for q in range(10):\n            if p%2!=q%2: continue\n            new,sg=apply_ops([(p,True),(q,False)],st)\n            if new is not None: one.append((j,sidx[new],sg,(p//2,q//2)))\nS2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\nw,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]\ndef levels(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N))\n    for (j,i,sg,(a,b,c,d)) in two: H[i,j]+=sg*Vs[a,b,c,d]\n    for (j,i,sg,(a,b)) in one: H[i,j]+=sg*h[a,b]\n    return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)\ndef groups(e,tol=1.0):\n    out=[];i=0\n    while i<len(e):\n        j=i\n        while j+1<len(e) and abs(e[j+1]-e[i])<tol: j+=1\n        out.append((e[i],j-i+1)); i=j+1\n    return out\nfor x in [0.0,0.5,1,1.5,2,2.5,3,4,5]:\n    B=1000.; Dq=x*B\n    e=levels(Dq,B,4.5*B)\n    g=groups(e-e[0])\n    print(x, [(round(a),n) for a,n in g[:6]])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "3f8eed8296024a9bf6d910c96f9ef0fac21ace2681a2796d5e4dfbe9f74c37a9",
+     "lines": 79,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\ntwo=[];one=[]\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: two.append((j,sidx[new],0.5*sg,(p//2,q//2,r//2,s//2)))\n    for p in range(10):\n        for q in range(10):\n            if p%2!=q%2: continue\n            new,sg=apply_ops([(p,True),(q,False)],st)\n            if new is not None: one.append((j,sidx[new],sg,(p//2,q//2)))\nS2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\nw,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]\ndef levels(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N))\n    for (j,i,sg,(a,b,c,d)) in two: H[i,j]+=sg*Vs[a,b,c,d]\n    for (j,i,sg,(a,b)) in one: H[i,j]+=sg*h[a,b]\n    return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)\ndef groups(e,tol=1.0):\n    out=[];i=0\n    while i<len(e):\n        j=i\n        while j+1<len(e) and abs(e[j+1]-e[i])<tol: j+=1\n        out.append((e[i],j-i+1)); i=j+1\n    return out\nfor x in [0.0,0.5,1,1.5,2,2.5,3,4,5]:\n    B=1000.; Dq=x*B\n    e=levels(Dq,B,4.5*B)\n    g=groups(e-e[0])\n    print(x, [(round(a),n) for a,n in g[:6]])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0.0 [(0, 13), (2291, 9), (7786, 1), (9524, 5), (15000, 7), (31209, 9)]\n0.5 [(0, 1), (3529, 3), (6738, 3), (8967, 2), (9750, 1), (10615, 3)]\n1 [(0, 1), (8033, 3), (14827, 3), (18180, 2), (19168, 1), (19964, 3)]\n1.5 [(0, 1), (12716, 3), (22217, 3), (27648, 2), (28436, 3), (28737, 1)]\n2 [(0, 1), (17481, 3), (28653, 3), (37254, 2), (37364, 3), (38402, 1)]\n2.5 [(0, 1), (22296, 3), (34485, 3), (46691, 3), (46947, 2), (48133, 1)]\n3 [(0, 1), (27145, 3), (40003, 3), (56232, 3), (56699, 2), (57913, 1)]\n4 [(0, 1), (36910, 3), (50590, 3), (75630, 3), (76323, 2), (77572, 1)]\n5 [(0, 1), (46735, 3), (60899, 3), (95239, 3), (96049, 2), (97321, 1)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 51,
+     "method": "matrix",
+     "text": "S2=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 59,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 67,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 18,
+   "tool": "Bash",
+   "description": "Solve for Dq/B from band ratio and derive B and Dq",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\ntwo=[];one=[]\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: two.append((j,sidx[new],0.5*sg,(p//2,q//2,r//2,s//2)))\n    for p in range(10):\n        for q in range(10):\n            if p%2!=q%2: continue\n            new,sg=apply_ops([(p,True),(q,False)],st)\n            if new is not None: one.append((j,sidx[new],sg,(p//2,q//2)))\nS2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\nw,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]\ndef levels(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N))\n    for (j,i,sg,(a,b,c,d)) in two: H[i,j]+=sg*Vs[a,b,c,d]\n    for (j,i,sg,(a,b)) in one: H[i,j]+=sg*h[a,b]\n    return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)\ndef T12(x):\n    B=1000.\n    e=levels(x*B,B,4.5*B); e=e-e[0]\n    # first 3-fold triplet and second 3-fold triplet\n    trip=[]\n    i=1\n    while i<len(e) and len(trip)<2:\n        j=i\n        while j+1<len(e) and abs(e[j+1]-e[i])<1.0: j+=1\n        if j-i+1==3: trip.append(e[i]/1000.)\n        i=j+1\n    return trip\ndef ratio(x):\n    t=T12(x); return t[1]/t[0]-25381/16474\nxs=brentq(ratio,2.0,3.0,xtol=1e-7)\nt=T12(xs); B=16474/t[0]*1000\nprint(\"Dq/B=\",xs,\"E1/B\",t[0],\"E2/B\",t[1],\"B=\",B,\"Dq=\",xs*B,\"C=\",4.5*B)\n# verify\ne=levels(xs*B,B,4.5*B); e=e-e[0]\nprint(\"check: E(1T1)=\",t[0]*B,\" E(1T2)=\",t[1]*B)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "c19220befd7c67aed1075d2701304aef32de3fc2158ab402ca09c72b39dd987c",
+     "lines": 88,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq\nfrom math import sqrt\nl=2; ms=list(range(-2,3))\ndef Ck(k,q,m,mp):\n    if abs(q)>k: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*wigner_3j(l,k,l,0,0,0)*(2*l+1))\ndef Acoef(k,m1,m2,m3,m4):\n    return sum((-1)**q*Ck(k,q,m1,m3)*Ck(k,-q,m2,m4) for q in range(-k,k+1))\nVk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}\nfor k in (0,2,4):\n    for i1,m1 in enumerate(ms):\n        for i2,m2 in enumerate(ms):\n            for i3,m3 in enumerate(ms):\n                for i4,m4 in enumerate(ms):\n                    if m1+m2==m3+m4: Vk[k][i1,i2,i3,i4]=Acoef(k,m1,m2,m3,m4)\ns2=sqrt(2)\nU=np.zeros((5,5),dtype=complex)\nidx={m:i for i,m in enumerate(ms)}\nU[0,idx[0]]=1\nU[1,idx[2]]=1/s2; U[1,idx[-2]]=1/s2\nU[2,idx[2]]=1/(1j*s2); U[2,idx[-2]]=-1/(1j*s2)\nU[3,idx[1]]=1/s2; U[3,idx[-1]]=-1/s2\nU[4,idx[1]]=1/(1j*s2); U[4,idx[-1]]=1/(1j*s2)\nVr={k:np.einsum('aw,bx,cy,dz,wxyz->abcd',U.conj(),U.conj(),U,U,Vk[k]).real for k in Vk}\nstates=list(itertools.combinations(range(10),6))\nsidx={s:i for i,s in enumerate(states)}\ndef apply_ops(ops,state):\n    occ=list(state); sign=1\n    for (p,dag) in reversed(ops):\n        n=sum(1 for o in occ if o<p)\n        if dag:\n            if p in occ: return None,0\n            sign*=(-1)**n; occ.append(p); occ.sort()\n        else:\n            if p not in occ: return None,0\n            sign*=(-1)**n; occ.remove(p)\n    return tuple(occ),sign\nN=len(states)\nquads=[(p,q,r,s) for p in range(10) for q in range(10) for r in range(10) for s in range(10) if p%2==r%2 and q%2==s%2]\ntwo=[];one=[]\nfor j,st in enumerate(states):\n    for (p,q,r,s) in quads:\n        new,sg=apply_ops([(p,True),(q,True),(s,False),(r,False)],st)\n        if new is not None: two.append((j,sidx[new],0.5*sg,(p//2,q//2,r//2,s//2)))\n    for p in range(10):\n        for q in range(10):\n            if p%2!=q%2: continue\n            new,sg=apply_ops([(p,True),(q,False)],st)\n            if new is not None: one.append((j,sidx[new],sg,(p//2,q//2)))\nS2=np.zeros((N,N))\nfor j,st in enumerate(states):\n    Ms=sum(0.5 if p%2==0 else -0.5 for p in st); S2[j,j]+=Ms*Ms\n    for o1 in range(5):\n        for o2 in range(5):\n            new,sg=apply_ops([(2*o1,True),(2*o1+1,False),(2*o2+1,True),(2*o2,False)],st)\n            if new is not None: S2[sidx[new],j]+=sg\nMs0=[j for j,st in enumerate(states) if sum(0.5 if p%2==0 else -0.5 for p in st)==0]\nw,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]\ndef levels(Dq,B,C):\n    F4=C*441/35.0; F2=(B*441+5*F4)/9.0\n    Vs=Vr[2]*F2+Vr[4]*F4\n    h=np.diag([6*Dq,6*Dq,-4*Dq,-4*Dq,-4*Dq])\n    H=np.zeros((N,N))\n    for (j,i,sg,(a,b,c,d)) in two: H[i,j]+=sg*Vs[a,b,c,d]\n    for (j,i,sg,(a,b)) in one: H[i,j]+=sg*h[a,b]\n    return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)\ndef T12(x):\n    B=1000.\n    e=levels(x*B,B,4.5*B); e=e-e[0]\n    # first 3-fold triplet and second 3-fold triplet\n    trip=[]\n    i=1\n    while i<len(e) and len(trip)<2:\n        j=i\n        while j+1<len(e) and abs(e[j+1]-e[i])<1.0: j+=1\n        if j-i+1==3: trip.append(e[i]/1000.)\n        i=j+1\n    return trip\ndef ratio(x):\n    t=T12(x); return t[1]/t[0]-25381/16474\nxs=brentq(ratio,2.0,3.0,xtol=1e-7)\nt=T12(xs); B=16474/t[0]*1000\nprint(\"Dq/B=\",xs,\"E1/B\",t[0],\"E2/B\",t[1],\"B=\",B,\"Dq=\",xs*B,\"C=\",4.5*B)\n# verify\ne=levels(xs*B,B,4.5*B); e=e-e[0]\nprint(\"check: E(1T1)=\",t[0]*B,\" E(1T2)=\",t[1]*B)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq/B= 2.536884781075084 E1/B 22.65291464934594 E2/B 34.90066932007343 B= 727235.336159078 Dq= 1844912.2565619878 C= 3272559.0127158514\ncheck: E(1T1)= 16474000.0  E(1T2)= 25380999.985160425",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "Vk={k:np.zeros((5,5,5,5)) for k in (0,2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "S2=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 60,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(S2[np.ix_(Ms0,Ms0)]); null=v[:,np.abs(w)<1e-8]"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 68,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(null.T@H[np.ix_(Ms0,Ms0)]@null)"
+    }
+   ],
+   "produces": []
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1845.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "B",
+   "value": 727.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 3273.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 19,
+  "n_scripts": 17,
+  "n_failed_steps": 2,
+  "n_values": 3,
+  "n_linked": 0,
+  "n_weak": 0,
+  "source_steps": [],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

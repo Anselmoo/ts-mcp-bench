@@ -1,0 +1,1 @@
+pwd; ls -ld . /tmp 2>&1; touch ./probe && echo writable_cwd; touch /tmp/probe && echo writable_tmp

@@ -1,0 +1,1 @@
+python3 -c "import numpy, sympy; print('ok')"; python3 -m pip --version; which python3 uv

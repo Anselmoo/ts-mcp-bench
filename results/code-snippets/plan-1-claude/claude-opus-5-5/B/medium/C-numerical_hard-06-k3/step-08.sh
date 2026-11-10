@@ -1,0 +1,1 @@
+cd /dev/shm && ls; sed -i 's/^np.save.*$//' d6.py 2>/dev/null; ls

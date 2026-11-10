@@ -1,0 +1,665 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-numerical-05-k3.jsonl",
+ "transcript_sha256": "b6b541bf438e79da87dc7f30f04dcc94c839f81657b24713fee35110102efdad",
+ "answer": {
+  "Dq": 1573.0,
+  "B": null,
+  "C": null,
+  "out_of_scope": false,
+  "reason": "Dq follows exactly from 10Dq = ν1, but the three band ratios cannot be fitted by one Dq/B in the d² octahedral model, so B is indeterminate."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check for numerical Python packages",
+   "command": "pip list 2>/dev/null | grep -i -E \"sympy|numpy|scipy\" || pip install -q sympy numpy scipy 2>&1 | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 1: pip: command not found",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Check Python and numpy availability",
+   "command": "python3 -c \"import numpy, scipy, sympy; print('ok')\" 2>&1; which python3",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok\n<B_VENV>/bin/python3",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p /tmp/ld && cat > /tmp/ld/d2.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve, brentq\nl=2\nms=list(range(-2,3))\ndef Ck(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if ma+ (-q) ... if False else None\n    return M\ndef Cmat(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\n# spin-orbital index: orbital i (0..4) spin s (0 up,1 down): idx = s*5+i\ndef coulomb_complex(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    # <a b|V|c d> with a,c spin s1, b,d spin s2\n                    for i in range(5):\n                        for j in range(5):\n                            for kk in range(5):\n                                for ll in range(5):\n                                    v=A[i,kk]*Bm[j,ll]\n                                    if abs(v)>1e-14:\n                                        V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\ndef build(Dq,Fk):\n    # real basis unitary\n    r2=np.sqrt(2)\n    vecs={\n     'dz2':np.array([0,0,1,0,0],complex),\n     'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n     'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),\n     'dxz':np.array([0,1,0,-1,0],complex)/r2,\n     'dyz':np.array([0,1j,0,1j,0],complex)/r2}\n    energies={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    h5=np.zeros((5,5),complex)\n    for k,v in vecs.items(): h5+=energies[k]*np.outer(v,v.conj())\n    U=np.array([vecs[k] for k in vecs]).T  # columns orthonormal?\n    assert np.allclose(U.conj().T@U,np.eye(5)),\"not orthonormal\"\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    V=coulomb_complex(Fk)\n    return h,V\n# Fock space ops on 10 modes\nN=10\ndef cdag(i):\n    dim=2**N; M=np.zeros((dim,dim))\n    for st in range(dim):\n        if not (st>>i)&1:\n            sign=(-1)**bin(st & ((1<<i)-1)).count('1')\n            M[st|(1<<i),st]=sign\n    return M\nC=[cdag(i) for i in range(N)]\nCd=[c.T for c in C]\ndef hamiltonian(Dq,Fk):\n    h,V=build(Dq,Fk)\n    H=np.zeros((2**N,2**N),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*C[a]@Cd[b]\n    # 1/2 sum V_abcd c+a c+b c_d c_c\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(C[a]@C[b]@Cd[d]@Cd[c])\n    return H\ndef sector(H):\n    # Ms=1 sector: N=2 with both spins up (orbitals 0..4)\n    idx=[]\n    for i,j in itertools.combinations(range(5),2):\n        idx.append((1<<i)|(1<<j))\n    # ensure all N=2 Ms=1 states\n    Hs=H[np.ix_(idx,idx)]\n    return np.linalg.eigvalsh((Hs+Hs.conj().T)/2)\nEOF\necho done",
+   "scripts": [
+    {
+     "name": "d2.py",
+     "sha256": "2724535ef4a9b093c7fb74ab1be26603ed1ffbe51106a16ddd807517a5f5cdf3",
+     "lines": 86,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve, brentq\nl=2\nms=list(range(-2,3))\ndef Ck(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if ma+ (-q) ... if False else None\n    return M\ndef Cmat(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\n# spin-orbital index: orbital i (0..4) spin s (0 up,1 down): idx = s*5+i\ndef coulomb_complex(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    # <a b|V|c d> with a,c spin s1, b,d spin s2\n                    for i in range(5):\n                        for j in range(5):\n                            for kk in range(5):\n                                for ll in range(5):\n                                    v=A[i,kk]*Bm[j,ll]\n                                    if abs(v)>1e-14:\n                                        V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\ndef build(Dq,Fk):\n    # real basis unitary\n    r2=np.sqrt(2)\n    vecs={\n     'dz2':np.array([0,0,1,0,0],complex),\n     'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n     'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),\n     'dxz':np.array([0,1,0,-1,0],complex)/r2,\n     'dyz':np.array([0,1j,0,1j,0],complex)/r2}\n    energies={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    h5=np.zeros((5,5),complex)\n    for k,v in vecs.items(): h5+=energies[k]*np.outer(v,v.conj())\n    U=np.array([vecs[k] for k in vecs]).T  # columns orthonormal?\n    assert np.allclose(U.conj().T@U,np.eye(5)),\"not orthonormal\"\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    V=coulomb_complex(Fk)\n    return h,V\n# Fock space ops on 10 modes\nN=10\ndef cdag(i):\n    dim=2**N; M=np.zeros((dim,dim))\n    for st in range(dim):\n        if not (st>>i)&1:\n            sign=(-1)**bin(st & ((1<<i)-1)).count('1')\n            M[st|(1<<i),st]=sign\n    return M\nC=[cdag(i) for i in range(N)]\nCd=[c.T for c in C]\ndef hamiltonian(Dq,Fk):\n    h,V=build(Dq,Fk)\n    H=np.zeros((2**N,2**N),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*C[a]@Cd[b]\n    # 1/2 sum V_abcd c+a c+b c_d c_c\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(C[a]@C[b]@Cd[d]@Cd[c])\n    return H\ndef sector(H):\n    # Ms=1 sector: N=2 with both spins up (orbitals 0..4)\n    idx=[]\n    for i,j in itertools.combinations(range(5),2):\n        idx.append((1<<i)|(1<<j))\n    # ensure all N=2 Ms=1 states\n    Hs=H[np.ix_(idx,idx)]\n    return np.linalg.eigvalsh((Hs+Hs.conj().T)/2)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "mkdir: cannot create directory ‘/tmp/ld’: Read-only file system\ndone",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d2.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve, brentq"
+    },
+    {
+     "script": "d2.py",
+     "line": 7,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "d2.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "d2.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red"
+    },
+    {
+     "script": "d2.py",
+     "line": 23,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "d2.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "h5=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 59,
+     "method": "matrix",
+     "text": "dim=2**N; M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "d2.py",
+     "line": 86,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh((Hs+Hs.conj().T)/2)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Build d2 Hamiltonian and test free-ion triplet levels",
+   "command": "cd ~ && mkdir -p ld && cd ld && cat > d2.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb_complex(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14:\n                            V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\ndef build(Dq,Fk):\n    r2=np.sqrt(2)\n    vecs={\n     'dz2':np.array([0,0,1,0,0],complex),\n     'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n     'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),\n     'dxz':np.array([0,1,0,-1,0],complex)/r2,\n     'dyz':np.array([0,1j,0,1j,0],complex)/r2}\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    U=np.array([vecs[k] for k in vecs]).T\n    assert np.allclose(U.conj().T@U,np.eye(5)),\"not orthonormal\"\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    return h,coulomb_complex(Fk)\nN=10\ndef cdag(i):\n    dim=2**N; M=np.zeros((dim,dim))\n    for st in range(dim):\n        if not (st>>i)&1:\n            M[st|(1<<i),st]=(-1)**bin(st & ((1<<i)-1)).count('1')\n    return M\nC=[cdag(i) for i in range(N)]\nCd=[c.T for c in C]\ndef hamiltonian(Dq,Fk):\n    h,V=build(Dq,Fk)\n    H=np.zeros((2**N,2**N),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*Cd[a]@C[b]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(Cd[a]@Cd[b]@C[d]@C[c])\n    return H\ndef triplet_levels(Dq,Fk):\n    H=hamiltonian(Dq,Fk)\n    idx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\n    Hs=H[np.ix_(idx,idx)]\n    return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))\nif __name__==\"__main__\":\n    # check: free ion (Dq=0) triplets for two F4/F2 ratios\n    for F2,F4 in [(1.0,0.0),(1.0,0.625),(1.0,0.4)]:\n        ev=triplet_levels(0.0,{0:0.0,2:F2,4:F4})\n        print(F2,F4,np.round(ev,6))\nEOF\npython3 d2.py",
+   "scripts": [
+    {
+     "name": "d2.py",
+     "sha256": "b22eb7f375c2de9f906568fc28a3014f5b84714f9fac9c2c7f0fa75475991380",
+     "lines": 69,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb_complex(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14:\n                            V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\ndef build(Dq,Fk):\n    r2=np.sqrt(2)\n    vecs={\n     'dz2':np.array([0,0,1,0,0],complex),\n     'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n     'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),\n     'dxz':np.array([0,1,0,-1,0],complex)/r2,\n     'dyz':np.array([0,1j,0,1j,0],complex)/r2}\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    U=np.array([vecs[k] for k in vecs]).T\n    assert np.allclose(U.conj().T@U,np.eye(5)),\"not orthonormal\"\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    return h,coulomb_complex(Fk)\nN=10\ndef cdag(i):\n    dim=2**N; M=np.zeros((dim,dim))\n    for st in range(dim):\n        if not (st>>i)&1:\n            M[st|(1<<i),st]=(-1)**bin(st & ((1<<i)-1)).count('1')\n    return M\nC=[cdag(i) for i in range(N)]\nCd=[c.T for c in C]\ndef hamiltonian(Dq,Fk):\n    h,V=build(Dq,Fk)\n    H=np.zeros((2**N,2**N),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*Cd[a]@C[b]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(Cd[a]@Cd[b]@C[d]@C[c])\n    return H\ndef triplet_levels(Dq,Fk):\n    H=hamiltonian(Dq,Fk)\n    idx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\n    Hs=H[np.ix_(idx,idx)]\n    return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))\nif __name__==\"__main__\":\n    # check: free ion (Dq=0) triplets for two F4/F2 ratios\n    for F2,F4 in [(1.0,0.0),(1.0,0.625),(1.0,0.4)]:\n        ev=triplet_levels(0.0,{0:0.0,2:F2,4:F4})\n        print(F2,F4,np.round(ev,6))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d2.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘ld’: Read-only file system\npython3: can't open file '/tmp/tsbench-home-xehwqch9/d2.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d2.py",
+     "line": 6,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "d2.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red"
+    },
+    {
+     "script": "d2.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "d2.py",
+     "line": 37,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "dim=2**N; M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "d2.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Find a writable scratch directory",
+   "command": "cd \"$(mktemp -d /dev/shm/ldXXXX 2>/dev/null || echo /tmp)\" && pwd && touch x && echo writable; df -h . | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/dev/shm/ldo4YL\nwritable\ntmpfs            16G     0   16G   0% /dev/shm\nShell cwd was reset to /tmp/tsbench-run-io23z90g",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Build d2 Hamiltonian and test free-ion triplet levels",
+   "command": "cd /dev/shm/ldo4YL && cat > d2.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb_complex(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14:\n                            V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\ndef build(Dq,Fk):\n    r2=np.sqrt(2)\n    vecs={\n     'dz2':np.array([0,0,1,0,0],complex),\n     'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n     'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),\n     'dxz':np.array([0,1,0,-1,0],complex)/r2,\n     'dyz':np.array([0,1j,0,1j,0],complex)/r2}\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    U=np.array([vecs[k] for k in vecs]).T\n    assert np.allclose(U.conj().T@U,np.eye(5)),\"not orthonormal\"\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    return h,coulomb_complex(Fk)\nN=10\ndef cdag(i):\n    dim=2**N; M=np.zeros((dim,dim))\n    for st in range(dim):\n        if not (st>>i)&1:\n            M[st|(1<<i),st]=(-1)**bin(st & ((1<<i)-1)).count('1')\n    return M\nC=[cdag(i) for i in range(N)]\nCd=[c.T for c in C]\ndef hamiltonian(Dq,Fk):\n    h,V=build(Dq,Fk)\n    H=np.zeros((2**N,2**N),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*Cd[a]@C[b]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(Cd[a]@Cd[b]@C[d]@C[c])\n    return H\ndef triplet_levels(Dq,Fk):\n    H=hamiltonian(Dq,Fk)\n    idx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\n    Hs=H[np.ix_(idx,idx)]\n    return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))\nif __name__==\"__main__\":\n    for F2,F4 in [(1.0,0.0),(1.0,0.625),(1.0,0.4)]:\n        ev=triplet_levels(0.0,{0:0.0,2:F2,4:F4})\n        print(F2,F4,np.round(ev,6))\nEOF\ntime python3 d2.py",
+   "scripts": [
+    {
+     "name": "d2.py",
+     "sha256": "35ab202958d4b4fea23937e6c55a25b3723562d15702884bd27cd3385b962dc3",
+     "lines": 68,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb_complex(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14:\n                            V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\ndef build(Dq,Fk):\n    r2=np.sqrt(2)\n    vecs={\n     'dz2':np.array([0,0,1,0,0],complex),\n     'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n     'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),\n     'dxz':np.array([0,1,0,-1,0],complex)/r2,\n     'dyz':np.array([0,1j,0,1j,0],complex)/r2}\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    U=np.array([vecs[k] for k in vecs]).T\n    assert np.allclose(U.conj().T@U,np.eye(5)),\"not orthonormal\"\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    return h,coulomb_complex(Fk)\nN=10\ndef cdag(i):\n    dim=2**N; M=np.zeros((dim,dim))\n    for st in range(dim):\n        if not (st>>i)&1:\n            M[st|(1<<i),st]=(-1)**bin(st & ((1<<i)-1)).count('1')\n    return M\nC=[cdag(i) for i in range(N)]\nCd=[c.T for c in C]\ndef hamiltonian(Dq,Fk):\n    h,V=build(Dq,Fk)\n    H=np.zeros((2**N,2**N),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*Cd[a]@C[b]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(Cd[a]@Cd[b]@C[d]@C[c])\n    return H\ndef triplet_levels(Dq,Fk):\n    H=hamiltonian(Dq,Fk)\n    idx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\n    Hs=H[np.ix_(idx,idx)]\n    return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))\nif __name__==\"__main__\":\n    for F2,F4 in [(1.0,0.0),(1.0,0.625),(1.0,0.4)]:\n        ev=triplet_levels(0.0,{0:0.0,2:F2,4:F4})\n        print(F2,F4,np.round(ev,6))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d2.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 71: cd: /dev/shm/ldo4YL: No such file or directory\npython3: can't open file '/tmp/tsbench-run-io23z90g/d2.py': [Errno 2] No such file or directory\n\nreal\t0m0,018s\nuser\t0m0,011s\nsys\t0m0,007s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d2.py",
+     "line": 6,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "d2.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red"
+    },
+    {
+     "script": "d2.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "d2.py",
+     "line": 37,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "dim=2**N; M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "d2.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Create scratch directory in tmpfs",
+   "command": "mkdir -p /dev/shm/ldw && cd /dev/shm/ldw && echo ok && pwd",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok\n/dev/shm/ldw\nShell cwd was reset to /tmp/tsbench-run-io23z90g",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Build d2 Hamiltonian and test free-ion triplet levels",
+   "command": "cd /dev/shm/ldw && cat > d2.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb_complex(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14:\n                            V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\ndef build(Dq,Fk):\n    r2=np.sqrt(2)\n    vecs={\n     'dz2':np.array([0,0,1,0,0],complex),\n     'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n     'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),\n     'dxz':np.array([0,1,0,-1,0],complex)/r2,\n     'dyz':np.array([0,1j,0,1j,0],complex)/r2}\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    U=np.array([vecs[k] for k in vecs]).T\n    assert np.allclose(U.conj().T@U,np.eye(5)),\"not orthonormal\"\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    return h,coulomb_complex(Fk)\nN=10\ndef cdag(i):\n    dim=2**N; M=np.zeros((dim,dim))\n    for st in range(dim):\n        if not (st>>i)&1:\n            M[st|(1<<i),st]=(-1)**bin(st & ((1<<i)-1)).count('1')\n    return M\nC=[cdag(i) for i in range(N)]\nCd=[c.T for c in C]\ndef hamiltonian(Dq,Fk):\n    h,V=build(Dq,Fk)\n    H=np.zeros((2**N,2**N),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*Cd[a]@C[b]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(Cd[a]@Cd[b]@C[d]@C[c])\n    return H\ndef triplet_levels(Dq,Fk):\n    H=hamiltonian(Dq,Fk)\n    idx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\n    Hs=H[np.ix_(idx,idx)]\n    return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))\nif __name__==\"__main__\":\n    for F2,F4 in [(1.0,0.0),(1.0,0.625),(1.0,0.4)]:\n        ev=triplet_levels(0.0,{0:0.0,2:F2,4:F4})\n        print(F2,F4,np.round(ev,6))\nEOF\ntime python3 d2.py",
+   "scripts": [
+    {
+     "name": "d2.py",
+     "sha256": "35ab202958d4b4fea23937e6c55a25b3723562d15702884bd27cd3385b962dc3",
+     "lines": 68,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb_complex(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14:\n                            V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\ndef build(Dq,Fk):\n    r2=np.sqrt(2)\n    vecs={\n     'dz2':np.array([0,0,1,0,0],complex),\n     'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n     'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),\n     'dxz':np.array([0,1,0,-1,0],complex)/r2,\n     'dyz':np.array([0,1j,0,1j,0],complex)/r2}\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    U=np.array([vecs[k] for k in vecs]).T\n    assert np.allclose(U.conj().T@U,np.eye(5)),\"not orthonormal\"\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    return h,coulomb_complex(Fk)\nN=10\ndef cdag(i):\n    dim=2**N; M=np.zeros((dim,dim))\n    for st in range(dim):\n        if not (st>>i)&1:\n            M[st|(1<<i),st]=(-1)**bin(st & ((1<<i)-1)).count('1')\n    return M\nC=[cdag(i) for i in range(N)]\nCd=[c.T for c in C]\ndef hamiltonian(Dq,Fk):\n    h,V=build(Dq,Fk)\n    H=np.zeros((2**N,2**N),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*Cd[a]@C[b]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(Cd[a]@Cd[b]@C[d]@C[c])\n    return H\ndef triplet_levels(Dq,Fk):\n    H=hamiltonian(Dq,Fk)\n    idx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\n    Hs=H[np.ix_(idx,idx)]\n    return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))\nif __name__==\"__main__\":\n    for F2,F4 in [(1.0,0.0),(1.0,0.625),(1.0,0.4)]:\n        ev=triplet_levels(0.0,{0:0.0,2:F2,4:F4})\n        print(F2,F4,np.round(ev,6))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d2.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 71: cd: /dev/shm/ldw: No such file or directory\npython3: can't open file '/tmp/tsbench-run-io23z90g/d2.py': [Errno 2] No such file or directory\n\nreal\t0m0,016s\nuser\t0m0,008s\nsys\t0m0,008s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d2.py",
+     "line": 6,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "d2.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red"
+    },
+    {
+     "script": "d2.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "d2.py",
+     "line": 37,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "dim=2**N; M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "d2.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Inspect working directory state",
+   "command": "pwd; ls -ld /tmp /tmp/tsbench-run-io23z90g 2>&1; touch /tmp/testfile && echo tmp_ok",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/tmp/tsbench-run-io23z90g\ndrwxrwxrwt 32 nobody nogroup 884736 Nov  4 11:40 /tmp\ndrwx------  3 <USER>  <USER>     4096 Nov  4 11:41 /tmp/tsbench-run-io23z90g\ntouch: cannot touch '/tmp/testfile': Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Run d2 free-ion triplet check via stdin script",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb_complex(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14:\n                            V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\ndef build(Dq,Fk):\n    r2=np.sqrt(2)\n    vecs={\n     'dz2':np.array([0,0,1,0,0],complex),\n     'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n     'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),\n     'dxz':np.array([0,1,0,-1,0],complex)/r2,\n     'dyz':np.array([0,1j,0,1j,0],complex)/r2}\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    U=np.array([vecs[k] for k in vecs]).T\n    assert np.allclose(U.conj().T@U,np.eye(5)),\"not orthonormal\"\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    return h,coulomb_complex(Fk)\nN=10\ndef cdag(i):\n    dim=2**N; M=np.zeros((dim,dim))\n    for st in range(dim):\n        if not (st>>i)&1:\n            M[st|(1<<i),st]=(-1)**bin(st & ((1<<i)-1)).count('1')\n    return M\nC=[cdag(i) for i in range(N)]\nCd=[c.T for c in C]\ndef hamiltonian(Dq,Fk):\n    h,V=build(Dq,Fk)\n    H=np.zeros((2**N,2**N),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*Cd[a]@C[b]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(Cd[a]@Cd[b]@C[d]@C[c])\n    return H\ndef triplet_levels(Dq,Fk):\n    H=hamiltonian(Dq,Fk)\n    idx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\n    Hs=H[np.ix_(idx,idx)]\n    return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))\nfor F2,F4 in [(1.0,0.0),(1.0,0.625),(1.0,0.4)]:\n    ev=triplet_levels(0.0,{0:0.0,2:F2,4:F4})\n    print(F2,F4,np.round(ev,6))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "849f32bc4558fef2c52852e521f27adf18d93454e0a03afeaff959f42949efcd",
+     "lines": 67,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2\nms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5))\n    red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb_complex(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14:\n                            V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\ndef build(Dq,Fk):\n    r2=np.sqrt(2)\n    vecs={\n     'dz2':np.array([0,0,1,0,0],complex),\n     'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n     'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),\n     'dxz':np.array([0,1,0,-1,0],complex)/r2,\n     'dyz':np.array([0,1j,0,1j,0],complex)/r2}\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    U=np.array([vecs[k] for k in vecs]).T\n    assert np.allclose(U.conj().T@U,np.eye(5)),\"not orthonormal\"\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    return h,coulomb_complex(Fk)\nN=10\ndef cdag(i):\n    dim=2**N; M=np.zeros((dim,dim))\n    for st in range(dim):\n        if not (st>>i)&1:\n            M[st|(1<<i),st]=(-1)**bin(st & ((1<<i)-1)).count('1')\n    return M\nC=[cdag(i) for i in range(N)]\nCd=[c.T for c in C]\ndef hamiltonian(Dq,Fk):\n    h,V=build(Dq,Fk)\n    H=np.zeros((2**N,2**N),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*Cd[a]@C[b]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(Cd[a]@Cd[b]@C[d]@C[c])\n    return H\ndef triplet_levels(Dq,Fk):\n    H=hamiltonian(Dq,Fk)\n    idx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\n    Hs=H[np.ix_(idx,idx)]\n    return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))\nfor F2,F4 in [(1.0,0.0),(1.0,0.625),(1.0,0.4)]:\n    ev=triplet_levels(0.0,{0:0.0,2:F2,4:F4})\n    print(F2,F4,np.round(ev,6))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1.0 0.0 [-1.020408 -1.020408 -1.020408 -1.020408 -1.020408 -1.020408 -1.020408\n -0.714286 -0.714286 -0.714286]\n1.0 0.625 [-1.568878 -1.568878 -1.568878 -1.568878 -1.568878 -1.568878 -1.568878\n -1.369048 -1.369048 -1.369048]\n1.0 0.4 [-1.371429 -1.371429 -1.371429 -1.371429 -1.371429 -1.371429 -1.371429\n -1.133333 -1.133333 -1.133333]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 6,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 37,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "dim=2**N; M=np.zeros((dim,dim))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh((Hs+Hs.conj().T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "Confirm Python runs",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nexec(open('/dev/null').read())\nEOF\necho; python3 -c \"print('py ok')\"",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "b6b704697248a254ee29b0e95f6c7ea5da11235287a49673c6f463e68c51e8e5",
+     "lines": 3,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nexec(open('/dev/null').read())\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "py ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 11,
+   "tool": "Bash",
+   "description": "Check triplet spectrum depends only on B",
+   "command": "cat > /dev/null << 'EOF'\nEOF\npython3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq\nl=2; ms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5)); red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14: V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\nr2=np.sqrt(2)\nvecs={'dz2':np.array([0,0,1,0,0],complex),'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n 'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),'dxz':np.array([0,1,0,-1,0],complex)/r2,\n 'dyz':np.array([0,1j,0,1j,0],complex)/r2}\nU=np.array([vecs[k] for k in vecs]).T; assert np.allclose(U.conj().T@U,np.eye(5))\nN=10\ndef cdag(i):\n    M=np.zeros((2**N,2**N))\n    for st in range(2**N):\n        if not (st>>i)&1: M[st|(1<<i),st]=(-1)**bin(st&((1<<i)-1)).count('1')\n    return M\nCc=[cdag(i) for i in range(N)]; Ca=[c.T for c in Cc]\nidx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\ndef triplets(Dq,F2,F4):\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    V=coulomb({2:F2,4:F4})\n    # restricted operators: build only in Ms=1 sector to save time: use full Fock but only need matrix elements between idx states\n    S=idx\n    def op_mat(ops):\n        return ops\n    H=np.zeros((len(S),len(S)),complex)\n    # one-body\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14:\n                H+= h[a,b]*(Ca[a]@Cc[b])[np.ix_(S,S)]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(Ca[a]@Ca[b]@Cc[d]@Cc[c])[np.ix_(S,S)]\n    return np.sort(np.linalg.eigvalsh((H+H.conj().T)/2).real)\n# check independence of F4 at fixed B=1 (B=(9F2-5F4)/441)\nfor F4 in [0.0,0.5]:\n    F2=(441+5*F4)/9\n    print('F4',F4,np.round(triplets(0.7,F2,F4),5))\nEOF",
+   "scripts": [
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "ae34457b788468a5319a3da9cf573e55602d5ba439a3e3142d7dd8b450f03025",
+     "lines": 60,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq\nl=2; ms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5)); red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14: V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\nr2=np.sqrt(2)\nvecs={'dz2':np.array([0,0,1,0,0],complex),'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n 'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),'dxz':np.array([0,1,0,-1,0],complex)/r2,\n 'dyz':np.array([0,1j,0,1j,0],complex)/r2}\nU=np.array([vecs[k] for k in vecs]).T; assert np.allclose(U.conj().T@U,np.eye(5))\nN=10\ndef cdag(i):\n    M=np.zeros((2**N,2**N))\n    for st in range(2**N):\n        if not (st>>i)&1: M[st|(1<<i),st]=(-1)**bin(st&((1<<i)-1)).count('1')\n    return M\nCc=[cdag(i) for i in range(N)]; Ca=[c.T for c in Cc]\nidx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\ndef triplets(Dq,F2,F4):\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    V=coulomb({2:F2,4:F4})\n    # restricted operators: build only in Ms=1 sector to save time: use full Fock but only need matrix elements between idx states\n    S=idx\n    def op_mat(ops):\n        return ops\n    H=np.zeros((len(S),len(S)),complex)\n    # one-body\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14:\n                H+= h[a,b]*(Ca[a]@Cc[b])[np.ix_(S,S)]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14:\n            H+=0.5*v*(Ca[a]@Ca[b]@Cc[d]@Cc[c])[np.ix_(S,S)]\n    return np.sort(np.linalg.eigvalsh((H+H.conj().T)/2).real)\n# check independence of F4 at fixed B=1 (B=(9F2-5F4)/441)\nfor F4 in [0.0,0.5]:\n    F2=(441+5*F4)/9\n    print('F4',F4,np.round(triplets(0.7,F2,F4),5))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "F4 0.0 [-58.4     -51.4     -51.4     -51.4     -46.48276 -46.48276 -46.48276\n -34.31724 -34.31724 -34.31724]\nF4 0.5 [-59.12222 -52.12222 -52.12222 -52.12222 -47.20498 -47.20498 -47.20498\n -35.03946 -35.03946 -35.03946]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 6,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5)); red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 39,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 56,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh((H+H.conj().T)/2).real)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 12,
+   "tool": "Bash",
+   "description": "Scan Dq/B and T-S level ratios for d2",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq\nl=2; ms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5)); red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14: V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\nr2=np.sqrt(2)\nvecs={'dz2':np.array([0,0,1,0,0],complex),'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n 'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),'dxz':np.array([0,1,0,-1,0],complex)/r2,\n 'dyz':np.array([0,1j,0,1j,0],complex)/r2}\nN=10\ndef cdag(i):\n    M=np.zeros((2**N,2**N))\n    for st in range(2**N):\n        if not (st>>i)&1: M[st|(1<<i),st]=(-1)**bin(st&((1<<i)-1)).count('1')\n    return M\nCc=[cdag(i) for i in range(N)]; Ca=[c.T for c in Cc]\nidx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\nV=coulomb({2:49.0,4:0.0})  # B=1 units\nops1={}; \ndef levels(Dq):\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    H=np.zeros((10,10),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*(Ca[a]@Cc[b])[np.ix_(idx,idx)]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14: H+=0.5*v*(Ca[a]@Ca[b]@Cc[d]@Cc[c])[np.ix_(idx,idx)]\n    return np.sort(np.linalg.eigvalsh((H+H.conj().T)/2).real)\ndef ratios(x):\n    E=levels(x); E=E-E[0]\n    return E[4]/E[1]*0+0, E\n# nu1 = E(T2g)=E[1..3] ; nu2=E[4]; nu3=E[7]  (in units of B, ground-relative)\n# find x matching nu2/nu1 and nu3/nu1\nobs1,obs2,obs3=15730.,24030.,32750.\nr2o=obs2/obs1; r3o=obs3/obs1\ndef f(x):\n    E=levels(x); E=E-E[0]\n    return E[4]/E[1]-r2o, E[7]/E[1]-r3o\nfor x in [0.5,1,2,3,4,5]:\n    E=levels(x); E=E-E[0]\n    print(x, np.round(E,4), E[4]/E[1], E[7]/E[1])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "16b0bee2f07b79bae3bbf55125ea4da4a17daa9834cd4be42941d75686542ecd",
+     "lines": 62,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq\nl=2; ms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5)); red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14: V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\nr2=np.sqrt(2)\nvecs={'dz2':np.array([0,0,1,0,0],complex),'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n 'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),'dxz':np.array([0,1,0,-1,0],complex)/r2,\n 'dyz':np.array([0,1j,0,1j,0],complex)/r2}\nN=10\ndef cdag(i):\n    M=np.zeros((2**N,2**N))\n    for st in range(2**N):\n        if not (st>>i)&1: M[st|(1<<i),st]=(-1)**bin(st&((1<<i)-1)).count('1')\n    return M\nCc=[cdag(i) for i in range(N)]; Ca=[c.T for c in Cc]\nidx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\nV=coulomb({2:49.0,4:0.0})  # B=1 units\nops1={}; \ndef levels(Dq):\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    H=np.zeros((10,10),complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H+=h[a,b]*(Ca[a]@Cc[b])[np.ix_(idx,idx)]\n    for a,b,c,d in itertools.product(range(N),repeat=4):\n        v=V[a,b,c,d]\n        if abs(v)>1e-14: H+=0.5*v*(Ca[a]@Ca[b]@Cc[d]@Cc[c])[np.ix_(idx,idx)]\n    return np.sort(np.linalg.eigvalsh((H+H.conj().T)/2).real)\ndef ratios(x):\n    E=levels(x); E=E-E[0]\n    return E[4]/E[1]*0+0, E\n# nu1 = E(T2g)=E[1..3] ; nu2=E[4]; nu3=E[7]  (in units of B, ground-relative)\n# find x matching nu2/nu1 and nu3/nu1\nobs1,obs2,obs3=15730.,24030.,32750.\nr2o=obs2/obs1; r3o=obs3/obs1\ndef f(x):\n    E=levels(x); E=E-E[0]\n    return E[4]/E[1]-r2o, E[7]/E[1]-r3o\nfor x in [0.5,1,2,3,4,5]:\n    E=levels(x); E=E-E[0]\n    print(x, np.round(E,4), E[4]/E[1], E[7]/E[1])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0.5 [ 0.      5.      5.      5.      8.6754  8.6754  8.6754 21.3246 21.3246\n 21.3246] 1.7350889359326533 4.264911064067366\n1 [ 0.     10.     10.     10.     16.4792 16.4792 16.4792 28.5208 28.5208\n 28.5208] 1.6479202710603842 2.8520797289396107\n2 [ 0.     20.     20.     20.     29.3606 29.3606 29.3606 45.6394 45.6394\n 45.6394] 1.4680294850975073 2.281970514902496\n3 [ 0.     30.     30.     30.     40.4066 40.4066 40.4066 64.5934 64.5934\n 64.5934] 1.3468871125850732 2.1531128874149292\n4 [ 0.     40.     40.     40.     50.8792 50.8792 50.8792 84.1208 84.1208\n 84.1208] 1.271980746535134 2.1030192534648666\n5 [  0.    50.    50.    50.    61.14  61.14  61.14 103.86 103.86 103.86] 1.2227998127341235 2.0772001872658765",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 6,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5)); red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 40,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "H=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 49,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh((H+H.conj().T)/2).real)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 13,
+   "tool": "Bash",
+   "description": "Fine scan of level ratios vs Dq/B for d2",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2; ms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5)); red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14: V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\nr2=np.sqrt(2)\nvecs={'dz2':np.array([0,0,1,0,0],complex),'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n 'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),'dxz':np.array([0,1,0,-1,0],complex)/r2,\n 'dyz':np.array([0,1j,0,1j,0],complex)/r2}\nN=10\ndef cdag(i):\n    M=np.zeros((2**N,2**N))\n    for st in range(2**N):\n        if not (st>>i)&1: M[st|(1<<i),st]=(-1)**bin(st&((1<<i)-1)).count('1')\n    return M\nCc=[cdag(i) for i in range(N)]; Ca=[c.T for c in Cc]\nidx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\nV=coulomb({2:49.0,4:0.0})\nVA={}\nfor a,b,c,d in itertools.product(range(N),repeat=4):\n    if abs(V[a,b,c,d])>1e-14: VA[(a,b,c,d)]=V[a,b,c,d]\nOPV=[0.5*v*(Ca[a]@Ca[b]@Cc[d]@Cc[c])[np.ix_(idx,idx)] for (a,b,c,d),v in VA.items()]\nOPV=sum(OPV)\nOPh={}\nfor a in range(N):\n    for b in range(N):\n        OPh[(a,b)]=(Ca[a]@Cc[b])[np.ix_(idx,idx)]\ndef levels(Dq):\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    H=OPV.copy()\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H=H+h[a,b]*OPh[(a,b)]\n    return np.sort(np.linalg.eigvalsh((H+H.conj().T)/2).real)\nfor x in np.arange(1.0,3.01,0.25):\n    E=levels(x)-levels(x)[0]\n    print(round(x,2), round(E[4]/E[1],4), round(E[7]/E[1],4), round(E[7]/E[4],4), np.round(E[[1,4,7]],3))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "b627c0f64e5257cff1d3953003044fa4b7e46ce17059f9def29eface6785eec9",
+     "lines": 56,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2; ms=list(range(-2,3))\ndef Cmat(k,q):\n    M=np.zeros((5,5)); red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))\n    for ia,ma in enumerate(ms):\n        for ib,mb in enumerate(ms):\n            if -ma+q+mb!=0: continue\n            M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red\n    return M\ndef coulomb(Fk):\n    V=np.zeros((10,10,10,10))\n    for k,F in Fk.items():\n        for q in range(-k,k+1):\n            A=Cmat(k,q); Bm=Cmat(k,-q)*(-1)**q\n            for s1 in range(2):\n                for s2 in range(2):\n                    for i,kk,j,ll in itertools.product(range(5),repeat=4):\n                        v=A[i,kk]*Bm[j,ll]\n                        if abs(v)>1e-14: V[s1*5+i,s2*5+j,s1*5+kk,s2*5+ll]+=F*v\n    return V\nr2=np.sqrt(2)\nvecs={'dz2':np.array([0,0,1,0,0],complex),'dx2y2':np.array([1,0,0,0,1],complex)/r2,\n 'dxy':np.array([1,0,0,0,-1],complex)/(1j*r2),'dxz':np.array([0,1,0,-1,0],complex)/r2,\n 'dyz':np.array([0,1j,0,1j,0],complex)/r2}\nN=10\ndef cdag(i):\n    M=np.zeros((2**N,2**N))\n    for st in range(2**N):\n        if not (st>>i)&1: M[st|(1<<i),st]=(-1)**bin(st&((1<<i)-1)).count('1')\n    return M\nCc=[cdag(i) for i in range(N)]; Ca=[c.T for c in Cc]\nidx=[(1<<i)|(1<<j) for i,j in itertools.combinations(range(5),2)]\nV=coulomb({2:49.0,4:0.0})\nVA={}\nfor a,b,c,d in itertools.product(range(N),repeat=4):\n    if abs(V[a,b,c,d])>1e-14: VA[(a,b,c,d)]=V[a,b,c,d]\nOPV=[0.5*v*(Ca[a]@Ca[b]@Cc[d]@Cc[c])[np.ix_(idx,idx)] for (a,b,c,d),v in VA.items()]\nOPV=sum(OPV)\nOPh={}\nfor a in range(N):\n    for b in range(N):\n        OPh[(a,b)]=(Ca[a]@Cc[b])[np.ix_(idx,idx)]\ndef levels(Dq):\n    en={'dz2':6*Dq,'dx2y2':6*Dq,'dxy':-4*Dq,'dxz':-4*Dq,'dyz':-4*Dq}\n    h5=sum(en[k]*np.outer(vecs[k],vecs[k].conj()) for k in vecs)\n    h=np.zeros((10,10),complex)\n    for s in range(2): h[s*5:s*5+5,s*5:s*5+5]=h5\n    H=OPV.copy()\n    for a in range(N):\n        for b in range(N):\n            if abs(h[a,b])>1e-14: H=H+h[a,b]*OPh[(a,b)]\n    return np.sort(np.linalg.eigvalsh((H+H.conj().T)/2).real)\nfor x in np.arange(1.0,3.01,0.25):\n    E=levels(x)-levels(x)[0]\n    print(round(x,2), round(E[4]/E[1],4), round(E[7]/E[1],4), round(E[7]/E[4],4), np.round(E[[1,4,7]],3))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1.0 1.6479 2.8521 1.7307 [10.    16.479 28.521]\n1.25 1.6 2.6 1.625 [12.5 20.  32.5]\n1.5 1.5528 2.4472 1.576 [15.    23.292 36.708]\n1.75 1.5084 2.3487 1.5571 [17.5   26.397 41.103]\n2.0 1.468 2.282 1.5544 [20.    29.361 45.639]\n2.25 1.4319 2.2347 1.5606 [22.5   32.219 50.281]\n2.5 1.4 2.2 1.5714 [25. 35. 55.]\n2.75 1.3718 2.1737 1.5845 [27.5   37.724 59.776]\n3.0 1.3469 2.1531 1.5986 [30.    40.407 64.593]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 5,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5)); red=(-1)**l*(2*l+1)*float(wigner_3j(l,k,l,0,0,0))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "M[ia,ib]=(-1)**(l-ma)*float(wigner_3j(l,k,l,-ma,q,mb))*red"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 12,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 47,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 53,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh((H+H.conj().T)/2).real)"
+    }
+   ],
+   "produces": []
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1573.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 14,
+  "n_scripts": 10,
+  "n_failed_steps": 4,
+  "n_values": 1,
+  "n_linked": 0,
+  "n_weak": 0,
+  "source_steps": [],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-h5gl1e2z 2>/dev/null && touch t && echo ok && rm t; pwd

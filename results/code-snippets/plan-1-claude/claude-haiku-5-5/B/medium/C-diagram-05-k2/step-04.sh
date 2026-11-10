@@ -1,0 +1,1 @@
+ls <HOME>/.cache/tsbench/ 2>/dev/null; which -a python3 uv conda 2>/dev/null; python3 -c "import numpy" 2>&1; ls /usr/bin/python3* 2>/dev/null

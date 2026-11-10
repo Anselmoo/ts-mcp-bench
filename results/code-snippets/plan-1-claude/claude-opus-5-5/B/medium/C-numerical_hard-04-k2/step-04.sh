@@ -1,0 +1,1 @@
+cd /tmp && mkdir -p w && cd w && history | tail -0; echo $PWD

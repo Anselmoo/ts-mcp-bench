@@ -1,0 +1,372 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-racah_c-02-k3.jsonl",
+ "transcript_sha256": "09441881661c96201bd63736d902440b50d0bcf7e3a171d576644031e026ae93",
+ "answer": {
+  "Dq": 1449.0,
+  "B": 599.0,
+  "C": 2766.0,
+  "out_of_scope": false,
+  "reason": "Full d3 Tanabe-Sugano energy-matrix least-squares fit to the three spin-allowed bands plus the spin-forbidden 2E band reproduces all four within about 2 cm-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check Python and numerical libraries available",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy|sympy\" ; python3 --version",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Python 3.14.9",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Install numpy, scipy, sympy",
+   "command": "pip install numpy scipy sympy -q 2>&1 | tail -2; python3 -c \"import numpy, scipy, sympy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 1: pip: command not found\nok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d3 Hamiltonian and test level energies",
+   "command": "mkdir -p /tmp/d3 && cat > /tmp/d3/ts.py << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nfrom sympy import N as sN\nl=2\nms=[-2,-1,0,1,2]\n# spatial orbital index: 0..4 -> m=-2..2 ; spin-orbital = 2*sp + s (s=0 up,1 down)\nG={}\ndef gnt(m1,k,m2,m3,q):\n    key=(m1,k,m2,m3,q)\n    if key not in G: G[key]=float(sN(gaunt(l,k,l,m1,q,m2)))\n    return G[key]\ndef Cmat(k,q):\n    # <m_a|C^k_q|m_c> matrix (5x5)\n    M=np.zeros((5,5))\n    for i,ma in enumerate(ms):\n        for j,mc in enumerate(ms):\n            if ma-mc==q:  # need -ma + q + mc = 0 -> q = ma-mc\n                M[i,j]=np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2)*gnt(-ma,k,mc,0,q) if False else 0\n    return M\n# direct computation: <a|C^k_q|c> = int Y_a^* C^k_q Y_c = sqrt(4pi/(2k+1)) (-1)^{ma} gaunt(l,k,l,-ma,q,mc), requires -ma+q+mc=0\ndef Cel(k,q,ma,mc):\n    if -ma+q+mc!=0: return 0.0\n    return np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2 if ma>=0 else (-ma)%2)*float(sN(gaunt(l,k,l,-ma,q,mc)))\ndef Vel(a,b,c,d,F):\n    # <ab|1/r12|cd> spatial, a,b,c,d are m values\n    tot=0.0\n    for k in (0,2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            s+= (-1)**(q%2)*Cel(k,q,a,c)*Cel(k,-q,b,d)\n        tot+=F[k]*s\n    return tot\ndef build(Dq,B,C):\n    F4=441*C/35.0; F2=441*B+5*F4; F={0:0.0,2:F2,4:F4}\n    # F0 set to 0 (constant shift)\n    # one-electron CF in complex basis\n    s2=np.sqrt(2)\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[ms.index(m)]=c\n        return v\n    xy=vec({2:1/(1j*s2),-2:-1/(1j*s2)})\n    yz=vec({1:1j/s2,-1:1j/s2})\n    zx=vec({1:-1/s2,-1:1/s2})\n    z2=vec({0:1})\n    x2y2=vec({2:1/s2,-2:1/s2})\n    t2=[xy,yz,zx]; eg=[z2,x2y2]\n    Pt=sum(np.outer(v,v.conj()) for v in t2)\n    Pe=sum(np.outer(v,v.conj()) for v in eg)\n    h=-4*Dq*Pt+6*Dq*Pe\n    # two-electron integrals in spin-orbital indices\n    n=10\n    V=np.zeros((n,n,n,n))\n    for so_a in range(n):\n        for so_b in range(n):\n            for so_c in range(n):\n                for so_d in range(n):\n                    sa,ma_=so_a%2,so_a//2\n                    sb,mb_=so_b%2,so_b//2\n                    sc,mc_=so_c%2,so_c//2\n                    sd,md_=so_d%2,so_d//2\n                    if sa!=sc or sb!=sd: continue\n                    V[so_a,so_b,so_c,so_d]=Vel(ms[ma_],ms[mb_],ms[mc_],ms[md_],F)\n    # spin-orbital one-electron\n    H1=np.zeros((n,n),complex)\n    for i in range(n):\n        for j in range(n):\n            if i%2==j%2: H1[i,j]=h[i//2,j//2]\n    return H1,V\ndef apply_ops(state,terms):\n    pass\ndef fermi(det,ops):\n    # ops: list of ('c',i) or ('a',i) applied right to left; det: tuple sorted occupied\n    occ=list(det); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None,0\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None,0\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return tuple(occ),sign\ndef basis(Ms2):\n    # Ms2 = 2*Ms: 3 for quartet max, 1 for Ms=1/2\n    dets=[]\n    for c in itertools.combinations(range(10),3):\n        nup=sum(1 for i in c if i%2==0); ndn=3-nup\n        if nup-ndn==Ms2: dets.append(c)\n    return dets\ndef Hmat(dets,H1,V):\n    idx={d:i for i,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)),complex)\n    n=10\n    for j,d in enumerate(dets):\n        # one-electron\n        for a in range(20):\n            for b in range(20):\n                pass\n        # one-electron part: sum_ij H1[i,j] a_i^dag a_j\n        for i in range(n):\n            for jj in range(n):\n                if H1[i,jj]==0: continue\n                nd,s=fermi(d,[('c',i),('a',jj)])\n                if nd is not None and nd in idx: M[idx[nd],j]+=H1[i,jj]*s\n        # two-electron: 1/2 sum V_abcd a+a a+b a_d a_c\n        for a in range(n):\n          for b in range(n):\n            for c in range(n):\n              for dd in range(n):\n                v=V[a,b,c,dd]\n                if abs(v)<1e-12: continue\n                nd,s=fermi(d,[('c',a),('c',b),('a',dd),('a',c)])\n                if nd is not None and nd in idx: M[idx[nd],j]+=0.5*v*s\n    return M\nEOF\ncd /tmp/d3 && cat > run.py << 'EOF'\nfrom ts import *\nimport numpy as np\ndef levels(Dq,B,C):\n    H1,V=build(Dq,B,C)\n    q=basis(3); d=basis(1)\n    Mq=Hmat(q,H1,V); Md=Hmat(d,H1,V)\n    eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))\n    ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))\n    return eq,ed\neq,ed=levels(1000,800,3200)\nprint(np.round(eq-eq[0],1))\nprint(np.round(ed-eq[0],1))\nEOF\ntime python3 run.py",
+   "scripts": [
+    {
+     "name": "ts.py",
+     "sha256": "7f9342a63cb687f23afade2df3b8812b187c6253e7771a521ae8300cefbfebc5",
+     "lines": 115,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nfrom sympy import N as sN\nl=2\nms=[-2,-1,0,1,2]\n# spatial orbital index: 0..4 -> m=-2..2 ; spin-orbital = 2*sp + s (s=0 up,1 down)\nG={}\ndef gnt(m1,k,m2,m3,q):\n    key=(m1,k,m2,m3,q)\n    if key not in G: G[key]=float(sN(gaunt(l,k,l,m1,q,m2)))\n    return G[key]\ndef Cmat(k,q):\n    # <m_a|C^k_q|m_c> matrix (5x5)\n    M=np.zeros((5,5))\n    for i,ma in enumerate(ms):\n        for j,mc in enumerate(ms):\n            if ma-mc==q:  # need -ma + q + mc = 0 -> q = ma-mc\n                M[i,j]=np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2)*gnt(-ma,k,mc,0,q) if False else 0\n    return M\n# direct computation: <a|C^k_q|c> = int Y_a^* C^k_q Y_c = sqrt(4pi/(2k+1)) (-1)^{ma} gaunt(l,k,l,-ma,q,mc), requires -ma+q+mc=0\ndef Cel(k,q,ma,mc):\n    if -ma+q+mc!=0: return 0.0\n    return np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2 if ma>=0 else (-ma)%2)*float(sN(gaunt(l,k,l,-ma,q,mc)))\ndef Vel(a,b,c,d,F):\n    # <ab|1/r12|cd> spatial, a,b,c,d are m values\n    tot=0.0\n    for k in (0,2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            s+= (-1)**(q%2)*Cel(k,q,a,c)*Cel(k,-q,b,d)\n        tot+=F[k]*s\n    return tot\ndef build(Dq,B,C):\n    F4=441*C/35.0; F2=441*B+5*F4; F={0:0.0,2:F2,4:F4}\n    # F0 set to 0 (constant shift)\n    # one-electron CF in complex basis\n    s2=np.sqrt(2)\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[ms.index(m)]=c\n        return v\n    xy=vec({2:1/(1j*s2),-2:-1/(1j*s2)})\n    yz=vec({1:1j/s2,-1:1j/s2})\n    zx=vec({1:-1/s2,-1:1/s2})\n    z2=vec({0:1})\n    x2y2=vec({2:1/s2,-2:1/s2})\n    t2=[xy,yz,zx]; eg=[z2,x2y2]\n    Pt=sum(np.outer(v,v.conj()) for v in t2)\n    Pe=sum(np.outer(v,v.conj()) for v in eg)\n    h=-4*Dq*Pt+6*Dq*Pe\n    # two-electron integrals in spin-orbital indices\n    n=10\n    V=np.zeros((n,n,n,n))\n    for so_a in range(n):\n        for so_b in range(n):\n            for so_c in range(n):\n                for so_d in range(n):\n                    sa,ma_=so_a%2,so_a//2\n                    sb,mb_=so_b%2,so_b//2\n                    sc,mc_=so_c%2,so_c//2\n                    sd,md_=so_d%2,so_d//2\n                    if sa!=sc or sb!=sd: continue\n                    V[so_a,so_b,so_c,so_d]=Vel(ms[ma_],ms[mb_],ms[mc_],ms[md_],F)\n    # spin-orbital one-electron\n    H1=np.zeros((n,n),complex)\n    for i in range(n):\n        for j in range(n):\n            if i%2==j%2: H1[i,j]=h[i//2,j//2]\n    return H1,V\ndef apply_ops(state,terms):\n    pass\ndef fermi(det,ops):\n    # ops: list of ('c',i) or ('a',i) applied right to left; det: tuple sorted occupied\n    occ=list(det); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None,0\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None,0\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return tuple(occ),sign\ndef basis(Ms2):\n    # Ms2 = 2*Ms: 3 for quartet max, 1 for Ms=1/2\n    dets=[]\n    for c in itertools.combinations(range(10),3):\n        nup=sum(1 for i in c if i%2==0); ndn=3-nup\n        if nup-ndn==Ms2: dets.append(c)\n    return dets\ndef Hmat(dets,H1,V):\n    idx={d:i for i,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)),complex)\n    n=10\n    for j,d in enumerate(dets):\n        # one-electron\n        for a in range(20):\n            for b in range(20):\n                pass\n        # one-electron part: sum_ij H1[i,j] a_i^dag a_j\n        for i in range(n):\n            for jj in range(n):\n                if H1[i,jj]==0: continue\n                nd,s=fermi(d,[('c',i),('a',jj)])\n                if nd is not None and nd in idx: M[idx[nd],j]+=H1[i,jj]*s\n        # two-electron: 1/2 sum V_abcd a+a a+b a_d a_c\n        for a in range(n):\n          for b in range(n):\n            for c in range(n):\n              for dd in range(n):\n                v=V[a,b,c,dd]\n                if abs(v)<1e-12: continue\n                nd,s=fermi(d,[('c',a),('c',b),('a',dd),('a',c)])\n                if nd is not None and nd in idx: M[idx[nd],j]+=0.5*v*s\n    return M\n"
+    },
+    {
+     "name": "run.py",
+     "sha256": "6d70a12598ba0d5eb88fa2e42895b78c18a8217b0ccef552b49a523a861c5216",
+     "lines": 12,
+     "code": "from ts import *\nimport numpy as np\ndef levels(Dq,B,C):\n    H1,V=build(Dq,B,C)\n    q=basis(3); d=basis(1)\n    Mq=Hmat(q,H1,V); Md=Hmat(d,H1,V)\n    eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))\n    ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))\n    return eq,ed\neq,ed=levels(1000,800,3200)\nprint(np.round(eq-eq[0],1))\nprint(np.round(ed-eq[0],1))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘/tmp/d3’: Read-only file system\n/bin/bash: line 249: cd: /tmp/d3: No such file or directory\npython3: can't open file '/tmp/tsbench-run-lcto6ooj/run.py': [Errno 2] No such file or directory\n\nreal\t0m0,019s\nuser\t0m0,012s\nsys\t0m0,008s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "ts.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "ts.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "M=np.zeros((5,5))"
+    },
+    {
+     "script": "ts.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "M[i,j]=np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2)*gnt(-ma,k,mc,0,q) if False else 0"
+    },
+    {
+     "script": "ts.py",
+     "line": 54,
+     "method": "matrix",
+     "text": "V=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "ts.py",
+     "line": 66,
+     "method": "matrix",
+     "text": "H1=np.zeros((n,n),complex)"
+    },
+    {
+     "script": "run.py",
+     "line": 7,
+     "method": "eigen_solver",
+     "text": "eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))"
+    },
+    {
+     "script": "run.py",
+     "line": 8,
+     "method": "eigen_solver",
+     "text": "ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find a writable directory",
+   "command": "cd ~ 2>/dev/null && pwd; echo $HOME; touch $HOME/x && echo writable_home",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/tmp/tsbench-home-xehwqch9\n/tmp/tsbench-home-xehwqch9\ntouch: cannot touch '/tmp/tsbench-home-xehwqch9/x': Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Build d3 Tanabe-Sugano energy matrix and test levels",
+   "command": "cat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N as sN\nfrom scipy.optimize import least_squares\nl=2; ms=[-2,-1,0,1,2]\nGC={}\ndef g(m1,k,m2,q):\n    key=(m1,k,m2,q)\n    if key not in GC: GC[key]=float(sN(gaunt(l,k,l,m1,q,m2)))\n    return GC[key]\ndef Cel(k,q,ma,mc):\n    if -ma+q+mc!=0: return 0.0\n    return np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2)*g(-ma,k,mc,q)\ndef Vel(a,b,c,d,F):\n    tot=0.0\n    for k in (2,4):\n        s=sum((-1)**(q%2)*Cel(k,q,a,c)*Cel(k,-q,b,d) for q in range(-k,k+1))\n        tot+=F[k]*s\n    return tot\ndef build(Dq,B,C):\n    F4=441*C/35.0; F2=441*B+5*F4; F={2:F2,4:F4}\n    s2=np.sqrt(2)\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[ms.index(m)]=c\n        return v\n    xy=vec({2:1/(1j*s2),-2:-1/(1j*s2)}); yz=vec({1:1j/s2,-1:1j/s2}); zx=vec({1:-1/s2,-1:1/s2})\n    z2=vec({0:1}); x2y2=vec({2:1/s2,-2:1/s2})\n    Pt=sum(np.outer(v,v.conj()) for v in [xy,yz,zx]); Pe=sum(np.outer(v,v.conj()) for v in [z2,x2y2])\n    h=-4*Dq*Pt+6*Dq*Pe\n    n=10; V=np.zeros((n,n,n,n))\n    for A in range(n):\n        for Bb in range(n):\n            for Cc in range(n):\n                for D in range(n):\n                    if A%2!=Cc%2 or Bb%2!=D%2: continue\n                    V[A,Bb,Cc,D]=Vel(ms[A//2],ms[Bb//2],ms[Cc//2],ms[D//2],F)\n    H1=np.zeros((n,n),complex)\n    for i in range(n):\n        for j in range(n):\n            if i%2==j%2: H1[i,j]=h[i//2,j//2]\n    return H1,V\ndef fermi(det,ops):\n    occ=list(det); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None,0\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None,0\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return tuple(occ),sign\ndef basis(Ms2):\n    out=[]\n    for c in itertools.combinations(range(10),3):\n        nup=sum(1 for i in c if i%2==0)\n        if nup-(3-nup)==Ms2: out.append(c)\n    return out\ndef Hmat(dets,H1,V):\n    idx={d:i for i,d in enumerate(dets)}; n=10\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,d in enumerate(dets):\n        for i in range(n):\n            for jj in range(n):\n                if H1[i,jj]==0: continue\n                nd,s=fermi(d,[('c',i),('a',jj)])\n                if nd is not None and nd in idx: M[idx[nd],j]+=H1[i,jj]*s\n        for a in range(n):\n         for b in range(n):\n          for c in range(n):\n           for dd in range(n):\n            v=V[a,b,c,dd]\n            if abs(v)<1e-12: continue\n            nd,s=fermi(d,[('c',a),('c',b),('a',dd),('a',c)])\n            if nd is not None and nd in idx: M[idx[nd],j]+=0.5*v*s\n    return M\ndef levels(Dq,B,C):\n    H1,V=build(Dq,B,C)\n    q=basis(3); d=basis(1)\n    Mq=Hmat(q,H1,V); Md=Hmat(d,H1,V)\n    eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))\n    ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))\n    return eq,ed\neq,ed=levels(1000,800,3200)\nprint(\"quartets\",np.round(eq-eq[0],1))\nprint(\"Ms1/2 all\",np.round(ed-eq[0],1))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "e233c019951e38be2024362c7b8076a5f5d70a62dcd46b42e065413b1251cb6c",
+     "lines": 86,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N as sN\nfrom scipy.optimize import least_squares\nl=2; ms=[-2,-1,0,1,2]\nGC={}\ndef g(m1,k,m2,q):\n    key=(m1,k,m2,q)\n    if key not in GC: GC[key]=float(sN(gaunt(l,k,l,m1,q,m2)))\n    return GC[key]\ndef Cel(k,q,ma,mc):\n    if -ma+q+mc!=0: return 0.0\n    return np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2)*g(-ma,k,mc,q)\ndef Vel(a,b,c,d,F):\n    tot=0.0\n    for k in (2,4):\n        s=sum((-1)**(q%2)*Cel(k,q,a,c)*Cel(k,-q,b,d) for q in range(-k,k+1))\n        tot+=F[k]*s\n    return tot\ndef build(Dq,B,C):\n    F4=441*C/35.0; F2=441*B+5*F4; F={2:F2,4:F4}\n    s2=np.sqrt(2)\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[ms.index(m)]=c\n        return v\n    xy=vec({2:1/(1j*s2),-2:-1/(1j*s2)}); yz=vec({1:1j/s2,-1:1j/s2}); zx=vec({1:-1/s2,-1:1/s2})\n    z2=vec({0:1}); x2y2=vec({2:1/s2,-2:1/s2})\n    Pt=sum(np.outer(v,v.conj()) for v in [xy,yz,zx]); Pe=sum(np.outer(v,v.conj()) for v in [z2,x2y2])\n    h=-4*Dq*Pt+6*Dq*Pe\n    n=10; V=np.zeros((n,n,n,n))\n    for A in range(n):\n        for Bb in range(n):\n            for Cc in range(n):\n                for D in range(n):\n                    if A%2!=Cc%2 or Bb%2!=D%2: continue\n                    V[A,Bb,Cc,D]=Vel(ms[A//2],ms[Bb//2],ms[Cc//2],ms[D//2],F)\n    H1=np.zeros((n,n),complex)\n    for i in range(n):\n        for j in range(n):\n            if i%2==j%2: H1[i,j]=h[i//2,j//2]\n    return H1,V\ndef fermi(det,ops):\n    occ=list(det); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None,0\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None,0\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return tuple(occ),sign\ndef basis(Ms2):\n    out=[]\n    for c in itertools.combinations(range(10),3):\n        nup=sum(1 for i in c if i%2==0)\n        if nup-(3-nup)==Ms2: out.append(c)\n    return out\ndef Hmat(dets,H1,V):\n    idx={d:i for i,d in enumerate(dets)}; n=10\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,d in enumerate(dets):\n        for i in range(n):\n            for jj in range(n):\n                if H1[i,jj]==0: continue\n                nd,s=fermi(d,[('c',i),('a',jj)])\n                if nd is not None and nd in idx: M[idx[nd],j]+=H1[i,jj]*s\n        for a in range(n):\n         for b in range(n):\n          for c in range(n):\n           for dd in range(n):\n            v=V[a,b,c,dd]\n            if abs(v)<1e-12: continue\n            nd,s=fermi(d,[('c',a),('c',b),('a',dd),('a',c)])\n            if nd is not None and nd in idx: M[idx[nd],j]+=0.5*v*s\n    return M\ndef levels(Dq,B,C):\n    H1,V=build(Dq,B,C)\n    q=basis(3); d=basis(1)\n    Mq=Hmat(q,H1,V); Md=Hmat(d,H1,V)\n    eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))\n    ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))\n    return eq,ed\neq,ed=levels(1000,800,3200)\nprint(\"quartets\",np.round(eq-eq[0],1))\nprint(\"Ms1/2 all\",np.round(ed-eq[0],1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "quartets [     0.   10000.   10000.   10000.   17898.1  17898.1  17898.1 174959.1\n 174959.1 174959.1]\nMs1/2 all [    -0.   10000.   10000.   10000.   17898.1  17898.1  17898.1  60910.3\n  60910.3  62799.3  62799.3  62799.3  63028.6  65930.   65930.   65930.\n  90871.3  90871.3  90871.3  96993.8  96993.8 113353.3 113353.3 113353.3\n 119291.1 119291.1 119291.1 122176.1 122176.1 122176.1 123398.2 123398.2\n 123398.2 124156.8 124156.8 174959.1 174959.1 174959.1 280171.4 281581.8\n 281581.8 281581.8 283415.9 283415.9 283415.9 394567.6 394567.6 399125.8\n 399125.8 399125.8]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 4,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 31,
+     "method": "matrix",
+     "text": "n=10; V=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "H1=np.zeros((n,n),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 81,
+     "method": "eigen_solver",
+     "text": "eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 82,
+     "method": "eigen_solver",
+     "text": "ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Recheck Racah parameter conversion and test free-ion limit",
+   "command": "cat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N as sN\nfrom scipy.optimize import least_squares\nl=2; ms=[-2,-1,0,1,2]\nGC={}\ndef g(m1,k,m2,q):\n    key=(m1,k,m2,q)\n    if key not in GC: GC[key]=float(sN(gaunt(l,k,l,m1,q,m2)))\n    return GC[key]\ndef Cel(k,q,ma,mc):\n    if -ma+q+mc!=0: return 0.0\n    return np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2)*g(-ma,k,mc,q)\ndef Vel(a,b,c,d,F):\n    tot=0.0\n    for k in (2,4):\n        s=sum((-1)**(q%2)*Cel(k,q,a,c)*Cel(k,-q,b,d) for q in range(-k,k+1))\n        tot+=F[k]*s\n    return tot\ndef build(Dq,B,C):\n    F4=441*C/35.0; F2=49*B+7*C; F={2:F2,4:F4}\n    s2=np.sqrt(2)\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[ms.index(m)]=c\n        return v\n    xy=vec({2:1/(1j*s2),-2:-1/(1j*s2)}); yz=vec({1:1j/s2,-1:1j/s2}); zx=vec({1:-1/s2,-1:1/s2})\n    z2=vec({0:1}); x2y2=vec({2:1/s2,-2:1/s2})\n    Pt=sum(np.outer(v,v.conj()) for v in [xy,yz,zx]); Pe=sum(np.outer(v,v.conj()) for v in [z2,x2y2])\n    h=-4*Dq*Pt+6*Dq*Pe\n    n=10; V=np.zeros((n,n,n,n))\n    for A in range(n):\n        for Bb in range(n):\n            for Cc in range(n):\n                for D in range(n):\n                    if A%2!=Cc%2 or Bb%2!=D%2: continue\n                    V[A,Bb,Cc,D]=Vel(ms[A//2],ms[Bb//2],ms[Cc//2],ms[D//2],F)\n    H1=np.zeros((n,n),complex)\n    for i in range(n):\n        for j in range(n):\n            if i%2==j%2: H1[i,j]=h[i//2,j//2]\n    return H1,V\ndef fermi(det,ops):\n    occ=list(det); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None,0\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None,0\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return tuple(occ),sign\ndef basis(Ms2):\n    out=[]\n    for c in itertools.combinations(range(10),3):\n        nup=sum(1 for i in c if i%2==0)\n        if nup-(3-nup)==Ms2: out.append(c)\n    return out\ndef Hmat(dets,H1,V):\n    idx={d:i for i,d in enumerate(dets)}; n=10\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,d in enumerate(dets):\n        for i in range(n):\n            for jj in range(n):\n                if H1[i,jj]==0: continue\n                nd,s=fermi(d,[('c',i),('a',jj)])\n                if nd is not None and nd in idx: M[idx[nd],j]+=H1[i,jj]*s\n        for a in range(n):\n         for b in range(n):\n          for c in range(n):\n           for dd in range(n):\n            v=V[a,b,c,dd]\n            if abs(v)<1e-12: continue\n            nd,s=fermi(d,[('c',a),('c',b),('a',dd),('a',c)])\n            if nd is not None and nd in idx: M[idx[nd],j]+=0.5*v*s\n    return M\nMq0=basis(3); Md0=basis(1)\ndef levels(Dq,B,C):\n    H1,V=build(Dq,B,C)\n    Mq=Hmat(Mq0,H1,V); Md=Hmat(Md0,H1,V)\n    eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))\n    ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))\n    return eq,ed\n# test free ion (Dq=0): 4F ->4P should be 15B\neq,ed=levels(0,800,3200)\nprint(\"Dq=0 quartets\",np.round(eq-eq[0],1))\neq,ed=levels(1000,800,3200)\nprint(\"quartets\",np.round(eq-eq[0],1))\n# doublet levels: remove quartet eigenvalues\ndef doublets(Dq,B,C):\n    eq,ed=levels(Dq,B,C)\n    rest=list(ed)\n    for e in eq:\n        k=int(np.argmin([abs(x-e) for x in rest])); rest.pop(k)\n    return np.array(rest)\nprint(\"doublets\", np.round(doublets(1000,800,3200)-eq[0],1)[:8])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "d41768005300b22ab32c6be5d970e11e99b985b20f67a16d4a0a709d04776a34",
+     "lines": 96,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N as sN\nfrom scipy.optimize import least_squares\nl=2; ms=[-2,-1,0,1,2]\nGC={}\ndef g(m1,k,m2,q):\n    key=(m1,k,m2,q)\n    if key not in GC: GC[key]=float(sN(gaunt(l,k,l,m1,q,m2)))\n    return GC[key]\ndef Cel(k,q,ma,mc):\n    if -ma+q+mc!=0: return 0.0\n    return np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2)*g(-ma,k,mc,q)\ndef Vel(a,b,c,d,F):\n    tot=0.0\n    for k in (2,4):\n        s=sum((-1)**(q%2)*Cel(k,q,a,c)*Cel(k,-q,b,d) for q in range(-k,k+1))\n        tot+=F[k]*s\n    return tot\ndef build(Dq,B,C):\n    F4=441*C/35.0; F2=49*B+7*C; F={2:F2,4:F4}\n    s2=np.sqrt(2)\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[ms.index(m)]=c\n        return v\n    xy=vec({2:1/(1j*s2),-2:-1/(1j*s2)}); yz=vec({1:1j/s2,-1:1j/s2}); zx=vec({1:-1/s2,-1:1/s2})\n    z2=vec({0:1}); x2y2=vec({2:1/s2,-2:1/s2})\n    Pt=sum(np.outer(v,v.conj()) for v in [xy,yz,zx]); Pe=sum(np.outer(v,v.conj()) for v in [z2,x2y2])\n    h=-4*Dq*Pt+6*Dq*Pe\n    n=10; V=np.zeros((n,n,n,n))\n    for A in range(n):\n        for Bb in range(n):\n            for Cc in range(n):\n                for D in range(n):\n                    if A%2!=Cc%2 or Bb%2!=D%2: continue\n                    V[A,Bb,Cc,D]=Vel(ms[A//2],ms[Bb//2],ms[Cc//2],ms[D//2],F)\n    H1=np.zeros((n,n),complex)\n    for i in range(n):\n        for j in range(n):\n            if i%2==j%2: H1[i,j]=h[i//2,j//2]\n    return H1,V\ndef fermi(det,ops):\n    occ=list(det); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None,0\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None,0\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return tuple(occ),sign\ndef basis(Ms2):\n    out=[]\n    for c in itertools.combinations(range(10),3):\n        nup=sum(1 for i in c if i%2==0)\n        if nup-(3-nup)==Ms2: out.append(c)\n    return out\ndef Hmat(dets,H1,V):\n    idx={d:i for i,d in enumerate(dets)}; n=10\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,d in enumerate(dets):\n        for i in range(n):\n            for jj in range(n):\n                if H1[i,jj]==0: continue\n                nd,s=fermi(d,[('c',i),('a',jj)])\n                if nd is not None and nd in idx: M[idx[nd],j]+=H1[i,jj]*s\n        for a in range(n):\n         for b in range(n):\n          for c in range(n):\n           for dd in range(n):\n            v=V[a,b,c,dd]\n            if abs(v)<1e-12: continue\n            nd,s=fermi(d,[('c',a),('c',b),('a',dd),('a',c)])\n            if nd is not None and nd in idx: M[idx[nd],j]+=0.5*v*s\n    return M\nMq0=basis(3); Md0=basis(1)\ndef levels(Dq,B,C):\n    H1,V=build(Dq,B,C)\n    Mq=Hmat(Mq0,H1,V); Md=Hmat(Md0,H1,V)\n    eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))\n    ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))\n    return eq,ed\n# test free ion (Dq=0): 4F ->4P should be 15B\neq,ed=levels(0,800,3200)\nprint(\"Dq=0 quartets\",np.round(eq-eq[0],1))\neq,ed=levels(1000,800,3200)\nprint(\"quartets\",np.round(eq-eq[0],1))\n# doublet levels: remove quartet eigenvalues\ndef doublets(Dq,B,C):\n    eq,ed=levels(Dq,B,C)\n    rest=list(ed)\n    for e in eq:\n        k=int(np.argmin([abs(x-e) for x in rest])); rest.pop(k)\n    return np.array(rest)\nprint(\"doublets\", np.round(doublets(1000,800,3200)-eq[0],1)[:8])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq=0 quartets [    0.     0.     0.     0.     0.     0.     0. 12000. 12000. 12000.]\nquartets [    0. 10000. 10000. 10000. 16000. 16000. 16000. 26000. 26000. 26000.]\ndoublets [15060.9 15060.9 15828.7 15828.7 15828.7 21144.4 21144.4 21144.4]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 4,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 31,
+     "method": "matrix",
+     "text": "n=10; V=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "H1=np.zeros((n,n),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 81,
+     "method": "eigen_solver",
+     "text": "eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 82,
+     "method": "eigen_solver",
+     "text": "ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Fit Dq, B, C to the four observed bands",
+   "command": "cat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N as sN\nfrom scipy.optimize import least_squares\nl=2; ms=[-2,-1,0,1,2]\nGC={}\ndef g(m1,k,m2,q):\n    key=(m1,k,m2,q)\n    if key not in GC: GC[key]=float(sN(gaunt(l,k,l,m1,q,m2)))\n    return GC[key]\ndef Cel(k,q,ma,mc):\n    if -ma+q+mc!=0: return 0.0\n    return np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2)*g(-ma,k,mc,q)\ndef Vel(a,b,c,d,F):\n    tot=0.0\n    for k in (2,4):\n        s=sum((-1)**(q%2)*Cel(k,q,a,c)*Cel(k,-q,b,d) for q in range(-k,k+1))\n        tot+=F[k]*s\n    return tot\ndef build(Dq,B,C):\n    F4=441*C/35.0; F2=49*B+7*C; F={2:F2,4:F4}\n    s2=np.sqrt(2)\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[ms.index(m)]=c\n        return v\n    xy=vec({2:1/(1j*s2),-2:-1/(1j*s2)}); yz=vec({1:1j/s2,-1:1j/s2}); zx=vec({1:-1/s2,-1:1/s2})\n    z2=vec({0:1}); x2y2=vec({2:1/s2,-2:1/s2})\n    Pt=sum(np.outer(v,v.conj()) for v in [xy,yz,zx]); Pe=sum(np.outer(v,v.conj()) for v in [z2,x2y2])\n    h=-4*Dq*Pt+6*Dq*Pe\n    n=10; V=np.zeros((n,n,n,n))\n    for A in range(n):\n        for Bb in range(n):\n            for Cc in range(n):\n                for D in range(n):\n                    if A%2!=Cc%2 or Bb%2!=D%2: continue\n                    V[A,Bb,Cc,D]=Vel(ms[A//2],ms[Bb//2],ms[Cc//2],ms[D//2],F)\n    H1=np.zeros((n,n),complex)\n    for i in range(n):\n        for j in range(n):\n            if i%2==j%2: H1[i,j]=h[i//2,j//2]\n    return H1,V\ndef fermi(det,ops):\n    occ=list(det); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None,0\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None,0\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return tuple(occ),sign\ndef basis(Ms2):\n    return [c for c in itertools.combinations(range(10),3) if sum(1 for i in c if i%2==0)-(3-sum(1 for i in c if i%2==0))==Ms2]\ndef Hmat(dets,H1,V):\n    idx={d:i for i,d in enumerate(dets)}; n=10\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,d in enumerate(dets):\n        for i in range(n):\n            for jj in range(n):\n                if H1[i,jj]==0: continue\n                nd,s=fermi(d,[('c',i),('a',jj)])\n                if nd is not None and nd in idx: M[idx[nd],j]+=H1[i,jj]*s\n        for a in range(n):\n         for b in range(n):\n          for c in range(n):\n           for dd in range(n):\n            v=V[a,b,c,dd]\n            if abs(v)<1e-12: continue\n            nd,s=fermi(d,[('c',a),('c',b),('a',dd),('a',c)])\n            if nd is not None and nd in idx: M[idx[nd],j]+=0.5*v*s\n    return M\nMq0=basis(3); Md0=basis(1)\ndef spectrum(Dq,B,C):\n    H1,V=build(Dq,B,C)\n    Mq=Hmat(Mq0,H1,V); Md=Hmat(Md0,H1,V)\n    eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))\n    ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))\n    rest=list(ed)\n    for e in eq:\n        k=int(np.argmin([abs(x-e) for x in rest])); rest.pop(k)\n    rest=np.array(rest)\n    g0=eq[0]\n    return eq-g0, rest-g0\n# model: 4T2=10Dq; 4T1F, 4T1P; lowest doublet\ndef model(p):\n    Dq,B,C=p\n    q,d=spectrum(Dq,B,C)\n    t2=q[1]; t1f=q[4]; t1p=q[7]; e2=d[0]\n    return np.array([t2,t1f,t1p,e2])\nobs=np.array([14490,20430,32030,12710.])\nres=least_squares(lambda p: model(p)-obs, x0=[1450,700,3500], xtol=1e-12, ftol=1e-12)\nprint(\"fit Dq,B,C:\",np.round(res.x,1))\nprint(\"model:\",np.round(model(res.x),1),\"obs:\",obs)\nprint(\"full quartet/doublet at fit:\")\nq,d=spectrum(*res.x)\nprint(np.round(q,0)); print(np.round(d[:9],0))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "852418a03ddc9348077fe249052780ed13093b9f5a063871f17842b9092fe109",
+     "lines": 97,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N as sN\nfrom scipy.optimize import least_squares\nl=2; ms=[-2,-1,0,1,2]\nGC={}\ndef g(m1,k,m2,q):\n    key=(m1,k,m2,q)\n    if key not in GC: GC[key]=float(sN(gaunt(l,k,l,m1,q,m2)))\n    return GC[key]\ndef Cel(k,q,ma,mc):\n    if -ma+q+mc!=0: return 0.0\n    return np.sqrt(4*np.pi/(2*k+1))*(-1)**(ma%2)*g(-ma,k,mc,q)\ndef Vel(a,b,c,d,F):\n    tot=0.0\n    for k in (2,4):\n        s=sum((-1)**(q%2)*Cel(k,q,a,c)*Cel(k,-q,b,d) for q in range(-k,k+1))\n        tot+=F[k]*s\n    return tot\ndef build(Dq,B,C):\n    F4=441*C/35.0; F2=49*B+7*C; F={2:F2,4:F4}\n    s2=np.sqrt(2)\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[ms.index(m)]=c\n        return v\n    xy=vec({2:1/(1j*s2),-2:-1/(1j*s2)}); yz=vec({1:1j/s2,-1:1j/s2}); zx=vec({1:-1/s2,-1:1/s2})\n    z2=vec({0:1}); x2y2=vec({2:1/s2,-2:1/s2})\n    Pt=sum(np.outer(v,v.conj()) for v in [xy,yz,zx]); Pe=sum(np.outer(v,v.conj()) for v in [z2,x2y2])\n    h=-4*Dq*Pt+6*Dq*Pe\n    n=10; V=np.zeros((n,n,n,n))\n    for A in range(n):\n        for Bb in range(n):\n            for Cc in range(n):\n                for D in range(n):\n                    if A%2!=Cc%2 or Bb%2!=D%2: continue\n                    V[A,Bb,Cc,D]=Vel(ms[A//2],ms[Bb//2],ms[Cc//2],ms[D//2],F)\n    H1=np.zeros((n,n),complex)\n    for i in range(n):\n        for j in range(n):\n            if i%2==j%2: H1[i,j]=h[i//2,j//2]\n    return H1,V\ndef fermi(det,ops):\n    occ=list(det); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None,0\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None,0\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return tuple(occ),sign\ndef basis(Ms2):\n    return [c for c in itertools.combinations(range(10),3) if sum(1 for i in c if i%2==0)-(3-sum(1 for i in c if i%2==0))==Ms2]\ndef Hmat(dets,H1,V):\n    idx={d:i for i,d in enumerate(dets)}; n=10\n    M=np.zeros((len(dets),len(dets)),complex)\n    for j,d in enumerate(dets):\n        for i in range(n):\n            for jj in range(n):\n                if H1[i,jj]==0: continue\n                nd,s=fermi(d,[('c',i),('a',jj)])\n                if nd is not None and nd in idx: M[idx[nd],j]+=H1[i,jj]*s\n        for a in range(n):\n         for b in range(n):\n          for c in range(n):\n           for dd in range(n):\n            v=V[a,b,c,dd]\n            if abs(v)<1e-12: continue\n            nd,s=fermi(d,[('c',a),('c',b),('a',dd),('a',c)])\n            if nd is not None and nd in idx: M[idx[nd],j]+=0.5*v*s\n    return M\nMq0=basis(3); Md0=basis(1)\ndef spectrum(Dq,B,C):\n    H1,V=build(Dq,B,C)\n    Mq=Hmat(Mq0,H1,V); Md=Hmat(Md0,H1,V)\n    eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))\n    ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))\n    rest=list(ed)\n    for e in eq:\n        k=int(np.argmin([abs(x-e) for x in rest])); rest.pop(k)\n    rest=np.array(rest)\n    g0=eq[0]\n    return eq-g0, rest-g0\n# model: 4T2=10Dq; 4T1F, 4T1P; lowest doublet\ndef model(p):\n    Dq,B,C=p\n    q,d=spectrum(Dq,B,C)\n    t2=q[1]; t1f=q[4]; t1p=q[7]; e2=d[0]\n    return np.array([t2,t1f,t1p,e2])\nobs=np.array([14490,20430,32030,12710.])\nres=least_squares(lambda p: model(p)-obs, x0=[1450,700,3500], xtol=1e-12, ftol=1e-12)\nprint(\"fit Dq,B,C:\",np.round(res.x,1))\nprint(\"model:\",np.round(model(res.x),1),\"obs:\",obs)\nprint(\"full quartet/doublet at fit:\")\nq,d=spectrum(*res.x)\nprint(np.round(q,0)); print(np.round(d[:9],0))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "fit Dq,B,C: [1449.1  599.1 2766.1]\nmodel: [14491.2 20431.7 32028.4 12710. ] obs: [14490. 20430. 32030. 12710.]\nfull quartet/doublet at fit:\n[    0. 14491. 14491. 14491. 20432. 20432. 20432. 32028. 32028. 32028.]\n[12710. 12710. 13239. 13239. 13239. 19048. 19048. 19048. 25186.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 4,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 31,
+     "method": "matrix",
+     "text": "n=10; V=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "H1=np.zeros((n,n),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 77,
+     "method": "eigen_solver",
+     "text": "eq=np.sort(np.linalg.eigvalsh((Mq+Mq.conj().T)/2))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 78,
+     "method": "eigen_solver",
+     "text": "ed=np.sort(np.linalg.eigvalsh((Md+Md.conj().T)/2))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 92,
+     "method": "least_squares",
+     "text": "res=least_squares(lambda p: model(p)-obs, x0=[1450,700,3500], xtol=1e-12, ftol=1e-12)"
+    }
+   ],
+   "produces": [
+    "B",
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1449.0,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "B",
+   "value": 599.0,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  },
+  {
+   "path": "C",
+   "value": 2766.0,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  }
+ ],
+ "summary": {
+  "n_steps": 7,
+  "n_scripts": 5,
+  "n_failed_steps": 2,
+  "n_values": 3,
+  "n_linked": 2,
+  "n_weak": 0,
+  "source_steps": [
+   6
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

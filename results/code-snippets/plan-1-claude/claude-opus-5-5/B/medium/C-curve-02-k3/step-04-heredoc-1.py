@@ -1,0 +1,5 @@
+s=open('d3.py').read()
+s=s.replace("""                    i=l.index(q); sgn*=(-1)**i; l.pop(i)
+                    i=l.index(p); sgn*=(-1)**i; l.pop(i)""","""                    i=l.index(p); sgn*=(-1)**i; l.pop(i)
+                    i=l.index(q); sgn*=(-1)**i; l.pop(i)""")
+open('d3.py','w').write(s)

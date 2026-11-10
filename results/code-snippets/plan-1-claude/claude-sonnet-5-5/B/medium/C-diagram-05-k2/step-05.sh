@@ -1,0 +1,1 @@
+sed -i 's/A\[k\]\[m4+2,m2+2\]/A[k][m2+2,m4+2]/' t.py; python3 c.py | head -8

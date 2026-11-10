@@ -1,0 +1,1 @@
+python3 -c "import numpy,sympy,matplotlib;print('ok')"; pip install numpy sympy matplotlib -q 2>&1|tail -1

@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; ls -ld ~ /tmp 2>&1; df -h . | tail -1

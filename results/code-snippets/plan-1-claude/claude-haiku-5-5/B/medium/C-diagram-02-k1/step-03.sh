@@ -1,0 +1,1 @@
+mkdir -p ~/ts && echo ok; echo $HOME; df -h /tmp | tail -1; touch ./test_w && echo cwd_writable && rm test_w; pwd

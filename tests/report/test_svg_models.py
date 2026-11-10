@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import math
 import re
 import xml.etree.ElementTree as ET
 
@@ -349,3 +350,98 @@ def test_interval_ends_and_paired_points_round_a_half_up() -> None:
     assert any("95 % CI 3–4 %" in (t.text or "") for t in root.iter(f"{NS}title"))
     titles = [t.text or "" for t in _root(models.model_paired(rows)).iter(f"{NS}title")]
     assert any("+3 pp, 95 % CI −3 to +5 pp" in t for t in titles)
+
+
+# ---------------------------------------------------------------- bubbles
+
+
+def _point(model: str, cond: str, tokens: float | None, k: int, n: int) -> dict:
+    return {"model": model, "label": model.split("-")[-1], "cond": cond, "tokens": tokens, "share": k / n, "k": k,
+            "n": n}
+
+
+POINTS = [_point("m-a", "A", 800, 10, 40), _point("m-a", "B", 9000, 20, 40), _point("m-a", "C", 3000, 30, 40),
+          _point("m-b", "A", 1500, 5, 10), _point("m-b", "B", None, 5, 10), _point("m-b", "C", 40000, 9, 10)]
+
+
+def _bubbles(root: ET.Element) -> list[ET.Element]:
+    return [e for e in root.iter(f"{NS}circle") if "bubble" in _cls(e)]
+
+
+def test_a_bubble_stands_at_its_tokens_and_share_and_has_the_colour_of_its_condition():
+    root = _root(models.model_bubbles(POINTS))
+    bubbles = _bubbles(root)
+    assert len(bubbles) == 5  # the point without tokens has no bubble
+    by_tip = {"".join(b.itertext()).replace("\u00a0", " ").replace("\u2009", " "): b for b in bubbles}
+    half = by_tip["m-a, B: median 9 000 output tokens, 50 % correct, 20/40 runs"]
+    quarter = by_tip["m-a, A: median 800 output tokens, 25 % correct, 10/40 runs"]
+    high = by_tip["m-b, C: median 40 000 output tokens, 90 % correct, 9/10 runs"]
+    assert {"c-B", "k-B"} <= set(_cls(half))
+    assert _num(high, "cy") < _num(half, "cy") < _num(quarter, "cy")
+    assert _num(quarter, "cx") < _num(half, "cx") < _num(high, "cx")
+    # log axis: the distances go with the ratios of the tokens
+    along = (_num(half, "cx") - _num(quarter, "cx")) / (_num(high, "cx") - _num(quarter, "cx"))
+    assert along == pytest.approx(math.log(9000 / 800) / math.log(40000 / 800), abs=0.002)
+
+
+def test_bubble_area_is_proportional_to_the_runs():
+    bubbles = _bubbles(_root(models.model_bubbles(POINTS)))
+    big = max(_num(b, "r") for b in bubbles)
+    small = min(_num(b, "r") for b in bubbles)
+    assert (big / small) ** 2 == pytest.approx(4, rel=0.01)  # 40 runs against 10
+
+
+def test_the_bubbles_name_each_model_once_and_say_what_the_area_is():
+    svg = models.model_bubbles(POINTS)
+    labels = [s for s, _, _ in _texts(_root(svg))]
+    assert labels.count("a") == 1 and labels.count("b") == 1
+    assert "area = runs, largest 40" in labels
+    assert "median output tokens per run, log scale" in labels
+
+
+def test_bubbles_without_a_point_draw_nothing():
+    assert models.model_bubbles([]) == ""
+    assert models.model_bubbles([_point("m", "A", None, 1, 2)]) == ""
+
+
+# ---------------------------------------------------------------- heat map
+
+
+def _heat_row(model: str, conds: list[str], k: dict, n_by: dict | None = None) -> dict:
+    return {"model": model, "conds": conds,
+            "classes": [{"class": c, "k": v, "n": 4, "n_by": (n_by or {}).get(c, {})} for c, v in k.items()]}
+
+
+HEAT = [_heat_row("m-a", ["A", "C"], {"x": {"A": 1, "C": 4}, "y": {"A": 0, "C": 2}}, {"y": {"A": 0}}),
+        _heat_row("m-b", ["A", "B", "C"], {"x": {"A": 2, "B": 3, "C": 4}})]
+
+
+def _ramp(p: float) -> tuple[str, str]:
+    return f"#{int(p * 255):02x}0000", "#ffffff"
+
+
+def test_the_heat_map_has_one_panel_per_condition_and_one_cell_per_model_and_class():
+    svg = models.class_heat(HEAT, _ramp)
+    labels = [s for s, _, _ in _texts(_root(svg))]
+    assert [s for s in labels if s.startswith("Condition")] == ["Condition A", "Condition B", "Condition C"]
+    cells = [e for e in _root(svg).iter(f"{NS}rect")]
+    assert len(cells) == 3 * 2 * 2
+    assert "4/4" in labels and "1/4" in labels
+
+
+def test_a_heat_cell_is_shaded_by_its_share_and_a_cell_without_a_run_says_so():
+    svg = models.class_heat(HEAT, _ramp)
+    assert 'style="fill:#ff0000"' in svg  # 4 of 4
+    assert 'style="fill:#3f0000"' in svg  # 1 of 4
+    labels = [s for s, _, _ in _texts(_root(svg))]
+    # m-a: y under A (n_by 0), x and y under B; m-b: y under A, B and C
+    assert labels.count("no run") == 3 + 3
+    assert "0/" not in " ".join(s for s in labels if s != "no run")
+
+
+def test_the_heat_map_tip_names_model_condition_class_and_counts():
+    assert "m-b, B, x: 3 of 4 tasks (75\u00a0%)" in models.class_heat(HEAT, _ramp)
+
+
+def test_a_heat_map_without_classes_is_empty():
+    assert models.class_heat([], _ramp) == ""

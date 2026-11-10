@@ -1,0 +1,1 @@
+cd $TMPDIR && sed -i 's/h=sum(-6\*Dq/h=sum(6*Dq/; s/+sum(4\*Dq/+sum(-4*Dq/' a.py && python3 a.py

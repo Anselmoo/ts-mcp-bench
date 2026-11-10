@@ -1,0 +1,1 @@
+cat > /tmp/tsbench-run-kvx7fncf/d4.py 2>/dev/null || echo "cannot write here"; python3 -c "import sys; print(sys.version)"; touch /tmp/tsbench-run-kvx7fncf/t 2>&1 && echo writable

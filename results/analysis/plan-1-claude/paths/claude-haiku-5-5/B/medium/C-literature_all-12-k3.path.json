@@ -1,0 +1,729 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-literature_all-12-k3.jsonl",
+ "transcript_sha256": "ff9c3aebf104852bb679a0798e393ada35f394fb054bfd715e55d95239be25c3",
+ "answer": {
+  "Dq": 673.0,
+  "B": 795.0,
+  "C": 3580.0,
+  "out_of_scope": false,
+  "reason": "Full d7 ligand-field diagonalization fit to four bands; quartet bands fit only to about 300 cm-1, so values are approximate."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy and scipy availability",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy\" ; python3 -c \"import numpy, scipy; print(numpy.__version__, scipy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "2.5.4 1.18.1",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d7 determinant Hamiltonian and test level counts",
+   "command": "mkdir -p /w && cat > /w/ts.py << 'EOF'\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y, eval_legendre\nfrom scipy.optimize import least_squares\n\n# quadrature on sphere\nx, wx = np.polynomial.legendre.leggauss(24)\nnphi = 48\nphis = np.arange(nphi)*2*np.pi/nphi\nth = np.arccos(x)\nTH, PH = np.meshgrid(th, phis, indexing='ij')\nW = (np.outer(wx, np.ones(nphi))*2*np.pi/nphi).ravel()\nTH = TH.ravel(); PH = PH.ravel()\nn = np.stack([np.sin(TH)*np.cos(PH), np.sin(TH)*np.sin(PH), np.cos(TH)],1)\nms = [-2,-1,0,1,2]\nY = np.array([sph_harm_y(2, m, TH, PH) for m in ms])  # [m, p]\nG = np.clip(n@n.T, -1, 1)\nA = {}\nfor k in (0,2,4):\n    P = eval_legendre(k, G)\n    M1 = np.conj(Y)[:,None,:]*Y[None,:,:]*W[None,None,:]   # [m1,m3,p]\n    M2 = np.conj(Y)[:,None,:]*Y[None,:,:]*W[None,None,:]   # [m2,m4,q]\n    A[k] = np.einsum('abp,pq,cdq->abcd', M1, P, M2)\n# real check: A0 should be delta\nassert np.allclose(A[0], np.einsum('ab,cd->abcd', np.eye(5), np.eye(5)), atol=1e-8)\n\n# spin-orbitals: index = 2*mi + s  (s=0 up, 1 down)\nnorb = 10\ndef sidx(mi, s): return 2*mi+s\n# Coulomb two-electron matrix V[p,q,r,s] = <pq|V|rs> without F0\ndef Vmat(F2, F4):\n    V = np.zeros((norb,)*4, dtype=complex)\n    for a,b,c,d in itertools.product(range(5), repeat=4):\n        ang = F2*A[2][a,c,b,d] + F4*A[4][a,c,b,d]\n        for sa in (0,1):\n            for sb in (0,1):\n                V[sidx(a,sa), sidx(b,sb), sidx(c,sa), sidx(d,sb)] = ang\n    return V\n# one-electron ligand field in complex basis, Dq units\ndef hmat(Dq):\n    Peg = np.zeros((5,5),complex); Pt = np.zeros((5,5),complex)\n    Peg[2,2]=1\n    e2 = np.zeros(5,complex); e2[0]=1/np.sqrt(2); e2[4]=1/np.sqrt(2)\n    Peg += np.outer(e2,e2.conj())\n    Pt[1,1]=1; Pt[3,3]=1\n    t = np.zeros(5,complex); t[0]=1/np.sqrt(2); t[4]=-1/np.sqrt(2)\n    Pt += np.outer(t,t.conj())\n    h5 = 6*Dq*Peg - 4*Dq*Pt\n    h = np.zeros((norb,norb),complex)\n    for a in range(5):\n        for b in range(5):\n            for s in (0,1):\n                h[sidx(a,s), sidx(b,s)] = h5[a,b]\n    return h\n\n# determinant basis, 7 electrons\ndets = list(itertools.combinations(range(norb), 7))\nindex = {d:i for i,d in enumerate(dets)}\nN = len(dets)\n\ndef apply_cdag_c(p, q, occ):\n    \"\"\"apply c+_p c_q to determinant occ (sorted tuple); return (sign, newocc) or None\"\"\"\n    occ = list(occ)\n    if q not in occ: return None\n    sign = 1\n    pos = occ.index(q)\n    sign *= (-1)**pos\n    occ.pop(pos)\n    if p in occ: return None\n    # insert p\n    pos2 = sum(1 for x in occ if x < p)\n    sign *= (-1)**pos2\n    occ.insert(pos2, p)\n    return sign, tuple(occ)\n\ndef build_H(Dq, B, C):\n    F4 = 441*C/35; F2 = (441*B+5*F4)/9\n    h = hmat(Dq); V = Vmat(F2, F4)\n    H = np.zeros((N,N), complex)\n    for j,d in enumerate(dets):\n        for q in d:\n            for p in range(norb):\n                if abs(h[p,q])<1e-14: continue\n                r = apply_cdag_c(p,q,d)\n                if r is None: continue\n                s,nd = r\n                H[index[nd], j] += s*h[p,q]\n        # two-body: 1/2 sum V[p,q,r,s] c+_p c+_q c_s c_r\n        for r_ in d:\n            for s_ in d:\n                if r_==s_: continue\n                # c_s c_r on d\n                occ1 = list(d)\n                # annihilate r then s\n                res = apply_cdag_c_pure_annih(r_, occ1)\n                if res is None: continue\n                sg1, o1 = res\n                res2 = apply_cdag_c_pure_annih(s_, list(o1))\n                if res2 is None: continue\n                sg2, o2 = res2\n                for p in range(norb):\n                    for q in range(norb):\n                        if p==q or p in o2 or q in o2: continue\n                        v = V[p,q,r_,s_]\n                        if abs(v)<1e-14: continue\n                        # create q then p: c+_p c+_q |o2>\n                        o3 = list(o2)\n                        sg = 1\n                        if q in o3:\n                            continue\n                        pos = sum(1 for x in o3 if x<q); sg*=(-1)**pos\n                        o3.insert(pos,q)\n                        if p in o3: continue\n                        pos = sum(1 for x in o3 if x<p); sg*=(-1)**pos\n                        o3.insert(pos,p)\n                        H[index[tuple(o3)], j] += 0.5*sg*sg2*sg1*v\n    return H\n\ndef apply_cdag_c_pure_annih(q, occ):\n    if q not in occ: return None\n    pos = occ.index(q)\n    sign = (-1)**pos\n    occ2 = occ[:pos]+occ[pos+1:]\n    return sign, tuple(occ2)\n\n# S^2 operator via Sz and S+S-\ndef build_S2():\n    # Sz\n    Sz = np.zeros((N,N))\n    for j,d in enumerate(dets):\n        Sz[j,j] = 0.5*sum(1 if (x%2==0) else -1 for x in d)\n    # S+ = sum_m c+_{m up} c_{m down}\n    Sp = np.zeros((N,N))\n    for j,d in enumerate(dets):\n        for mi in range(5):\n            r = apply_cdag_c_pure_annih(sidx(mi,1), list(d))  # annihilate down\n            if r is None: continue\n            sg, o = r\n            if sidx(mi,0) in o: continue\n            pos = sum(1 for x in o if x<sidx(mi,0))\n            sg2 = (-1)**pos\n            o2 = list(o); o2.insert(pos, sidx(mi,0))\n            Sp[index[tuple(o2)], j] += sg*sg2\n    Sm = Sp.T\n    return Sz@Sz + 0.5*(Sp@Sm+Sm@Sp)\n\nS2 = build_S2()\n\ndef levels(Dq, B, C):\n    H = build_H(Dq,B,C).real\n    H = 0.5*(H+H.T)\n    w, v = np.linalg.eigh(H)\n    s2 = np.einsum('ij,ik,kj->j', v, S2, v)\n    out = {}\n    quart = sorted([wi for wi,s in zip(w,s2) if abs(s-15/4)<1e-6])\n    doub = sorted([wi for wi,s in zip(w,s2) if abs(s-3/4)<1e-6])\n    return quart, doub\nEOF\ncd /w && python3 -c \"\nfrom ts import *\nq,d = levels(1000,1000,4000)\nprint(len(q),len(d))\nprint(np.round(np.array(q)-q[0],1))\n\"",
+   "scripts": [
+    {
+     "name": "ts.py",
+     "sha256": "2c9a70d306f51c840c4bd1b051310b94375b3c3f3b5f9a7f330fb167c98d6426",
+     "lines": 156,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y, eval_legendre\nfrom scipy.optimize import least_squares\n\n# quadrature on sphere\nx, wx = np.polynomial.legendre.leggauss(24)\nnphi = 48\nphis = np.arange(nphi)*2*np.pi/nphi\nth = np.arccos(x)\nTH, PH = np.meshgrid(th, phis, indexing='ij')\nW = (np.outer(wx, np.ones(nphi))*2*np.pi/nphi).ravel()\nTH = TH.ravel(); PH = PH.ravel()\nn = np.stack([np.sin(TH)*np.cos(PH), np.sin(TH)*np.sin(PH), np.cos(TH)],1)\nms = [-2,-1,0,1,2]\nY = np.array([sph_harm_y(2, m, TH, PH) for m in ms])  # [m, p]\nG = np.clip(n@n.T, -1, 1)\nA = {}\nfor k in (0,2,4):\n    P = eval_legendre(k, G)\n    M1 = np.conj(Y)[:,None,:]*Y[None,:,:]*W[None,None,:]   # [m1,m3,p]\n    M2 = np.conj(Y)[:,None,:]*Y[None,:,:]*W[None,None,:]   # [m2,m4,q]\n    A[k] = np.einsum('abp,pq,cdq->abcd', M1, P, M2)\n# real check: A0 should be delta\nassert np.allclose(A[0], np.einsum('ab,cd->abcd', np.eye(5), np.eye(5)), atol=1e-8)\n\n# spin-orbitals: index = 2*mi + s  (s=0 up, 1 down)\nnorb = 10\ndef sidx(mi, s): return 2*mi+s\n# Coulomb two-electron matrix V[p,q,r,s] = <pq|V|rs> without F0\ndef Vmat(F2, F4):\n    V = np.zeros((norb,)*4, dtype=complex)\n    for a,b,c,d in itertools.product(range(5), repeat=4):\n        ang = F2*A[2][a,c,b,d] + F4*A[4][a,c,b,d]\n        for sa in (0,1):\n            for sb in (0,1):\n                V[sidx(a,sa), sidx(b,sb), sidx(c,sa), sidx(d,sb)] = ang\n    return V\n# one-electron ligand field in complex basis, Dq units\ndef hmat(Dq):\n    Peg = np.zeros((5,5),complex); Pt = np.zeros((5,5),complex)\n    Peg[2,2]=1\n    e2 = np.zeros(5,complex); e2[0]=1/np.sqrt(2); e2[4]=1/np.sqrt(2)\n    Peg += np.outer(e2,e2.conj())\n    Pt[1,1]=1; Pt[3,3]=1\n    t = np.zeros(5,complex); t[0]=1/np.sqrt(2); t[4]=-1/np.sqrt(2)\n    Pt += np.outer(t,t.conj())\n    h5 = 6*Dq*Peg - 4*Dq*Pt\n    h = np.zeros((norb,norb),complex)\n    for a in range(5):\n        for b in range(5):\n            for s in (0,1):\n                h[sidx(a,s), sidx(b,s)] = h5[a,b]\n    return h\n\n# determinant basis, 7 electrons\ndets = list(itertools.combinations(range(norb), 7))\nindex = {d:i for i,d in enumerate(dets)}\nN = len(dets)\n\ndef apply_cdag_c(p, q, occ):\n    \"\"\"apply c+_p c_q to determinant occ (sorted tuple); return (sign, newocc) or None\"\"\"\n    occ = list(occ)\n    if q not in occ: return None\n    sign = 1\n    pos = occ.index(q)\n    sign *= (-1)**pos\n    occ.pop(pos)\n    if p in occ: return None\n    # insert p\n    pos2 = sum(1 for x in occ if x < p)\n    sign *= (-1)**pos2\n    occ.insert(pos2, p)\n    return sign, tuple(occ)\n\ndef build_H(Dq, B, C):\n    F4 = 441*C/35; F2 = (441*B+5*F4)/9\n    h = hmat(Dq); V = Vmat(F2, F4)\n    H = np.zeros((N,N), complex)\n    for j,d in enumerate(dets):\n        for q in d:\n            for p in range(norb):\n                if abs(h[p,q])<1e-14: continue\n                r = apply_cdag_c(p,q,d)\n                if r is None: continue\n                s,nd = r\n                H[index[nd], j] += s*h[p,q]\n        # two-body: 1/2 sum V[p,q,r,s] c+_p c+_q c_s c_r\n        for r_ in d:\n            for s_ in d:\n                if r_==s_: continue\n                # c_s c_r on d\n                occ1 = list(d)\n                # annihilate r then s\n                res = apply_cdag_c_pure_annih(r_, occ1)\n                if res is None: continue\n                sg1, o1 = res\n                res2 = apply_cdag_c_pure_annih(s_, list(o1))\n                if res2 is None: continue\n                sg2, o2 = res2\n                for p in range(norb):\n                    for q in range(norb):\n                        if p==q or p in o2 or q in o2: continue\n                        v = V[p,q,r_,s_]\n                        if abs(v)<1e-14: continue\n                        # create q then p: c+_p c+_q |o2>\n                        o3 = list(o2)\n                        sg = 1\n                        if q in o3:\n                            continue\n                        pos = sum(1 for x in o3 if x<q); sg*=(-1)**pos\n                        o3.insert(pos,q)\n                        if p in o3: continue\n                        pos = sum(1 for x in o3 if x<p); sg*=(-1)**pos\n                        o3.insert(pos,p)\n                        H[index[tuple(o3)], j] += 0.5*sg*sg2*sg1*v\n    return H\n\ndef apply_cdag_c_pure_annih(q, occ):\n    if q not in occ: return None\n    pos = occ.index(q)\n    sign = (-1)**pos\n    occ2 = occ[:pos]+occ[pos+1:]\n    return sign, tuple(occ2)\n\n# S^2 operator via Sz and S+S-\ndef build_S2():\n    # Sz\n    Sz = np.zeros((N,N))\n    for j,d in enumerate(dets):\n        Sz[j,j] = 0.5*sum(1 if (x%2==0) else -1 for x in d)\n    # S+ = sum_m c+_{m up} c_{m down}\n    Sp = np.zeros((N,N))\n    for j,d in enumerate(dets):\n        for mi in range(5):\n            r = apply_cdag_c_pure_annih(sidx(mi,1), list(d))  # annihilate down\n            if r is None: continue\n            sg, o = r\n            if sidx(mi,0) in o: continue\n            pos = sum(1 for x in o if x<sidx(mi,0))\n            sg2 = (-1)**pos\n            o2 = list(o); o2.insert(pos, sidx(mi,0))\n            Sp[index[tuple(o2)], j] += sg*sg2\n    Sm = Sp.T\n    return Sz@Sz + 0.5*(Sp@Sm+Sm@Sp)\n\nS2 = build_S2()\n\ndef levels(Dq, B, C):\n    H = build_H(Dq,B,C).real\n    H = 0.5*(H+H.T)\n    w, v = np.linalg.eigh(H)\n    s2 = np.einsum('ij,ik,kj->j', v, S2, v)\n    out = {}\n    quart = sorted([wi for wi,s in zip(w,s2) if abs(s-15/4)<1e-6])\n    doub = sorted([wi for wi,s in zip(w,s2) if abs(s-3/4)<1e-6])\n    return quart, doub\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 322: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "ts.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "ts.py",
+     "line": 31,
+     "method": "matrix",
+     "text": "V = np.zeros((norb,)*4, dtype=complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 40,
+     "method": "matrix",
+     "text": "Peg = np.zeros((5,5),complex); Pt = np.zeros((5,5),complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 41,
+     "method": "matrix",
+     "text": "Peg[2,2]=1"
+    },
+    {
+     "script": "ts.py",
+     "line": 44,
+     "method": "matrix",
+     "text": "Pt[1,1]=1; Pt[3,3]=1"
+    },
+    {
+     "script": "ts.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "h = np.zeros((norb,norb),complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "H = np.zeros((N,N), complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 128,
+     "method": "matrix",
+     "text": "Sz = np.zeros((N,N))"
+    },
+    {
+     "script": "ts.py",
+     "line": 130,
+     "method": "matrix",
+     "text": "Sz[j,j] = 0.5*sum(1 if (x%2==0) else -1 for x in d)"
+    },
+    {
+     "script": "ts.py",
+     "line": 132,
+     "method": "matrix",
+     "text": "Sp = np.zeros((N,N))"
+    },
+    {
+     "script": "ts.py",
+     "line": 151,
+     "method": "eigen_solver",
+     "text": "w, v = np.linalg.eigh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d7 Hamiltonian in a temp dir and test",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > ts.py << 'EOF'\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y, eval_legendre\n\nx, wx = np.polynomial.legendre.leggauss(24)\nnphi = 48\nphis = np.arange(nphi)*2*np.pi/nphi\nth = np.arccos(x)\nTH, PH = np.meshgrid(th, phis, indexing='ij')\nW = (np.outer(wx, np.ones(nphi))*2*np.pi/nphi).ravel()\nTH = TH.ravel(); PH = PH.ravel()\nn = np.stack([np.sin(TH)*np.cos(PH), np.sin(TH)*np.sin(PH), np.cos(TH)],1)\nms = [-2,-1,0,1,2]\nY = np.array([sph_harm_y(2, m, TH, PH) for m in ms])\nG = np.clip(n@n.T, -1, 1)\nA = {}\nfor k in (0,2,4):\n    P = eval_legendre(k, G)\n    M1 = np.conj(Y)[:,None,:]*Y[None,:,:]*W[None,None,:]\n    A[k] = np.einsum('abp,pq,cdq->abcd', M1, P, M1)\nassert np.allclose(A[0], np.einsum('ab,cd->abcd', np.eye(5), np.eye(5)), atol=1e-8)\n\nnorb = 10\ndef sidx(mi, s): return 2*mi+s\ndef Vmat(F2, F4):\n    V = np.zeros((norb,)*4, dtype=complex)\n    for a,b,c,d in itertools.product(range(5), repeat=4):\n        ang = F2*A[2][a,c,b,d] + F4*A[4][a,c,b,d]\n        for sa in (0,1):\n            for sb in (0,1):\n                V[sidx(a,sa), sidx(b,sb), sidx(c,sa), sidx(d,sb)] = ang\n    return V\ndef hmat(Dq):\n    Peg = np.zeros((5,5),complex); Pt = np.zeros((5,5),complex)\n    Peg[2,2]=1\n    e2 = np.zeros(5,complex); e2[0]=1/np.sqrt(2); e2[4]=1/np.sqrt(2)\n    Peg += np.outer(e2,e2.conj())\n    Pt[1,1]=1; Pt[3,3]=1\n    t = np.zeros(5,complex); t[0]=1/np.sqrt(2); t[4]=-1/np.sqrt(2)\n    Pt += np.outer(t,t.conj())\n    h5 = 6*Dq*Peg - 4*Dq*Pt\n    h = np.zeros((norb,norb),complex)\n    for a in range(5):\n        for b in range(5):\n            for s in (0,1):\n                h[sidx(a,s), sidx(b,s)] = h5[a,b]\n    return h\n\ndef cdag_c(p, q, occ):\n    \"\"\"c+_p c_q on sorted tuple occ -> (sign, newocc) or None\"\"\"\n    occ = list(occ)\n    if q not in occ: return None\n    pos = occ.index(q); sign = (-1)**pos\n    occ.pop(pos)\n    if p in occ: return None\n    pos2 = sum(1 for x in occ if x < p); sign *= (-1)**pos2\n    occ.insert(pos2, p)\n    return sign, tuple(occ)\n\ndef cdag(p, occ):\n    if p in occ: return None\n    occ = list(occ); pos = sum(1 for x in occ if x<p)\n    occ.insert(pos,p); return (-1)**pos, tuple(occ)\ndef c(q, occ):\n    if q not in occ: return None\n    pos = occ.index(q); occ2 = occ[:pos]+occ[pos+1:]\n    return (-1)**pos, tuple(occ2)\n\ndets = list(itertools.combinations(range(norb), 7))\nindex = {d:i for i,d in enumerate(dets)}\nN = len(dets)\n\ndef build_H(Dq, B, C):\n    F4 = 441*C/35; F2 = (441*B+5*F4)/9\n    h = hmat(Dq); V = Vmat(F2, F4)\n    H = np.zeros((N,N), complex)\n    for j,d in enumerate(dets):\n        # one-body\n        for p in range(norb):\n            for q in range(norb):\n                if abs(h[p,q])<1e-14: continue\n                r = cdag_c(p,q,d)\n                if r is None: continue\n                s,nd = r\n                H[index[nd], j] += s*h[p,q]\n        # two-body: 1/2 sum V[p,q,r,s] c+_p c+_q c_s c_r\n        for r_ in range(norb):\n            a1 = c(r_, d)\n            if a1 is None: continue\n            sg1, o1 = a1\n            for s_ in range(norb):\n                a2 = c(s_, o1)\n                if a2 is None: continue\n                sg2, o2 = a2\n                for q in range(norb):\n                    a3 = cdag(q, o2)\n                    if a3 is None: continue\n                    sg3, o3 = a3\n                    for p in range(norb):\n                        v = V[p,q,r_,s_]\n                        if abs(v)<1e-14: continue\n                        a4 = cdag(p, o3)\n                        if a4 is None: continue\n                        sg4, o4 = a4\n                        H[index[o4], j] += 0.5*sg1*sg2*sg3*sg4*v\n    return H\n\nSz = np.zeros((N,N)); Sp = np.zeros((N,N))\nfor j,d in enumerate(dets):\n    Sz[j,j] = 0.5*sum(1 if (x%2==0) else -1 for x in d)\n    for mi in range(5):\n        a = c(sidx(mi,1), d)\n        if a is None: continue\n        s1,o = a\n        b = cdag(sidx(mi,0), o)\n        if b is None: continue\n        s2,o2 = b\n        Sp[index[o2], j] += s1*s2\nSm = Sp.T\nS2 = Sz@Sz + 0.5*(Sp@Sm+Sm@Sp)\n\ndef levels(Dq, B, C):\n    H = build_H(Dq,B,C)\n    H = 0.5*(H+H.conj().T).real\n    w, v = np.linalg.eigh(H)\n    s2 = np.einsum('ij,ik,kj->j', v, S2, v)\n    quart = np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-15/4)<1e-5]))\n    doub = np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-3/4)<1e-5]))\n    return quart, doub\nEOF\npython3 -c \"\nfrom ts import *\nq,d = levels(1000,1000,4000)\nprint(len(q),len(d))\nprint(np.round(q-q[0],1))\nprint(np.round(d-q[0],1))\n\"",
+   "scripts": [
+    {
+     "name": "ts.py",
+     "sha256": "08eea98fbe368ec5460048b155c536545cb23a5f3824d53c6096b168806ef13c",
+     "lines": 128,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y, eval_legendre\n\nx, wx = np.polynomial.legendre.leggauss(24)\nnphi = 48\nphis = np.arange(nphi)*2*np.pi/nphi\nth = np.arccos(x)\nTH, PH = np.meshgrid(th, phis, indexing='ij')\nW = (np.outer(wx, np.ones(nphi))*2*np.pi/nphi).ravel()\nTH = TH.ravel(); PH = PH.ravel()\nn = np.stack([np.sin(TH)*np.cos(PH), np.sin(TH)*np.sin(PH), np.cos(TH)],1)\nms = [-2,-1,0,1,2]\nY = np.array([sph_harm_y(2, m, TH, PH) for m in ms])\nG = np.clip(n@n.T, -1, 1)\nA = {}\nfor k in (0,2,4):\n    P = eval_legendre(k, G)\n    M1 = np.conj(Y)[:,None,:]*Y[None,:,:]*W[None,None,:]\n    A[k] = np.einsum('abp,pq,cdq->abcd', M1, P, M1)\nassert np.allclose(A[0], np.einsum('ab,cd->abcd', np.eye(5), np.eye(5)), atol=1e-8)\n\nnorb = 10\ndef sidx(mi, s): return 2*mi+s\ndef Vmat(F2, F4):\n    V = np.zeros((norb,)*4, dtype=complex)\n    for a,b,c,d in itertools.product(range(5), repeat=4):\n        ang = F2*A[2][a,c,b,d] + F4*A[4][a,c,b,d]\n        for sa in (0,1):\n            for sb in (0,1):\n                V[sidx(a,sa), sidx(b,sb), sidx(c,sa), sidx(d,sb)] = ang\n    return V\ndef hmat(Dq):\n    Peg = np.zeros((5,5),complex); Pt = np.zeros((5,5),complex)\n    Peg[2,2]=1\n    e2 = np.zeros(5,complex); e2[0]=1/np.sqrt(2); e2[4]=1/np.sqrt(2)\n    Peg += np.outer(e2,e2.conj())\n    Pt[1,1]=1; Pt[3,3]=1\n    t = np.zeros(5,complex); t[0]=1/np.sqrt(2); t[4]=-1/np.sqrt(2)\n    Pt += np.outer(t,t.conj())\n    h5 = 6*Dq*Peg - 4*Dq*Pt\n    h = np.zeros((norb,norb),complex)\n    for a in range(5):\n        for b in range(5):\n            for s in (0,1):\n                h[sidx(a,s), sidx(b,s)] = h5[a,b]\n    return h\n\ndef cdag_c(p, q, occ):\n    \"\"\"c+_p c_q on sorted tuple occ -> (sign, newocc) or None\"\"\"\n    occ = list(occ)\n    if q not in occ: return None\n    pos = occ.index(q); sign = (-1)**pos\n    occ.pop(pos)\n    if p in occ: return None\n    pos2 = sum(1 for x in occ if x < p); sign *= (-1)**pos2\n    occ.insert(pos2, p)\n    return sign, tuple(occ)\n\ndef cdag(p, occ):\n    if p in occ: return None\n    occ = list(occ); pos = sum(1 for x in occ if x<p)\n    occ.insert(pos,p); return (-1)**pos, tuple(occ)\ndef c(q, occ):\n    if q not in occ: return None\n    pos = occ.index(q); occ2 = occ[:pos]+occ[pos+1:]\n    return (-1)**pos, tuple(occ2)\n\ndets = list(itertools.combinations(range(norb), 7))\nindex = {d:i for i,d in enumerate(dets)}\nN = len(dets)\n\ndef build_H(Dq, B, C):\n    F4 = 441*C/35; F2 = (441*B+5*F4)/9\n    h = hmat(Dq); V = Vmat(F2, F4)\n    H = np.zeros((N,N), complex)\n    for j,d in enumerate(dets):\n        # one-body\n        for p in range(norb):\n            for q in range(norb):\n                if abs(h[p,q])<1e-14: continue\n                r = cdag_c(p,q,d)\n                if r is None: continue\n                s,nd = r\n                H[index[nd], j] += s*h[p,q]\n        # two-body: 1/2 sum V[p,q,r,s] c+_p c+_q c_s c_r\n        for r_ in range(norb):\n            a1 = c(r_, d)\n            if a1 is None: continue\n            sg1, o1 = a1\n            for s_ in range(norb):\n                a2 = c(s_, o1)\n                if a2 is None: continue\n                sg2, o2 = a2\n                for q in range(norb):\n                    a3 = cdag(q, o2)\n                    if a3 is None: continue\n                    sg3, o3 = a3\n                    for p in range(norb):\n                        v = V[p,q,r_,s_]\n                        if abs(v)<1e-14: continue\n                        a4 = cdag(p, o3)\n                        if a4 is None: continue\n                        sg4, o4 = a4\n                        H[index[o4], j] += 0.5*sg1*sg2*sg3*sg4*v\n    return H\n\nSz = np.zeros((N,N)); Sp = np.zeros((N,N))\nfor j,d in enumerate(dets):\n    Sz[j,j] = 0.5*sum(1 if (x%2==0) else -1 for x in d)\n    for mi in range(5):\n        a = c(sidx(mi,1), d)\n        if a is None: continue\n        s1,o = a\n        b = cdag(sidx(mi,0), o)\n        if b is None: continue\n        s2,o2 = b\n        Sp[index[o2], j] += s1*s2\nSm = Sp.T\nS2 = Sz@Sz + 0.5*(Sp@Sm+Sm@Sp)\n\ndef levels(Dq, B, C):\n    H = build_H(Dq,B,C)\n    H = 0.5*(H+H.conj().T).real\n    w, v = np.linalg.eigh(H)\n    s2 = np.einsum('ij,ik,kj->j', v, S2, v)\n    quart = np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-15/4)<1e-5]))\n    doub = np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-3/4)<1e-5]))\n    return quart, doub\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    from ts import *\nModuleNotFoundError: No module named 'ts'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "ts.py",
+     "line": 25,
+     "method": "matrix",
+     "text": "V = np.zeros((norb,)*4, dtype=complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "Peg = np.zeros((5,5),complex); Pt = np.zeros((5,5),complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "Peg[2,2]=1"
+    },
+    {
+     "script": "ts.py",
+     "line": 37,
+     "method": "matrix",
+     "text": "Pt[1,1]=1; Pt[3,3]=1"
+    },
+    {
+     "script": "ts.py",
+     "line": 41,
+     "method": "matrix",
+     "text": "h = np.zeros((norb,norb),complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 75,
+     "method": "matrix",
+     "text": "H = np.zeros((N,N), complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 107,
+     "method": "matrix",
+     "text": "Sz = np.zeros((N,N)); Sp = np.zeros((N,N))"
+    },
+    {
+     "script": "ts.py",
+     "line": 109,
+     "method": "matrix",
+     "text": "Sz[j,j] = 0.5*sum(1 if (x%2==0) else -1 for x in d)"
+    },
+    {
+     "script": "ts.py",
+     "line": 124,
+     "method": "eigen_solver",
+     "text": "w, v = np.linalg.eigh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find a writable directory",
+   "command": "cd ~ && pwd && touch testfile && echo ok; echo $TMPDIR; df -h . | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 'testfile': Read-only file system\n<SANDBOX_TMP>\n/dev/vda1       158G   89G   63G  59% /\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Test writable locations",
+   "command": "cd <SANDBOX_TMP> 2>/dev/null && touch t && echo ok1; cd /tmp && touch t2 && echo ok2; ls -ld /tmp <SANDBOX_TMP>",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok1\ntouch: cannot touch 't2': Read-only file system\ndrwxrwxrwt  32 nobody nogroup 884736 Nov  4 14:16 /tmp\ndrwx------ 606 <USER>  <USER>    36864 Nov  4 14:17 <SANDBOX_TMP>\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Build d7 Hamiltonian in writable dir and test",
+   "command": "mkdir -p <SANDBOX_TMP>/w && cd <SANDBOX_TMP>/w && cat > ts.py << 'EOF'\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y, eval_legendre\n\nx, wx = np.polynomial.legendre.leggauss(24)\nnphi = 48\nphis = np.arange(nphi)*2*np.pi/nphi\nth = np.arccos(x)\nTH, PH = np.meshgrid(th, phis, indexing='ij')\nW = (np.outer(wx, np.ones(nphi))*2*np.pi/nphi).ravel()\nTH = TH.ravel(); PH = PH.ravel()\nn = np.stack([np.sin(TH)*np.cos(PH), np.sin(TH)*np.sin(PH), np.cos(TH)],1)\nms = [-2,-1,0,1,2]\nY = np.array([sph_harm_y(2, m, TH, PH) for m in ms])\nG = np.clip(n@n.T, -1, 1)\nA = {}\nfor k in (0,2,4):\n    P = eval_legendre(k, G)\n    M1 = np.conj(Y)[:,None,:]*Y[None,:,:]*W[None,None,:]\n    A[k] = np.einsum('abp,pq,cdq->abcd', M1, P, M1)\nassert np.allclose(A[0], np.einsum('ab,cd->abcd', np.eye(5), np.eye(5)), atol=1e-8)\n\nnorb = 10\ndef sidx(mi, s): return 2*mi+s\ndef Vmat(F2, F4):\n    V = np.zeros((norb,)*4, dtype=complex)\n    for a,b,c,d in itertools.product(range(5), repeat=4):\n        ang = F2*A[2][a,c,b,d] + F4*A[4][a,c,b,d]\n        for sa in (0,1):\n            for sb in (0,1):\n                V[sidx(a,sa), sidx(b,sb), sidx(c,sa), sidx(d,sb)] = ang\n    return V\ndef hmat(Dq):\n    Peg = np.zeros((5,5),complex); Pt = np.zeros((5,5),complex)\n    Peg[2,2]=1\n    e2 = np.zeros(5,complex); e2[0]=1/np.sqrt(2); e2[4]=1/np.sqrt(2)\n    Peg += np.outer(e2,e2.conj())\n    Pt[1,1]=1; Pt[3,3]=1\n    t = np.zeros(5,complex); t[0]=1/np.sqrt(2); t[4]=-1/np.sqrt(2)\n    Pt += np.outer(t,t.conj())\n    h5 = 6*Dq*Peg - 4*Dq*Pt\n    h = np.zeros((norb,norb),complex)\n    for a in range(5):\n        for b in range(5):\n            for s in (0,1):\n                h[sidx(a,s), sidx(b,s)] = h5[a,b]\n    return h\n\ndef cdag_c(p, q, occ):\n    occ = list(occ)\n    if q not in occ: return None\n    pos = occ.index(q); sign = (-1)**pos\n    occ.pop(pos)\n    if p in occ: return None\n    pos2 = sum(1 for x in occ if x < p); sign *= (-1)**pos2\n    occ.insert(pos2, p)\n    return sign, tuple(occ)\n\ndef cdag(p, occ):\n    if p in occ: return None\n    occ = list(occ); pos = sum(1 for x in occ if x<p)\n    occ.insert(pos,p); return (-1)**pos, tuple(occ)\ndef c(q, occ):\n    if q not in occ: return None\n    pos = occ.index(q); occ2 = occ[:pos]+occ[pos+1:]\n    return (-1)**pos, tuple(occ2)\n\ndets = list(itertools.combinations(range(norb), 7))\nindex = {d:i for i,d in enumerate(dets)}\nN = len(dets)\n\ndef build_H(Dq, B, C):\n    F4 = 441*C/35; F2 = (441*B+5*F4)/9\n    h = hmat(Dq); V = Vmat(F2, F4)\n    H = np.zeros((N,N), complex)\n    for j,d in enumerate(dets):\n        for p in range(norb):\n            for q in range(norb):\n                if abs(h[p,q])<1e-14: continue\n                r = cdag_c(p,q,d)\n                if r is None: continue\n                s,nd = r\n                H[index[nd], j] += s*h[p,q]\n        for r_ in range(norb):\n            a1 = c(r_, d)\n            if a1 is None: continue\n            sg1, o1 = a1\n            for s_ in range(norb):\n                a2 = c(s_, o1)\n                if a2 is None: continue\n                sg2, o2 = a2\n                for q in range(norb):\n                    a3 = cdag(q, o2)\n                    if a3 is None: continue\n                    sg3, o3 = a3\n                    for p in range(norb):\n                        v = V[p,q,r_,s_]\n                        if abs(v)<1e-14: continue\n                        a4 = cdag(p, o3)\n                        if a4 is None: continue\n                        sg4, o4 = a4\n                        H[index[o4], j] += 0.5*sg1*sg2*sg3*sg4*v\n    return H\n\nSz = np.zeros((N,N)); Sp = np.zeros((N,N))\nfor j,d in enumerate(dets):\n    Sz[j,j] = 0.5*sum(1 if (x%2==0) else -1 for x in d)\n    for mi in range(5):\n        a = c(sidx(mi,1), d)\n        if a is None: continue\n        s1,o = a\n        b = cdag(sidx(mi,0), o)\n        if b is None: continue\n        s2,o2 = b\n        Sp[index[o2], j] += s1*s2\nSm = Sp.T\nS2 = Sz@Sz + 0.5*(Sp@Sm+Sm@Sp)\n\ndef levels(Dq, B, C):\n    H = build_H(Dq,B,C)\n    H = 0.5*(H+H.conj().T).real\n    w, v = np.linalg.eigh(H)\n    s2 = np.einsum('ij,ik,kj->j', v, S2, v)\n    quart = np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-15/4)<1e-5]))\n    doub = np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-3/4)<1e-5]))\n    return quart, doub\nEOF\npython3 -c \"\nfrom ts import *\nq,d = levels(1000,1000,4000)\nprint(len(q),len(d))\nprint(np.round(q-q[0],1))\nprint(np.round(d-q[0],1))\n\"",
+   "scripts": [
+    {
+     "name": "ts.py",
+     "sha256": "19a53c2cf44818422c80301d68a47922b35dc2dccc48a99b84947f7601b010f6",
+     "lines": 125,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y, eval_legendre\n\nx, wx = np.polynomial.legendre.leggauss(24)\nnphi = 48\nphis = np.arange(nphi)*2*np.pi/nphi\nth = np.arccos(x)\nTH, PH = np.meshgrid(th, phis, indexing='ij')\nW = (np.outer(wx, np.ones(nphi))*2*np.pi/nphi).ravel()\nTH = TH.ravel(); PH = PH.ravel()\nn = np.stack([np.sin(TH)*np.cos(PH), np.sin(TH)*np.sin(PH), np.cos(TH)],1)\nms = [-2,-1,0,1,2]\nY = np.array([sph_harm_y(2, m, TH, PH) for m in ms])\nG = np.clip(n@n.T, -1, 1)\nA = {}\nfor k in (0,2,4):\n    P = eval_legendre(k, G)\n    M1 = np.conj(Y)[:,None,:]*Y[None,:,:]*W[None,None,:]\n    A[k] = np.einsum('abp,pq,cdq->abcd', M1, P, M1)\nassert np.allclose(A[0], np.einsum('ab,cd->abcd', np.eye(5), np.eye(5)), atol=1e-8)\n\nnorb = 10\ndef sidx(mi, s): return 2*mi+s\ndef Vmat(F2, F4):\n    V = np.zeros((norb,)*4, dtype=complex)\n    for a,b,c,d in itertools.product(range(5), repeat=4):\n        ang = F2*A[2][a,c,b,d] + F4*A[4][a,c,b,d]\n        for sa in (0,1):\n            for sb in (0,1):\n                V[sidx(a,sa), sidx(b,sb), sidx(c,sa), sidx(d,sb)] = ang\n    return V\ndef hmat(Dq):\n    Peg = np.zeros((5,5),complex); Pt = np.zeros((5,5),complex)\n    Peg[2,2]=1\n    e2 = np.zeros(5,complex); e2[0]=1/np.sqrt(2); e2[4]=1/np.sqrt(2)\n    Peg += np.outer(e2,e2.conj())\n    Pt[1,1]=1; Pt[3,3]=1\n    t = np.zeros(5,complex); t[0]=1/np.sqrt(2); t[4]=-1/np.sqrt(2)\n    Pt += np.outer(t,t.conj())\n    h5 = 6*Dq*Peg - 4*Dq*Pt\n    h = np.zeros((norb,norb),complex)\n    for a in range(5):\n        for b in range(5):\n            for s in (0,1):\n                h[sidx(a,s), sidx(b,s)] = h5[a,b]\n    return h\n\ndef cdag_c(p, q, occ):\n    occ = list(occ)\n    if q not in occ: return None\n    pos = occ.index(q); sign = (-1)**pos\n    occ.pop(pos)\n    if p in occ: return None\n    pos2 = sum(1 for x in occ if x < p); sign *= (-1)**pos2\n    occ.insert(pos2, p)\n    return sign, tuple(occ)\n\ndef cdag(p, occ):\n    if p in occ: return None\n    occ = list(occ); pos = sum(1 for x in occ if x<p)\n    occ.insert(pos,p); return (-1)**pos, tuple(occ)\ndef c(q, occ):\n    if q not in occ: return None\n    pos = occ.index(q); occ2 = occ[:pos]+occ[pos+1:]\n    return (-1)**pos, tuple(occ2)\n\ndets = list(itertools.combinations(range(norb), 7))\nindex = {d:i for i,d in enumerate(dets)}\nN = len(dets)\n\ndef build_H(Dq, B, C):\n    F4 = 441*C/35; F2 = (441*B+5*F4)/9\n    h = hmat(Dq); V = Vmat(F2, F4)\n    H = np.zeros((N,N), complex)\n    for j,d in enumerate(dets):\n        for p in range(norb):\n            for q in range(norb):\n                if abs(h[p,q])<1e-14: continue\n                r = cdag_c(p,q,d)\n                if r is None: continue\n                s,nd = r\n                H[index[nd], j] += s*h[p,q]\n        for r_ in range(norb):\n            a1 = c(r_, d)\n            if a1 is None: continue\n            sg1, o1 = a1\n            for s_ in range(norb):\n                a2 = c(s_, o1)\n                if a2 is None: continue\n                sg2, o2 = a2\n                for q in range(norb):\n                    a3 = cdag(q, o2)\n                    if a3 is None: continue\n                    sg3, o3 = a3\n                    for p in range(norb):\n                        v = V[p,q,r_,s_]\n                        if abs(v)<1e-14: continue\n                        a4 = cdag(p, o3)\n                        if a4 is None: continue\n                        sg4, o4 = a4\n                        H[index[o4], j] += 0.5*sg1*sg2*sg3*sg4*v\n    return H\n\nSz = np.zeros((N,N)); Sp = np.zeros((N,N))\nfor j,d in enumerate(dets):\n    Sz[j,j] = 0.5*sum(1 if (x%2==0) else -1 for x in d)\n    for mi in range(5):\n        a = c(sidx(mi,1), d)\n        if a is None: continue\n        s1,o = a\n        b = cdag(sidx(mi,0), o)\n        if b is None: continue\n        s2,o2 = b\n        Sp[index[o2], j] += s1*s2\nSm = Sp.T\nS2 = Sz@Sz + 0.5*(Sp@Sm+Sm@Sp)\n\ndef levels(Dq, B, C):\n    H = build_H(Dq,B,C)\n    H = 0.5*(H+H.conj().T).real\n    w, v = np.linalg.eigh(H)\n    s2 = np.einsum('ij,ik,kj->j', v, S2, v)\n    quart = np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-15/4)<1e-5]))\n    doub = np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-3/4)<1e-5]))\n    return quart, doub\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "40 80\n[    0.      0.      0.      0.      0.      0.      0.      0.      0.\n     0.      0.      0.   8736.1  8736.1  8736.1  8736.1  8736.1  8736.1\n  8736.1  8736.1  8736.1  8736.1  8736.1  8736.1 18736.1 18736.1 18736.1\n 18736.1 22472.2 22472.2 22472.2 22472.2 22472.2 22472.2 22472.2 22472.2\n 22472.2 22472.2 22472.2 22472.2]\n[ 9207.8  9207.8  9207.8  9207.8 17277.6 17277.6 17277.6 17277.6 17277.6\n 17277.6 17651.3 17651.3 17651.3 17651.3 17651.3 17651.3 22540.1 22540.1\n 22540.1 22540.1 22540.1 22540.1 24736.1 24736.1 27148.6 27148.6 27148.6\n 27148.6 27148.6 27148.6 28568.3 28568.3 28568.3 28568.3 28568.3 28568.3\n 30634.5 30634.5 30634.5 30634.5 33997.7 33997.7 33997.7 33997.7 33997.7\n 33997.7 35411.5 35411.5 35411.5 35411.5 35411.5 35411.5 36661.4 36661.4\n 36661.4 36661.4 41545.9 41545.9 41545.9 41545.9 41545.9 41545.9 44736.1\n 44736.1 44883.  44883.  44883.  44883.  44883.  44883.  65440.7 65440.7\n 65440.7 65440.7 66337.  66337.  66337.  66337.  66337.  66337. ]\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "ts.py",
+     "line": 25,
+     "method": "matrix",
+     "text": "V = np.zeros((norb,)*4, dtype=complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "Peg = np.zeros((5,5),complex); Pt = np.zeros((5,5),complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "Peg[2,2]=1"
+    },
+    {
+     "script": "ts.py",
+     "line": 37,
+     "method": "matrix",
+     "text": "Pt[1,1]=1; Pt[3,3]=1"
+    },
+    {
+     "script": "ts.py",
+     "line": 41,
+     "method": "matrix",
+     "text": "h = np.zeros((norb,norb),complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 74,
+     "method": "matrix",
+     "text": "H = np.zeros((N,N), complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 104,
+     "method": "matrix",
+     "text": "Sz = np.zeros((N,N)); Sp = np.zeros((N,N))"
+    },
+    {
+     "script": "ts.py",
+     "line": 106,
+     "method": "matrix",
+     "text": "Sz[j,j] = 0.5*sum(1 if (x%2==0) else -1 for x in d)"
+    },
+    {
+     "script": "ts.py",
+     "line": 121,
+     "method": "eigen_solver",
+     "text": "w, v = np.linalg.eigh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Inspect quartet and doublet level structure",
+   "command": "cd <SANDBOX_TMP>/w && cat > fit.py << 'EOF'\nfrom ts import *\nfrom scipy.optimize import least_squares\nobs = dict(T2=6150., A2=12400., T1P=16850., D=19000.)\ndef pred(p):\n    Dq,B,C = p\n    q,d = levels(Dq,B,C)\n    g0 = q[0]\n    # quartet level groups: 12-fold groups & 4-fold\n    qs = np.round(q,3)\n    # unique levels with degeneracy\n    vals=[]; \n    for v in q:\n        if not vals or abs(v-vals[-1][0])>1e-2: vals.append([v,1])\n        else: vals[-1][1]+=1\n    return vals, d, g0\nvals,d,g0 = pred((1000,1000,4000))\nprint(\"quartets:\", [(round(v-g0,1),m) for v,m in vals])\ndd=[]\nfor v in d:\n    if not dd or abs(v-dd[-1][0])>1e-2: dd.append([v,1])\n    else: dd[-1][1]+=1\nprint(\"doublets:\", [(round(v-g0,1),m) for v,m in dd])\nEOF\npython3 fit.py",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "244d46531863a7d60d8090a9c3646fb262504c15c3243c3e974088d59f765e47",
+     "lines": 22,
+     "code": "from ts import *\nfrom scipy.optimize import least_squares\nobs = dict(T2=6150., A2=12400., T1P=16850., D=19000.)\ndef pred(p):\n    Dq,B,C = p\n    q,d = levels(Dq,B,C)\n    g0 = q[0]\n    # quartet level groups: 12-fold groups & 4-fold\n    qs = np.round(q,3)\n    # unique levels with degeneracy\n    vals=[]; \n    for v in q:\n        if not vals or abs(v-vals[-1][0])>1e-2: vals.append([v,1])\n        else: vals[-1][1]+=1\n    return vals, d, g0\nvals,d,g0 = pred((1000,1000,4000))\nprint(\"quartets:\", [(round(v-g0,1),m) for v,m in vals])\ndd=[]\nfor v in d:\n    if not dd or abs(v-dd[-1][0])>1e-2: dd.append([v,1])\n    else: dd[-1][1]+=1\nprint(\"doublets:\", [(round(v-g0,1),m) for v,m in dd])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 6
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "quartets: [(np.float64(0.0), 12), (np.float64(8736.1), 12), (np.float64(18736.1), 4), (np.float64(22472.2), 12)]\ndoublets: [(np.float64(9207.8), 4), (np.float64(17277.6), 6), (np.float64(17651.3), 6), (np.float64(22540.1), 6), (np.float64(24736.1), 2), (np.float64(27148.6), 6), (np.float64(28568.3), 6), (np.float64(30634.5), 4), (np.float64(33997.7), 6), (np.float64(35411.5), 6), (np.float64(36661.4), 4), (np.float64(41545.9), 6), (np.float64(44736.1), 2), (np.float64(44883.0), 6), (np.float64(65440.7), 4), (np.float64(66337.0), 6)]\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Fit Dq and B to the three quartet bands",
+   "command": "cd <SANDBOX_TMP>/w && cat > fit2.py << 'EOF'\nfrom ts import *\nfrom scipy.optimize import least_squares\ndef quart_rel(Dq,B):\n    q,_ = levels(Dq,B,4.0*B)\n    g0=q[0]\n    vals=[]\n    for v in q:\n        if not vals or abs(v-vals[-1][0])>1e-2: vals.append([v,1])\n        else: vals[-1][1]+=1\n    return [(v-g0,m) for v,m in vals]\ndef res(p):\n    Dq,B = p\n    qr = quart_rel(Dq,B)\n    t2 = [v for v,m in qr if m==12][1]\n    a2 = [v for v,m in qr if m==4][0]\n    t1p = [v for v,m in qr if m==12][2]\n    return np.array([t2-6150, a2-12400, t1p-16850])/100\nsol = least_squares(res, [700,900], x_scale=[100,100])\nprint(\"Dq,B =\", sol.x, \"residuals(cm-1):\", res(sol.x)*100)\nprint(quart_rel(*sol.x))\nnp.save('sol.npy', sol.x)\nEOF\npython3 fit2.py",
+   "scripts": [
+    {
+     "name": "fit2.py",
+     "sha256": "f9d520bb657ad8978f5197c16b7bfd7ec09d404a8606bc1c6fca80c1320b31c6",
+     "lines": 21,
+     "code": "from ts import *\nfrom scipy.optimize import least_squares\ndef quart_rel(Dq,B):\n    q,_ = levels(Dq,B,4.0*B)\n    g0=q[0]\n    vals=[]\n    for v in q:\n        if not vals or abs(v-vals[-1][0])>1e-2: vals.append([v,1])\n        else: vals[-1][1]+=1\n    return [(v-g0,m) for v,m in vals]\ndef res(p):\n    Dq,B = p\n    qr = quart_rel(Dq,B)\n    t2 = [v for v,m in qr if m==12][1]\n    a2 = [v for v,m in qr if m==4][0]\n    t1p = [v for v,m in qr if m==12][2]\n    return np.array([t2-6150, a2-12400, t1p-16850])/100\nsol = least_squares(res, [700,900], x_scale=[100,100])\nprint(\"Dq,B =\", sol.x, \"residuals(cm-1):\", res(sol.x)*100)\nprint(quart_rel(*sol.x))\nnp.save('sol.npy', sol.x)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit2.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq,B = [673.0364621  794.89857046] residuals(cm-1): [-323.87362599  156.49099502   -4.63331604]\n[(np.float64(0.0), 12), (np.float64(5826.126374005165), 12), (np.float64(12556.49099501675), 4), (np.float64(16845.36668396197), 12)]\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit2.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit2.py",
+     "line": 18,
+     "method": "least_squares",
+     "text": "sol = least_squares(res, [700,900], x_scale=[100,100])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Sanity check free-ion and pure ligand-field limits",
+   "command": "cd <SANDBOX_TMP>/w && python3 -c \"\nfrom ts import *\nq,d=levels(0,1000,4000); print(np.unique(np.round(q-q[0],1)))\nq,d=levels(1000,0,0); print(np.unique(np.round(q-q[0],1)))\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[    0. 15000.]\n[0.]\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Debug one-electron ligand-field matrix",
+   "command": "cd <SANDBOX_TMP>/w && python3 -c \"\nfrom ts import *\nh=hmat(1000); print(np.round(np.linalg.eigvalsh(h),3))\nH=build_H(1000,0,0); H=H.real; w,v=np.linalg.eigh(H); print(np.unique(np.round(w,1)))\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[-4000. -4000. -4000. -4000. -4000. -4000.  6000.  6000.  6000.  6000.]\n[-18000.  -8000.   2000.  12000.]\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "Grid scan of Dq and B for best quartet fit",
+   "command": "cd <SANDBOX_TMP>/w && cat > scan.py << 'EOF'\nfrom fit2 import quart_rel, res\nimport numpy as np\nbest=None\nfor Dq in np.arange(500,800,25):\n    for B in np.arange(600,1100,50):\n        r=res((Dq,B))*100\n        s=np.sum(r**2)\n        if best is None or s<best[0]: best=(s,Dq,B,r)\nprint(best)\nEOF\npython3 scan.py 2>/dev/null | tail -3",
+   "scripts": [
+    {
+     "name": "scan.py",
+     "sha256": "b69d9af7982d20c57352fe764cf30b78559c338e68383ae54333db788f350201",
+     "lines": 9,
+     "code": "from fit2 import quart_rel, res\nimport numpy as np\nbest=None\nfor Dq in np.arange(500,800,25):\n    for B in np.arange(600,1100,50):\n        r=res((Dq,B))*100\n        s=np.sum(r**2)\n        if best is None or s<best[0]: best=(s,Dq,B,r)\nprint(best)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "scan.py",
+     "written_in_step": 10
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq,B = [673.0364621  794.89857046] residuals(cm-1): [-323.87362599  156.49099502   -4.63331604]\n[(np.float64(0.0), 12), (np.float64(5826.126374005165), 12), (np.float64(12556.49099501675), 4), (np.float64(16845.36668396197), 12)]\n(np.float64(138787.29784392894), np.int64(675), np.int64(800), array([-307.96834776,  192.03165224,   84.06330448]))\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 11,
+   "tool": "Bash",
+   "description": "Identify doublet symmetries via C4 rotation traces",
+   "command": "cd <SANDBOX_TMP>/w && cat > dbl.py << 'EOF'\nfrom ts import *\nDq,B = np.load('sol.npy')\ndef analyze(Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    H = build_H(Dq,B,C); H=0.5*(H+H.conj().T).real\n    # Lz phase for C4 rotation (pi/2) : exp(-i*pi/2*sum m)\n    Lz = np.array([sum(ms[x//2] for x in d) for d in dets])\n    R = np.diag(np.exp(-1j*np.pi/2*Lz))\n    # restrict to S=1/2 subspace via S2 projection: diagonalize H + 100*S2 (shift S2 eigen)\n    M = H + 1e4*S2\n    w,v = np.linalg.eigh(M)\n    out=[]\n    # group by energy\n    i=0\n    while i < len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-4*max(1,abs(w[i])): j+=1\n        vs = v[:,i:j+1]\n        s2 = np.real(np.trace(vs.conj().T@S2@vs))/(j-i+1)\n        if abs(s2-0.75)<1e-6:\n            tr = np.trace(vs.conj().T@R@vs)\n            out.append((w[i]-1e4*0.75 - 0, j-i+1, np.round(tr,3)))\n        i=j+1\n    return out\nif __name__==\"__main__\":\n    import sys\n    Dq_,B_=Dq,B\n    q,_=levels(Dq_,B_,4*B_)\n    g0=q[0]\n    res=analyze(Dq_,B_,4*B_)\n    # energy relative to ground: need ground eigenvalue; recompute with same method\n    for e,dg,tr in res:\n        print(dg, tr)\nEOF\npython3 dbl.py 2>&1 | tail -20",
+   "scripts": [
+    {
+     "name": "dbl.py",
+     "sha256": "41493591ba61871a9c3c570189b5166828f0d914387eb13af4bad1aad3a7cde7",
+     "lines": 33,
+     "code": "from ts import *\nDq,B = np.load('sol.npy')\ndef analyze(Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    H = build_H(Dq,B,C); H=0.5*(H+H.conj().T).real\n    # Lz phase for C4 rotation (pi/2) : exp(-i*pi/2*sum m)\n    Lz = np.array([sum(ms[x//2] for x in d) for d in dets])\n    R = np.diag(np.exp(-1j*np.pi/2*Lz))\n    # restrict to S=1/2 subspace via S2 projection: diagonalize H + 100*S2 (shift S2 eigen)\n    M = H + 1e4*S2\n    w,v = np.linalg.eigh(M)\n    out=[]\n    # group by energy\n    i=0\n    while i < len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-4*max(1,abs(w[i])): j+=1\n        vs = v[:,i:j+1]\n        s2 = np.real(np.trace(vs.conj().T@S2@vs))/(j-i+1)\n        if abs(s2-0.75)<1e-6:\n            tr = np.trace(vs.conj().T@R@vs)\n            out.append((w[i]-1e4*0.75 - 0, j-i+1, np.round(tr,3)))\n        i=j+1\n    return out\nif __name__==\"__main__\":\n    import sys\n    Dq_,B_=Dq,B\n    q,_=levels(Dq_,B_,4*B_)\n    g0=q[0]\n    res=analyze(Dq_,B_,4*B_)\n    # energy relative to ground: need ground eigenvalue; recompute with same method\n    for e,dg,tr in res:\n        print(dg, tr)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "dbl.py",
+     "written_in_step": 11
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "4 0j\n6 (2+0j)\n6 (-2+0j)\n6 (2+0j)\n2 (2-0j)\n6 (-2+0j)\n6 (2-0j)\n4 -0j\n6 (-2+0j)\n6 (2-0j)\n4 (-0-0j)\n6 (-2-0j)\n6 (2+0j)\n2 (-2-0j)\n4 (-0-0j)\n6 (-2-0j)\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "dbl.py",
+     "line": 11,
+     "method": "eigen_solver",
+     "text": "w,v = np.linalg.eigh(M)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 12,
+   "tool": "Bash",
+   "description": "List doublet levels relative to ground with symmetry labels",
+   "command": "cd <SANDBOX_TMP>/w && cat > dbl2.py << 'EOF'\nfrom dbl import *\ndef t1_doublets(Dq,B,C):\n    q,_=levels(Dq,B,C); g0=q[0]\n    res=analyze(Dq,B,C)\n    return [(round(e-g0,1),dg,tr.real) for e,dg,tr in res]\nif __name__==\"__main__\":\n    print(Dq,B)\n    for x in t1_doublets(Dq,B,4*B)[:12]: print(x)\nEOF\npython3 dbl2.py 2>&1 | tail -14",
+   "scripts": [
+    {
+     "name": "dbl2.py",
+     "sha256": "e42ac955a43bfd4db76d66b3a141f21d3f308cb6a4129ffaf6842502b32578a5",
+     "lines": 8,
+     "code": "from dbl import *\ndef t1_doublets(Dq,B,C):\n    q,_=levels(Dq,B,C); g0=q[0]\n    res=analyze(Dq,B,C)\n    return [(round(e-g0,1),dg,tr.real) for e,dg,tr in res]\nif __name__==\"__main__\":\n    print(Dq,B)\n    for x in t1_doublets(Dq,B,4*B)[:12]: print(x)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "dbl2.py",
+     "written_in_step": 12
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "673.036462101152 794.8985704642184\n(np.float64(8485.0), 4, np.float64(0.0))\n(np.float64(13769.9), 6, np.float64(2.0))\n(np.float64(13989.7), 6, np.float64(-2.0))\n(np.float64(17792.1), 6, np.float64(2.0))\n(np.float64(18544.5), 2, np.float64(2.0))\n(np.float64(20729.0), 6, np.float64(-2.0))\n(np.float64(21609.2), 6, np.float64(2.0))\n(np.float64(23205.2), 4, np.float64(0.0))\n(np.float64(25642.7), 6, np.float64(-2.0))\n(np.float64(26474.5), 6, np.float64(2.0))\n(np.float64(27028.1), 4, np.float64(-0.0))\n(np.float64(32426.9), 6, np.float64(-2.0))\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": [
+    "Dq",
+    "B"
+   ]
+  },
+  {
+   "index": 13,
+   "tool": "Bash",
+   "description": "Least-squares fit of Dq, B, C to all four bands",
+   "command": "cd <SANDBOX_TMP>/w && cat > fitall.py << 'EOF'\nfrom ts import *\nfrom dbl import analyze\nfrom scipy.optimize import least_squares\ndef model(p):\n    Dq,B,C = p\n    q,_ = levels(Dq,B,C); g0=q[0]\n    vals=[]\n    for v in q:\n        if not vals or abs(v-vals[-1][0])>1e-2: vals.append([v,1])\n        else: vals[-1][1]+=1\n    qr=[(v-g0,m) for v,m in vals]\n    t2=[v for v,m in qr if m==12][1]; a2=[v for v,m in qr if m==4][0]; t1p=[v for v,m in qr if m==12][2]\n    dbl=[(e-g0,dg,tr.real) for e,dg,tr in analyze(Dq,B,C)]\n    t1=[e for e,dg,tr in dbl if dg==6 and abs(tr-2)<1e-6]\n    return np.array([t2,a2,t1p,t1[1]])\nobs=np.array([6150.,12400.,16850.,19000.])\ndef res(p): return (model(p)-obs)\nbest=None\nfor Dq0 in [550,650,750]:\n  for B0 in [700,850,1000]:\n    for C0 in [3000,4000,4500]:\n        try:\n            s=least_squares(res,[Dq0,B0,C0],x_scale=[100,100,300],max_nfev=200)\n        except Exception as e:\n            continue\n        if best is None or s.cost<best.cost: best=s\nprint(\"params Dq,B,C:\",best.x)\nprint(\"model:\",model(best.x)); print(\"resid:\",model(best.x)-obs)\nEOF\ntimeout 900 python3 fitall.py 2>&1 | tail -5",
+   "scripts": [
+    {
+     "name": "fitall.py",
+     "sha256": "a26839be0776b9d4f16dd1af15cfe3d13122b5dd0077b551561dcb4d64a138c1",
+     "lines": 28,
+     "code": "from ts import *\nfrom dbl import analyze\nfrom scipy.optimize import least_squares\ndef model(p):\n    Dq,B,C = p\n    q,_ = levels(Dq,B,C); g0=q[0]\n    vals=[]\n    for v in q:\n        if not vals or abs(v-vals[-1][0])>1e-2: vals.append([v,1])\n        else: vals[-1][1]+=1\n    qr=[(v-g0,m) for v,m in vals]\n    t2=[v for v,m in qr if m==12][1]; a2=[v for v,m in qr if m==4][0]; t1p=[v for v,m in qr if m==12][2]\n    dbl=[(e-g0,dg,tr.real) for e,dg,tr in analyze(Dq,B,C)]\n    t1=[e for e,dg,tr in dbl if dg==6 and abs(tr-2)<1e-6]\n    return np.array([t2,a2,t1p,t1[1]])\nobs=np.array([6150.,12400.,16850.,19000.])\ndef res(p): return (model(p)-obs)\nbest=None\nfor Dq0 in [550,650,750]:\n  for B0 in [700,850,1000]:\n    for C0 in [3000,4000,4500]:\n        try:\n            s=least_squares(res,[Dq0,B0,C0],x_scale=[100,100,300],max_nfev=200)\n        except Exception as e:\n            continue\n        if best is None or s.cost<best.cost: best=s\nprint(\"params Dq,B,C:\",best.x)\nprint(\"model:\",model(best.x)); print(\"resid:\",model(best.x)-obs)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fitall.py",
+     "written_in_step": 13
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 143,
+   "is_error": true,
+   "stdout": "Exit code 143\nCommand timed out after 2m 0s",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fitall.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fitall.py",
+     "line": 23,
+     "method": "least_squares",
+     "text": "s=least_squares(res,[Dq0,B0,C0],x_scale=[100,100,300],max_nfev=200)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 14,
+   "tool": "Bash",
+   "description": "Precompute linear Hamiltonian parts for fast fitting",
+   "command": "cd <SANDBOX_TMP>/w && cat > fast.py << 'EOF'\nimport numpy as np\nfrom ts import *\n# linear decomposition: H = Dq*HL + F2*H2 + F4*H4\ndef build_parts():\n    Z = np.zeros((N,N),complex)\n    global HL,H2,H4\n    # ligand field part\n    h1 = hmat(1.0)\n    HL = np.zeros((N,N),complex)\n    for j,d in enumerate(dets):\n        for p in range(norb):\n            for q in range(norb):\n                if abs(h1[p,q])<1e-14: continue\n                r=cdag_c(p,q,d)\n                if r is None: continue\n                s,nd=r; HL[index[nd],j]+=s*h1[p,q]\n    # Coulomb parts: build with V from k=2 and k=4 separately\n    def coul(Vfun):\n        V=Vfun\n        H=np.zeros((N,N),complex)\n        for j,d in enumerate(dets):\n            for r_ in range(norb):\n                a1=c(r_,d)\n                if a1 is None: continue\n                sg1,o1=a1\n                for s_ in range(norb):\n                    a2=c(s_,o1)\n                    if a2 is None: continue\n                    sg2,o2=a2\n                    for q in range(norb):\n                        a3=cdag(q,o2)\n                        if a3 is None: continue\n                        sg3,o3=a3\n                        for p in range(norb):\n                            v=V[p,q,r_,s_]\n                            if abs(v)<1e-14: continue\n                            a4=cdag(p,o3)\n                            if a4 is None: continue\n                            sg4,o4=a4\n                            H[index[o4],j]+=0.5*sg1*sg2*sg3*sg4*v\n        return H\n    V2 = Vmat(1.0,0.0); V4 = Vmat(0.0,1.0)\n    H2 = coul(V2); H4 = coul(V4)\nbuild_parts()\ndef H_of(Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    return Dq*HL + F2*H2 + F4*H4\ndef levels_fast(Dq,B,C):\n    H=H_of(Dq,B,C); H=0.5*(H+H.conj().T).real\n    w,v=np.linalg.eigh(H)\n    s2=np.einsum('ij,ik,kj->j',v,S2,v)\n    quart=np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-15/4)<1e-5]))\n    doub=np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-3/4)<1e-5]))\n    return quart,doub\nEOF\npython3 -c \"\nimport fast, ts, numpy as np\nprint(np.abs(fast.H_of(700,800,3000)-ts.build_H(700,800,3000)).max())\n\"",
+   "scripts": [
+    {
+     "name": "fast.py",
+     "sha256": "4f333820d2d0f311aca700b61f63be91ddc24c70e83254a3b7ede072a50b6ead",
+     "lines": 54,
+     "code": "import numpy as np\nfrom ts import *\n# linear decomposition: H = Dq*HL + F2*H2 + F4*H4\ndef build_parts():\n    Z = np.zeros((N,N),complex)\n    global HL,H2,H4\n    # ligand field part\n    h1 = hmat(1.0)\n    HL = np.zeros((N,N),complex)\n    for j,d in enumerate(dets):\n        for p in range(norb):\n            for q in range(norb):\n                if abs(h1[p,q])<1e-14: continue\n                r=cdag_c(p,q,d)\n                if r is None: continue\n                s,nd=r; HL[index[nd],j]+=s*h1[p,q]\n    # Coulomb parts: build with V from k=2 and k=4 separately\n    def coul(Vfun):\n        V=Vfun\n        H=np.zeros((N,N),complex)\n        for j,d in enumerate(dets):\n            for r_ in range(norb):\n                a1=c(r_,d)\n                if a1 is None: continue\n                sg1,o1=a1\n                for s_ in range(norb):\n                    a2=c(s_,o1)\n                    if a2 is None: continue\n                    sg2,o2=a2\n                    for q in range(norb):\n                        a3=cdag(q,o2)\n                        if a3 is None: continue\n                        sg3,o3=a3\n                        for p in range(norb):\n                            v=V[p,q,r_,s_]\n                            if abs(v)<1e-14: continue\n                            a4=cdag(p,o3)\n                            if a4 is None: continue\n                            sg4,o4=a4\n                            H[index[o4],j]+=0.5*sg1*sg2*sg3*sg4*v\n        return H\n    V2 = Vmat(1.0,0.0); V4 = Vmat(0.0,1.0)\n    H2 = coul(V2); H4 = coul(V4)\nbuild_parts()\ndef H_of(Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    return Dq*HL + F2*H2 + F4*H4\ndef levels_fast(Dq,B,C):\n    H=H_of(Dq,B,C); H=0.5*(H+H.conj().T).real\n    w,v=np.linalg.eigh(H)\n    s2=np.einsum('ij,ik,kj->j',v,S2,v)\n    quart=np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-15/4)<1e-5]))\n    doub=np.array(sorted([wi for wi,s in zip(w,s2) if abs(s-3/4)<1e-5]))\n    return quart,doub\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "8.003553380687168e-11\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "fast.py",
+     "line": 5,
+     "method": "matrix",
+     "text": "Z = np.zeros((N,N),complex)"
+    },
+    {
+     "script": "fast.py",
+     "line": 9,
+     "method": "matrix",
+     "text": "HL = np.zeros((N,N),complex)"
+    },
+    {
+     "script": "fast.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "fast.py",
+     "line": 50,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 15,
+   "tool": "Bash",
+   "description": "Run fast four-band least-squares fit",
+   "command": "cd <SANDBOX_TMP>/w && cat > fitall2.py << 'EOF'\nimport numpy as np\nimport fast\nfrom fast import *\nfrom scipy.optimize import least_squares\nfrom scipy.linalg import eigh\nSr = S2\ndef analyze_fast(Dq,B,C):\n    H=H_of(Dq,B,C); H=0.5*(H+H.conj().T).real\n    w,v=np.linalg.eigh(H+1e4*Sr)\n    out=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-4*max(1,abs(w[i])): j+=1\n        vs=v[:,i:j+1]\n        s2=np.real(np.trace(vs.conj().T@Sr@vs))/(j-i+1)\n        if abs(s2-0.75)<1e-6:\n            out.append((w[i]-7500, j-i+1, np.real(np.trace(vs.conj().T@fast.Rop@vs))))\n        i=j+1\n    return out\nLz=np.array([sum(ms[x//2] for x in d) for d in dets])\nRop=np.diag(np.exp(-1j*np.pi/2*Lz))\nfast.Rop=Rop\ndef model(p):\n    Dq,B,C=p\n    q,_=levels_fast(Dq,B,C); g0=q[0]\n    vals=[]\n    for v in q:\n        if not vals or abs(v-vals[-1][0])>1e-2: vals.append([v,1])\n        else: vals[-1][1]+=1\n    qr=[(v-g0,m) for v,m in vals]\n    t2=[v for v,m in qr if m==12][1]; a2=[v for v,m in qr if m==4][0]; t1p=[v for v,m in qr if m==12][2]\n    dbl=analyze_fast(Dq,B,C)\n    t1=[e-g0 for e,dg,tr in dbl if dg==6 and abs(tr-2)<1e-3]\n    return np.array([t2,a2,t1p,t1[1]])\nobs=np.array([6150.,12400.,16850.,19000.])\nif __name__==\"__main__\":\n    import time; t=time.time(); print(model((673,795,3180)), time.time()-t)\n    best=None\n    for Dq0 in [550,650,750]:\n      for B0 in [700,850,1000]:\n        for C0 in [3000,4000,4500]:\n            s=least_squares(lambda p: model(p)-obs,[Dq0,B0,C0],x_scale=[100,100,300],max_nfev=100)\n            if best is None or s.cost<best.cost: best=s\n    print(\"params Dq,B,C:\",best.x)\n    print(\"model:\",model(best.x)); print(\"resid:\",model(best.x)-obs)\nEOF\ntimeout 550 python3 fitall2.py 2>&1 | tail -6",
+   "scripts": [
+    {
+     "name": "fitall2.py",
+     "sha256": "a50b0a16be6520c4eb90420772b98d32ac76e63fcbd07bdd25a8e63fb947b063",
+     "lines": 45,
+     "code": "import numpy as np\nimport fast\nfrom fast import *\nfrom scipy.optimize import least_squares\nfrom scipy.linalg import eigh\nSr = S2\ndef analyze_fast(Dq,B,C):\n    H=H_of(Dq,B,C); H=0.5*(H+H.conj().T).real\n    w,v=np.linalg.eigh(H+1e4*Sr)\n    out=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-4*max(1,abs(w[i])): j+=1\n        vs=v[:,i:j+1]\n        s2=np.real(np.trace(vs.conj().T@Sr@vs))/(j-i+1)\n        if abs(s2-0.75)<1e-6:\n            out.append((w[i]-7500, j-i+1, np.real(np.trace(vs.conj().T@fast.Rop@vs))))\n        i=j+1\n    return out\nLz=np.array([sum(ms[x//2] for x in d) for d in dets])\nRop=np.diag(np.exp(-1j*np.pi/2*Lz))\nfast.Rop=Rop\ndef model(p):\n    Dq,B,C=p\n    q,_=levels_fast(Dq,B,C); g0=q[0]\n    vals=[]\n    for v in q:\n        if not vals or abs(v-vals[-1][0])>1e-2: vals.append([v,1])\n        else: vals[-1][1]+=1\n    qr=[(v-g0,m) for v,m in vals]\n    t2=[v for v,m in qr if m==12][1]; a2=[v for v,m in qr if m==4][0]; t1p=[v for v,m in qr if m==12][2]\n    dbl=analyze_fast(Dq,B,C)\n    t1=[e-g0 for e,dg,tr in dbl if dg==6 and abs(tr-2)<1e-3]\n    return np.array([t2,a2,t1p,t1[1]])\nobs=np.array([6150.,12400.,16850.,19000.])\nif __name__==\"__main__\":\n    import time; t=time.time(); print(model((673,795,3180)), time.time()-t)\n    best=None\n    for Dq0 in [550,650,750]:\n      for B0 in [700,850,1000]:\n        for C0 in [3000,4000,4500]:\n            s=least_squares(lambda p: model(p)-obs,[Dq0,B0,C0],x_scale=[100,100,300],max_nfev=100)\n            if best is None or s.cost<best.cost: best=s\n    print(\"params Dq,B,C:\",best.x)\n    print(\"model:\",model(best.x)); print(\"resid:\",model(best.x)-obs)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fitall2.py",
+     "written_in_step": 15
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[ 5825.75389918 12555.75389918 16846.50779835 17794.22397832] 0.0064830780029296875\nparams Dq,B,C: [ 673.03646356  794.89857155 3582.23136279]\nmodel: [ 5826.12638686 12556.49102242 16845.36671138 18999.9999534 ]\nresid: [-3.23873613e+02  1.56491022e+02 -4.63328862e+00 -4.65985649e-05]\nShell cwd was reset to /tmp/tsbench-run-me7o0ivn",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fitall2.py",
+     "line": 4,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fitall2.py",
+     "line": 9,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H+1e4*Sr)"
+    },
+    {
+     "script": "fitall2.py",
+     "line": 42,
+     "method": "least_squares",
+     "text": "s=least_squares(lambda p: model(p)-obs,[Dq0,B0,C0],x_scale=[100,100,300],max_nfev=100)"
+    }
+   ],
+   "produces": [
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 673.0,
+   "weak": false,
+   "steps": [
+    7,
+    10,
+    12,
+    15
+   ],
+   "typed_in_steps": [
+    15
+   ],
+   "source_step": 12
+  },
+  {
+   "path": "B",
+   "value": 795.0,
+   "weak": false,
+   "steps": [
+    7,
+    10,
+    12,
+    15
+   ],
+   "typed_in_steps": [
+    15
+   ],
+   "source_step": 12
+  },
+  {
+   "path": "C",
+   "value": 3580.0,
+   "weak": false,
+   "steps": [
+    15
+   ],
+   "typed_in_steps": [],
+   "source_step": 15
+  }
+ ],
+ "summary": {
+  "n_steps": 16,
+  "n_scripts": 11,
+  "n_failed_steps": 3,
+  "n_values": 3,
+  "n_linked": 3,
+  "n_weak": 0,
+  "source_steps": [
+   12,
+   15
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

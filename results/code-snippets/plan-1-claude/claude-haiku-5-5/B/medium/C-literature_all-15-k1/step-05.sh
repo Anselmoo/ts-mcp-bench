@@ -1,0 +1,1 @@
+cd /; python3 -c "import scipy.special as s; print(hasattr(s,'sph_harm_y'))"

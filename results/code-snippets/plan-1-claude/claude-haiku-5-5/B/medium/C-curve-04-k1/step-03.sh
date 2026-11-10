@@ -1,0 +1,1 @@
+mkdir -p /tmp/w && cd /tmp/w && echo ok

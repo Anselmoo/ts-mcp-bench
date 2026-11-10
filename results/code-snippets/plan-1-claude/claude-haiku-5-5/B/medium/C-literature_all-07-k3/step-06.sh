@@ -1,0 +1,2 @@
+
+cd /tmp/tsbench-run-uqj8uf3b && sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y\ndef sph_harm(m,l,az,pol): return sph_harm_y(l,m,pol,az)/' d5.py && python3 d5.py

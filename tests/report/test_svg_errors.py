@@ -176,3 +176,13 @@ def test_a_row_names_the_answers_it_leaves_out():
 
 def test_a_ratio_label_rounds_a_half_up():
     assert [E._num(v) for v in (2.25, 2.35, 100.5, 101.5, 0.125, 0.135)] == ["2.3", "2.4", "101", "102", "0.13", "0.14"]
+
+
+def test_bands_of_several_models_carry_their_label_and_name_the_model_in_the_tips():
+    groups = [{"cond": "A", "model": "m-long-name", "label": "m-long-name · A", "n_runs": 3,
+               "values": [{"task": "t1", "ratio": 2.0, "ok": False}]},
+              {"cond": "A", "model": "m2", "label": "m2 · A", "n_runs": 3,
+               "values": [{"task": "t1", "ratio": 0.5, "ok": True}]}]
+    svg = E.beeswarm(groups)
+    assert ">m-long-name · A<" in svg and ">m2 · A<" in svg
+    assert "t1 · m-long-name · A · error/tolerance 2" in svg and "m2 · A median 0.5" in svg

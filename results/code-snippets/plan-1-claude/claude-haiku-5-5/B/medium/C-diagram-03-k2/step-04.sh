@@ -1,0 +1,1 @@
+touch /tmp/x_test && echo ok; ls -ld /tmp/tsbench-home-xehwqch9 && touch /tmp/tsbench-home-xehwqch9/x && echo home_ok; df -h /tmp | tail -1

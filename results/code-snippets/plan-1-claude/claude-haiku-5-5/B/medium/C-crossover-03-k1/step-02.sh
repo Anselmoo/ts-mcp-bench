@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null || cd $HOME; pwd; touch x && echo ok

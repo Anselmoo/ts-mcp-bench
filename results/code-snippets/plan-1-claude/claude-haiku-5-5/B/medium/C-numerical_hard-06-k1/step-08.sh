@@ -1,0 +1,1 @@
+cd /dev/shm/w && python3 -c "import scipy;print(scipy.__version__); from scipy.special import sph_harm_y; print('ok')" ; sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y\ndef sph_harm(m,k,P,T): return sph_harm_y(k,m,T,P)/' d6.py && python3 run.py

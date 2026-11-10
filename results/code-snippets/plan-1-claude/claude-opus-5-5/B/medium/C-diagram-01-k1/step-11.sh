@@ -1,0 +1,1 @@
+export MPLCONFIGDIR=$PWD/.mpl; sed -i '/ex=get(dq)/d' run2.py; python3 run2.py | tail -9

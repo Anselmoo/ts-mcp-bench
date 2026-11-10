@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-uqj8uf3b 2>/dev/null && pwd; touch /tmp/tsbench-run-uqj8uf3b/t && echo ok; echo $HOME; touch $HOME/t && echo homeok

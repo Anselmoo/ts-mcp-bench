@@ -1,0 +1,1 @@
+pwd; touch x && echo ok; rm -f x

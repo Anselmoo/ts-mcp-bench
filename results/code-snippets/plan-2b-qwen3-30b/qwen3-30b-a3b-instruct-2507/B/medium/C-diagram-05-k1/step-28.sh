@@ -1,0 +1,1 @@
+mkdir -p <HOME>/.cache/tsbench/output && export MPLCONFIGDIR=<HOME>/.cache/tsbench/output

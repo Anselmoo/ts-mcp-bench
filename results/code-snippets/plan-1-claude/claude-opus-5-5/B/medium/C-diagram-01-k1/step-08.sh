@@ -1,0 +1,1 @@
+export MPLCONFIGDIR=$PWD/.mpl; sed -i '/if so\[a\]\[0\]!=so\[b\]\[0\]:continue/d' ts.py; python3 run.py

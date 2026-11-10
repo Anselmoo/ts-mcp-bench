@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>; sed -i 's/s+=F\[k\]\*(-1)\*\*q\*ck/s+=F[k]*ck/' a.py; python3 a.py

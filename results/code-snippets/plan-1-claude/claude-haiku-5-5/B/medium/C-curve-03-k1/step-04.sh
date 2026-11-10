@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch ./t_test 2>&1 && echo writable; ls -ld . ; echo $TMPDIR

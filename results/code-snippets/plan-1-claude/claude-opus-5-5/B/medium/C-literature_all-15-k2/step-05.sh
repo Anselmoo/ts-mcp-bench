@@ -1,0 +1,97 @@
+python3 - << 'EOF'
+import numpy as np, itertools
+from sympy.physics.wigner import gaunt
+from scipy.optimize import least_squares
+ms=[-2,-1,0,1,2]
+def ck(k,m1,m2):
+    q=m1-m2
+    if abs(q)>k: return 0.0
+    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))
+C={(k,a,b):ck(k,a,b) for k in (2,4) for a in ms for b in ms}
+so=[(m,s) for m in ms for s in (0,1)]
+dets=list(itertools.combinations(range(10),7))
+idx={d:i for i,d in enumerate(dets)}
+N=len(dets)
+def g(i,j,k,l,F):
+    (mi,si),(mj,sj),(mk,sk),(ml,sl)=so[i],so[j],so[k],so[l]
+    if si!=sk or sj!=sl or mi+mj!=mk+ml: return 0
+    return sum(F[kk]*C[(kk,mi,mk)]*C[(kk,ml,mj)] for kk in (2,4))
+def V1(i,j):
+    (mi,si),(mj,sj)=so[i],so[j]
+    if si!=sj: return 0
+    if mi==mj: return {0:6,1:-4,-1:-4,2:1,-2:1}[mi]
+    if abs(mi-mj)==4: return 5
+    return 0
+def apply(ops,det):
+    st=list(det); sign=1
+    for typ,o in reversed(ops):
+        if typ=='a':
+            if o not in st: return None,0
+            p=st.index(o); sign*=(-1)**p; st.pop(p)
+        else:
+            if o in st: return None,0
+            st.insert(0,o)
+    arr=st[:]; s=1
+    for a in range(len(arr)):
+        for b in range(len(arr)-1-a):
+            if arr[b]>arr[b+1]: arr[b],arr[b+1]=arr[b+1],arr[b]; s=-s
+    return tuple(arr),sign*s
+def build(F,Dq):
+    H=np.zeros((N,N))
+    for d in dets:
+        c=idx[d]
+        for i in range(10):
+            for j in range(10):
+                v=V1(i,j)*Dq
+                if v:
+                    r,s=apply([('c',i),('a',j)],d)
+                    if r: H[idx[r],c]+=v*s
+        for k in d:
+            for l in d:
+                if k==l: continue
+                for i in range(10):
+                    for j in range(10):
+                        v=g(i,j,k,l,F)
+                        if abs(v)>1e-12:
+                            r,s=apply([('c',i),('c',j),('a',l),('a',k)],d)
+                            if r: H[idx[r],c]+=0.5*v*s
+    return H
+H2=build({2:1,4:0},0);H4=build({2:0,4:1},0);HD=build({2:0,4:0},1)
+print(np.abs(H2-H2.T).max())
+Ms=np.array([sum(0.5 if so[o][1]==0 else -0.5 for o in d) for d in dets])
+c4=np.array([1j**(sum(so[o][0] for o in d)%4) for d in dets])
+sel=np.where(abs(Ms-0.5)<1e-9)[0]; s32=np.where(abs(Ms-1.5)<1e-9)[0]
+def levels(Dq,B,Cc):
+    F2=49*B+7*Cc; F4=12.6*Cc
+    H=F2*H2+F4*H4+Dq*HD
+    w,v=np.linalg.eigh(H[np.ix_(sel,sel)])
+    w32=np.linalg.eigvalsh(H[np.ix_(s32,s32)])
+    out=[];i=0
+    while i<len(w):
+        j=i
+        while j<len(w) and w[j]-w[i]<1e-3: j+=1
+        tr=np.real(np.sum(np.conj(v[:,i:j])*(c4[sel][:,None]*v[:,i:j])))
+        quart=np.any(abs(w32-w[i])<1e-3)
+        out.append((w[i],j-i,round(tr),'4' if quart else '2'))
+        i=j
+    e0=out[0][0]
+    return [(e-e0,d,t,s) for e,d,t,s in out]
+def label(L):
+    names=[];cnt={}
+    for e,d,t,s in L:
+        if d==3: n='T1' if t==1 else 'T2'
+        elif d==1: n='A1' if t==1 else 'A2'
+        elif d==2: n='E'
+        else: n='?%d'%d
+        key=s+n; cnt[key]=cnt.get(key,0)+1
+        names.append((key+'(%d)'%cnt[key],e))
+    return names
+print(label(levels(0,1000,4000))[:8])
+obs={'4T2(1)':8480,'4A2(1)':16305,'4T1(2)':20360,'2T1(2)':21001}
+def res(p):
+    nm=dict(label(levels(*p)))
+    return [nm[k]-v for k,v in obs.items()]
+r=least_squares(res,[800,850,3800])
+print(r.x,res(r.x))
+for n,e in label(levels(*r.x))[:16]: print(n,round(e))
+EOF

@@ -1,0 +1,526 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-curve-02-k1.jsonl",
+ "transcript_sha256": "ada01cd328e01f41df346d5211b69f49d61171730e2c1b5145d24a39778011cf",
+ "answer": {
+  "points": [
+   {
+    "dq_over_b": 1.0,
+    "term": "4T2g",
+    "e_over_b": 10.0
+   },
+   {
+    "dq_over_b": 1.0,
+    "term": "4T1g(F)",
+    "e_over_b": 16.48
+   },
+   {
+    "dq_over_b": 1.0,
+    "term": "2Eg",
+    "e_over_b": 19.15
+   },
+   {
+    "dq_over_b": 2.2,
+    "term": "2Eg",
+    "e_over_b": 19.75
+   },
+   {
+    "dq_over_b": 2.2,
+    "term": "2T1g",
+    "e_over_b": 20.67
+   },
+   {
+    "dq_over_b": 2.2,
+    "term": "4T2g",
+    "e_over_b": 22.0
+   },
+   {
+    "dq_over_b": 3.5,
+    "term": "2Eg",
+    "e_over_b": 20.1
+   },
+   {
+    "dq_over_b": 3.5,
+    "term": "2T1g",
+    "e_over_b": 20.92
+   },
+   {
+    "dq_over_b": 3.5,
+    "term": "4T2g",
+    "e_over_b": 35.0
+   }
+  ],
+  "reason": "I built the full d3 problem numerically (120 Slater determinants, cubic-field one-electron term plus Coulomb interaction with F2 = 49B + 7C and F4 = 63C/5, C/B = 4.16), diagonalized it in the M_S = 3/2 (quartet) and M_S = 1/2 (quartet + doublet) sectors, and labelled each level by its degeneracy and C4 character; the 4T2g = 10Dq check and the quartet/doublet separation confirm the assignments."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d3.py\nimport numpy as np, itertools\nfrom math import pi, sqrt\n# quadrature on sphere\nnt, nphi = 30, 60\nxg, wg = np.polynomial.legendre.leggauss(nt)\nphis = np.arange(nphi)*2*pi/nphi\nct, ph = np.meshgrid(xg, phis, indexing='ij'); W = (np.outer(wg, np.ones(nphi))*2*pi/nphi)\nst = np.sqrt(1-ct**2)\nX = st*np.cos(ph); Y = st*np.sin(ph); Z = ct\nP = np.stack([X.ravel(),Y.ravel(),Z.ravel()],1); w = W.ravel()\n# real d orbitals (angular, normalized): order t2g: xy,yz,xz ; eg: z2, x2-y2\ndef dfuncs(x,y,z):\n    return [sqrt(15/(4*pi))*x*y, sqrt(15/(4*pi))*y*z, sqrt(15/(4*pi))*x*z,\n            sqrt(5/(16*pi))*(3*z*z-1), sqrt(15/(16*pi))*(x*x-y*y)]\nD = np.array(dfuncs(P[:,0],P[:,1],P[:,2]))  # 5 x npts\n# real l=4 harmonics normalized via Gram-Schmidt on monomials (sufficient: spans all l=4 harmonics)\nmons=[]\nfor a in range(5):\n    for b in range(5-a):\n        for c in range(5-a-b):\n            if a+b+c==4: pass\nimport sympy as sp\nxs,ys,zs=sp.symbols('x y z')\nr2=xs**2+ys**2+zs**2\n# l=4 solid harmonics: generate harmonic polynomials of degree 4 by projecting monomials\nmonos=[xs**a*ys**b*zs**(4-a-b) for a in range(5) for b in range(5-a)]\n# harmonic projection: Laplacian kernel\nL=[]\nLmat=[]\ndef lap(p): return sp.diff(p,xs,2)+sp.diff(p,ys,2)+sp.diff(p,zs,2)\n# basis of harmonic polynomials of degree 4: null space of Laplacian on degree-4 monomials\nvecs=sp.Matrix([[sp.Poly(lap(m),xs,ys,zs).coeff_monomial(t) for m in monos] for t in [xs**a*ys**b*zs**(2-a-b) for a in range(3) for b in range(3-a)]])\nns=vecs.nullspace()\nH4=[sum(c*m for c,m in zip(v,monos)) for v in ns]\nassert len(H4)==9\nY4=[]\nf4=sp.lambdify((xs,ys,zs),0)\narrs=[]\nfor h in H4:\n    fn=sp.lambdify((xs,ys,zs),h,'numpy')\n    arrs.append(np.array(fn(P[:,0],P[:,1],P[:,2]),dtype=float)*np.ones(len(P)))\nA4=np.array(arrs)\n# orthonormalize on sphere\nG4=(A4*w)@A4.T\nLc=np.linalg.cholesky(np.linalg.inv(G4))\nY4=Lc.T@A4   # orthonormal wrt sum w\nY2=D*1.0\n# check orthonormality\nprint(np.allclose((Y2*w)@Y2.T,np.eye(5)), np.allclose((Y4*w)@Y4.T,np.eye(9)))\n# Racah: angular matrix elements\ndef Xk(Ykq, a, c): return np.sum(w*D[a]*D[c]*Ykq)\nAng={}\nVang=np.zeros((5,5,5,5))  # coefficient for k=2\nV4=np.zeros((5,5,5,5))\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    s2=sum(np.sum(w*D[a]*D[c]*Y2[q])*np.sum(w*D[b]*D[d]*Y2[q]) for q in range(5))\n    s4=sum(np.sum(w*D[a]*D[c]*Y4[q])*np.sum(w*D[b]*D[d]*Y4[q]) for q in range(9))\n    Vang[a,b,c,d]=4*pi/5*s2\n    V4[a,b,c,d]=4*pi/9*s4\n# Slater: F2 = 49B+7C, F4 = 63C/5\ndef run(x, B=1.0, C=3003/722):\n    F2=49*B+7*C; F4=63*C/5\n    V=F2*Vang+F4*V4   # <ab|1/r12|cd> spatial orbital indices\n    # spin-orbital basis: index=2*orb+spin\n    h1=np.zeros((10,10))\n    diag=[-4*x,-4*x,-4*x,6*x,6*x]\n    for o in range(5):\n        for s in range(2): h1[2*o+s,2*o+s]=diag[o]\n    n=10\n    Vso=np.zeros((n,n,n,n))\n    for i,j,k,l in itertools.product(range(n),repeat=4):\n        if (i%2)!=(l%2) or (j%2)!=(k%2): continue\n        Vso[i,j,k,l]=V[i//2,j//2,l//2,k//2]  # <ij|V|kl> with orbitals: a=i,c=l? careful\n    return h1,Vso\nEOF\necho ok",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "ebb6f64199112df6a4261dbf12710520bb1c11458bafa210360866c6d5ea5d52",
+     "lines": 74,
+     "code": "import numpy as np, itertools\nfrom math import pi, sqrt\n# quadrature on sphere\nnt, nphi = 30, 60\nxg, wg = np.polynomial.legendre.leggauss(nt)\nphis = np.arange(nphi)*2*pi/nphi\nct, ph = np.meshgrid(xg, phis, indexing='ij'); W = (np.outer(wg, np.ones(nphi))*2*pi/nphi)\nst = np.sqrt(1-ct**2)\nX = st*np.cos(ph); Y = st*np.sin(ph); Z = ct\nP = np.stack([X.ravel(),Y.ravel(),Z.ravel()],1); w = W.ravel()\n# real d orbitals (angular, normalized): order t2g: xy,yz,xz ; eg: z2, x2-y2\ndef dfuncs(x,y,z):\n    return [sqrt(15/(4*pi))*x*y, sqrt(15/(4*pi))*y*z, sqrt(15/(4*pi))*x*z,\n            sqrt(5/(16*pi))*(3*z*z-1), sqrt(15/(16*pi))*(x*x-y*y)]\nD = np.array(dfuncs(P[:,0],P[:,1],P[:,2]))  # 5 x npts\n# real l=4 harmonics normalized via Gram-Schmidt on monomials (sufficient: spans all l=4 harmonics)\nmons=[]\nfor a in range(5):\n    for b in range(5-a):\n        for c in range(5-a-b):\n            if a+b+c==4: pass\nimport sympy as sp\nxs,ys,zs=sp.symbols('x y z')\nr2=xs**2+ys**2+zs**2\n# l=4 solid harmonics: generate harmonic polynomials of degree 4 by projecting monomials\nmonos=[xs**a*ys**b*zs**(4-a-b) for a in range(5) for b in range(5-a)]\n# harmonic projection: Laplacian kernel\nL=[]\nLmat=[]\ndef lap(p): return sp.diff(p,xs,2)+sp.diff(p,ys,2)+sp.diff(p,zs,2)\n# basis of harmonic polynomials of degree 4: null space of Laplacian on degree-4 monomials\nvecs=sp.Matrix([[sp.Poly(lap(m),xs,ys,zs).coeff_monomial(t) for m in monos] for t in [xs**a*ys**b*zs**(2-a-b) for a in range(3) for b in range(3-a)]])\nns=vecs.nullspace()\nH4=[sum(c*m for c,m in zip(v,monos)) for v in ns]\nassert len(H4)==9\nY4=[]\nf4=sp.lambdify((xs,ys,zs),0)\narrs=[]\nfor h in H4:\n    fn=sp.lambdify((xs,ys,zs),h,'numpy')\n    arrs.append(np.array(fn(P[:,0],P[:,1],P[:,2]),dtype=float)*np.ones(len(P)))\nA4=np.array(arrs)\n# orthonormalize on sphere\nG4=(A4*w)@A4.T\nLc=np.linalg.cholesky(np.linalg.inv(G4))\nY4=Lc.T@A4   # orthonormal wrt sum w\nY2=D*1.0\n# check orthonormality\nprint(np.allclose((Y2*w)@Y2.T,np.eye(5)), np.allclose((Y4*w)@Y4.T,np.eye(9)))\n# Racah: angular matrix elements\ndef Xk(Ykq, a, c): return np.sum(w*D[a]*D[c]*Ykq)\nAng={}\nVang=np.zeros((5,5,5,5))  # coefficient for k=2\nV4=np.zeros((5,5,5,5))\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    s2=sum(np.sum(w*D[a]*D[c]*Y2[q])*np.sum(w*D[b]*D[d]*Y2[q]) for q in range(5))\n    s4=sum(np.sum(w*D[a]*D[c]*Y4[q])*np.sum(w*D[b]*D[d]*Y4[q]) for q in range(9))\n    Vang[a,b,c,d]=4*pi/5*s2\n    V4[a,b,c,d]=4*pi/9*s4\n# Slater: F2 = 49B+7C, F4 = 63C/5\ndef run(x, B=1.0, C=3003/722):\n    F2=49*B+7*C; F4=63*C/5\n    V=F2*Vang+F4*V4   # <ab|1/r12|cd> spatial orbital indices\n    # spin-orbital basis: index=2*orb+spin\n    h1=np.zeros((10,10))\n    diag=[-4*x,-4*x,-4*x,6*x,6*x]\n    for o in range(5):\n        for s in range(2): h1[2*o+s,2*o+s]=diag[o]\n    n=10\n    Vso=np.zeros((n,n,n,n))\n    for i,j,k,l in itertools.product(range(n),repeat=4):\n        if (i%2)!=(l%2) or (j%2)!=(k%2): continue\n        Vso[i,j,k,l]=V[i//2,j//2,l//2,k//2]  # <ij|V|kl> with orbitals: a=i,c=l? careful\n    return h1,Vso\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 79: /tmp/d3.py: Read-only file system\nok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 53,
+     "method": "matrix",
+     "text": "Vang=np.zeros((5,5,5,5))  # coefficient for k=2"
+    },
+    {
+     "script": "d3.py",
+     "line": 54,
+     "method": "matrix",
+     "text": "V4=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d3.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "h1=np.zeros((10,10))"
+    },
+    {
+     "script": "d3.py",
+     "line": 70,
+     "method": "matrix",
+     "text": "Vso=np.zeros((n,n,n,n))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "\nmkdir -p ~/d3 && cd ~/d3 && cat << 'EOF' > d3.py\nimport numpy as np, itertools, sympy as sp\nfrom math import pi, sqrt\nnt, nphi = 30, 60\nxg, wg = np.polynomial.legendre.leggauss(nt)\nphis = np.arange(nphi)*2*pi/nphi\nct, ph = np.meshgrid(xg, phis, indexing='ij'); W = (np.outer(wg, np.ones(nphi))*2*pi/nphi)\nst = np.sqrt(1-ct**2)\nP = np.stack([(st*np.cos(ph)).ravel(),(st*np.sin(ph)).ravel(),ct.ravel()],1); w = W.ravel()\nx,y,z = P[:,0],P[:,1],P[:,2]\nD = np.array([sqrt(15/(4*pi))*x*y, sqrt(15/(4*pi))*y*z, sqrt(15/(4*pi))*x*z,\n              sqrt(5/(16*pi))*(3*z*z-1), sqrt(15/(16*pi))*(x*x-y*y)])\nxs,ys,zs=sp.symbols('x y z')\nmonos=[xs**a*ys**b*zs**(4-a-b) for a in range(5) for b in range(5-a)]\ndef lap(p): return sp.diff(p,xs,2)+sp.diff(p,ys,2)+sp.diff(p,zs,2)\nrows=[]\ntargets=[xs**a*ys**b*zs**(2-a-b) for a in range(3) for b in range(3-a)]\nM=sp.Matrix([[sp.Poly(lap(m),xs,ys,zs).coeff_monomial(t) for m in monos] for t in targets])\nns=M.nullspace()\nA4=np.array([[float(sp.lambdify((xs,ys,zs),sum(c*m for c,m in zip(v,monos)),'numpy')(*P.T)) for v in ns]]).reshape(len(ns),-1) if False else None\nA4=[]\nfor v in ns:\n    h=sum(c*m for c,m in zip(v,monos))\n    f=sp.lambdify((xs,ys,zs),h,'numpy')\n    A4.append(np.asarray(f(x,y,z),dtype=float)*np.ones_like(x))\nA4=np.array(A4)\nG4=(A4*w)@A4.T\nY4=np.linalg.cholesky(np.linalg.inv(G4)).T@A4\nY2=D\nassert np.allclose((Y2*w)@Y2.T,np.eye(5)) and np.allclose((Y4*w)@Y4.T,np.eye(9))\nVang=np.zeros((5,)*4); V4=np.zeros((5,)*4)\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    Vang[a,b,c,d]=4*pi/5*sum(np.sum(w*D[a]*D[c]*Y2[q])*np.sum(w*D[b]*D[d]*Y2[q]) for q in range(5))\n    V4[a,b,c,d]=4*pi/9*sum(np.sum(w*D[a]*D[c]*Y4[q])*np.sum(w*D[b]*D[d]*Y4[q]) for q in range(9))\n# rotation C4 about z: (x,y,z)->(-y,x,z)\nPr = np.stack([-y,x,z],1)\nDr = np.array([sqrt(15/(4*pi))*Pr[:,0]*Pr[:,1], sqrt(15/(4*pi))*Pr[:,1]*Pr[:,2], sqrt(15/(4*pi))*Pr[:,0]*Pr[:,2],\n              sqrt(5/(16*pi))*(3*Pr[:,2]**2-1), sqrt(15/(16*pi))*(Pr[:,0]**2-Pr[:,1]**2)])\nRm = (D*w)@Dr.T   # Rm[i,j] = int phi_i(x) phi_j(Rx)\nR4 = np.eye(5)\ndef dets(n_el, nsp=10):\n    return list(itertools.combinations(range(nsp), n_el))\ndef apply_c(det, i, dag):\n    # returns (sign, newdet) or None\n    if dag:\n        if i in det: return None\n        pos=sum(1 for d in det if d<i)\n        nd=tuple(sorted(det+(i,)))\n    else:\n        if i not in det: return None\n        pos=det.index(i)\n        nd=tuple(d for d in det if d!=i)\n    return (-1)**pos, nd\ndef build(x_dq, B=1.0, C=3003/722):\n    F2=49*B+7*C; F4=63*C/5\n    V=F2*Vang+F4*V4\n    h1=np.zeros(10)\n    diag=[-4*x_dq]*3+[6*x_dq]*2\n    for o in range(5):\n        for s in range(2): h1[2*o+s]=diag[o]\n    # two-body list\n    terms=[]\n    for i,j,k,l in itertools.product(range(10),repeat=4):\n        if (i%2)!=(k%2) or (j%2)!=(l%2): continue\n        val=V[i//2,j//2,k//2,l//2]\n        if abs(val)>1e-12: terms.append((i,j,k,l,0.5*val))\n    return h1, terms\ndef hamiltonian(dl, terms, h1):\n    out={}\n    for n_up in [3,2]:\n        pass\ndef matrix_sector(basis, h1, terms, x_dq):\n    idx={d:n for n,d in enumerate(basis)}\n    N=len(basis); H=np.zeros((N,N))\n    for n,det in enumerate(basis):\n        for i in det: H[n,n]+=h1[i]\n        for (i,j,k,l,val) in terms:\n            # a†_i a†_j a_l a_k |det>\n            r=apply_c(det,k,False)\n            if r is None: continue\n            s1,d1=r\n            r=apply_c(d1,l,False)\n            if r is None: continue\n            s2,d2=r\n            r=apply_c(d2,j,True)\n            if r is None: continue\n            s3,d3=r\n            r=apply_c(d3,i,True)\n            if r is None: continue\n            s4,d4=r\n            if d4 in idx:\n                H[idx[d4],n]+=val*s1*s2*s3*s4\n    return H\ndef rot_matrix_so(basis, Rorb):\n    # Lambda^3 of spin-diagonal single-particle matrix Rorb (10x10), restricted to basis\n    idx={d:n for n,d in enumerate(basis)}\n    N=len(basis); G=np.zeros((N,N))\n    for n,det in enumerate(basis):   # column = input det\n        for m,nd in enumerate(basis):\n            G[m,n]=np.linalg.det(Rorb[np.ix_(list(nd),list(det))])\n    return G\ndef analyze(x_dq):\n    h1,terms=build(x_dq)\n    Rso=np.zeros((10,10))\n    for o in range(5):\n        for o2 in range(5):\n            for s in range(2): Rso[2*o+s,2*o2+s]=Rm[o,o2]  # placeholder\n    return None\nEOF\npython3 -c \"import sys; sys.path.insert(0,'.'); import d3; print('ok')\"",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "cea9b5bd32744165beb5c6eda6f96b8ead0f1cd0cccb755602418cf5810fa21e",
+     "lines": 107,
+     "code": "import numpy as np, itertools, sympy as sp\nfrom math import pi, sqrt\nnt, nphi = 30, 60\nxg, wg = np.polynomial.legendre.leggauss(nt)\nphis = np.arange(nphi)*2*pi/nphi\nct, ph = np.meshgrid(xg, phis, indexing='ij'); W = (np.outer(wg, np.ones(nphi))*2*pi/nphi)\nst = np.sqrt(1-ct**2)\nP = np.stack([(st*np.cos(ph)).ravel(),(st*np.sin(ph)).ravel(),ct.ravel()],1); w = W.ravel()\nx,y,z = P[:,0],P[:,1],P[:,2]\nD = np.array([sqrt(15/(4*pi))*x*y, sqrt(15/(4*pi))*y*z, sqrt(15/(4*pi))*x*z,\n              sqrt(5/(16*pi))*(3*z*z-1), sqrt(15/(16*pi))*(x*x-y*y)])\nxs,ys,zs=sp.symbols('x y z')\nmonos=[xs**a*ys**b*zs**(4-a-b) for a in range(5) for b in range(5-a)]\ndef lap(p): return sp.diff(p,xs,2)+sp.diff(p,ys,2)+sp.diff(p,zs,2)\nrows=[]\ntargets=[xs**a*ys**b*zs**(2-a-b) for a in range(3) for b in range(3-a)]\nM=sp.Matrix([[sp.Poly(lap(m),xs,ys,zs).coeff_monomial(t) for m in monos] for t in targets])\nns=M.nullspace()\nA4=np.array([[float(sp.lambdify((xs,ys,zs),sum(c*m for c,m in zip(v,monos)),'numpy')(*P.T)) for v in ns]]).reshape(len(ns),-1) if False else None\nA4=[]\nfor v in ns:\n    h=sum(c*m for c,m in zip(v,monos))\n    f=sp.lambdify((xs,ys,zs),h,'numpy')\n    A4.append(np.asarray(f(x,y,z),dtype=float)*np.ones_like(x))\nA4=np.array(A4)\nG4=(A4*w)@A4.T\nY4=np.linalg.cholesky(np.linalg.inv(G4)).T@A4\nY2=D\nassert np.allclose((Y2*w)@Y2.T,np.eye(5)) and np.allclose((Y4*w)@Y4.T,np.eye(9))\nVang=np.zeros((5,)*4); V4=np.zeros((5,)*4)\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    Vang[a,b,c,d]=4*pi/5*sum(np.sum(w*D[a]*D[c]*Y2[q])*np.sum(w*D[b]*D[d]*Y2[q]) for q in range(5))\n    V4[a,b,c,d]=4*pi/9*sum(np.sum(w*D[a]*D[c]*Y4[q])*np.sum(w*D[b]*D[d]*Y4[q]) for q in range(9))\n# rotation C4 about z: (x,y,z)->(-y,x,z)\nPr = np.stack([-y,x,z],1)\nDr = np.array([sqrt(15/(4*pi))*Pr[:,0]*Pr[:,1], sqrt(15/(4*pi))*Pr[:,1]*Pr[:,2], sqrt(15/(4*pi))*Pr[:,0]*Pr[:,2],\n              sqrt(5/(16*pi))*(3*Pr[:,2]**2-1), sqrt(15/(16*pi))*(Pr[:,0]**2-Pr[:,1]**2)])\nRm = (D*w)@Dr.T   # Rm[i,j] = int phi_i(x) phi_j(Rx)\nR4 = np.eye(5)\ndef dets(n_el, nsp=10):\n    return list(itertools.combinations(range(nsp), n_el))\ndef apply_c(det, i, dag):\n    # returns (sign, newdet) or None\n    if dag:\n        if i in det: return None\n        pos=sum(1 for d in det if d<i)\n        nd=tuple(sorted(det+(i,)))\n    else:\n        if i not in det: return None\n        pos=det.index(i)\n        nd=tuple(d for d in det if d!=i)\n    return (-1)**pos, nd\ndef build(x_dq, B=1.0, C=3003/722):\n    F2=49*B+7*C; F4=63*C/5\n    V=F2*Vang+F4*V4\n    h1=np.zeros(10)\n    diag=[-4*x_dq]*3+[6*x_dq]*2\n    for o in range(5):\n        for s in range(2): h1[2*o+s]=diag[o]\n    # two-body list\n    terms=[]\n    for i,j,k,l in itertools.product(range(10),repeat=4):\n        if (i%2)!=(k%2) or (j%2)!=(l%2): continue\n        val=V[i//2,j//2,k//2,l//2]\n        if abs(val)>1e-12: terms.append((i,j,k,l,0.5*val))\n    return h1, terms\ndef hamiltonian(dl, terms, h1):\n    out={}\n    for n_up in [3,2]:\n        pass\ndef matrix_sector(basis, h1, terms, x_dq):\n    idx={d:n for n,d in enumerate(basis)}\n    N=len(basis); H=np.zeros((N,N))\n    for n,det in enumerate(basis):\n        for i in det: H[n,n]+=h1[i]\n        for (i,j,k,l,val) in terms:\n            # a†_i a†_j a_l a_k |det>\n            r=apply_c(det,k,False)\n            if r is None: continue\n            s1,d1=r\n            r=apply_c(d1,l,False)\n            if r is None: continue\n            s2,d2=r\n            r=apply_c(d2,j,True)\n            if r is None: continue\n            s3,d3=r\n            r=apply_c(d3,i,True)\n            if r is None: continue\n            s4,d4=r\n            if d4 in idx:\n                H[idx[d4],n]+=val*s1*s2*s3*s4\n    return H\ndef rot_matrix_so(basis, Rorb):\n    # Lambda^3 of spin-diagonal single-particle matrix Rorb (10x10), restricted to basis\n    idx={d:n for n,d in enumerate(basis)}\n    N=len(basis); G=np.zeros((N,N))\n    for n,det in enumerate(basis):   # column = input det\n        for m,nd in enumerate(basis):\n            G[m,n]=np.linalg.det(Rorb[np.ix_(list(nd),list(det))])\n    return G\ndef analyze(x_dq):\n    h1,terms=build(x_dq)\n    Rso=np.zeros((10,10))\n    for o in range(5):\n        for o2 in range(5):\n            for s in range(2): Rso[2*o+s,2*o2+s]=Rm[o,o2]  # placeholder\n    return None\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/d3’: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import sys; sys.path.insert(0,'.'); import d3; print('ok')\n                                        ^^^^^^^^^\nModuleNotFoundError: No module named 'd3'",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "A4=np.array([[float(sp.lambdify((xs,ys,zs),sum(c*m for c,m in zip(v,monos)),'numpy')(*P.T)) for v in ns]]).reshape(len(ns),-1) if False else None"
+    },
+    {
+     "script": "d3.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "Vang=np.zeros((5,)*4); V4=np.zeros((5,)*4)"
+    },
+    {
+     "script": "d3.py",
+     "line": 73,
+     "method": "matrix",
+     "text": "N=len(basis); H=np.zeros((N,N))"
+    },
+    {
+     "script": "d3.py",
+     "line": 96,
+     "method": "matrix",
+     "text": "N=len(basis); G=np.zeros((N,N))"
+    },
+    {
+     "script": "d3.py",
+     "line": 99,
+     "method": "matrix",
+     "text": "G[m,n]=np.linalg.det(Rorb[np.ix_(list(nd),list(det))])"
+    },
+    {
+     "script": "d3.py",
+     "line": 103,
+     "method": "matrix",
+     "text": "Rso=np.zeros((10,10))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "pwd; echo $HOME; for d in \"$PWD\" /root /var/tmp /dev/shm; do touch \"$d/.w\" 2>/dev/null && echo \"writable: $d\" && rm -f \"$d/.w\"; done",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-run-s2tzcfyu\n/tmp/tsbench-home-xehwqch9\nwritable: /tmp/tsbench-run-s2tzcfyu\nwritable: /dev/shm",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-s2tzcfyu && cat << 'EOF' > d3.py\nimport numpy as np, itertools, sympy as sp\nfrom math import pi, sqrt\nnt, nphi = 30, 60\nxg, wg = np.polynomial.legendre.leggauss(nt)\nphis = np.arange(nphi)*2*pi/nphi\nct, ph = np.meshgrid(xg, phis, indexing='ij'); W = (np.outer(wg, np.ones(nphi))*2*pi/nphi)\nst = np.sqrt(1-ct**2)\nP = np.stack([(st*np.cos(ph)).ravel(),(st*np.sin(ph)).ravel(),ct.ravel()],1); w = W.ravel()\nx,y,z = P[:,0],P[:,1],P[:,2]\ndef dorb(x,y,z):\n    return np.array([sqrt(15/(4*pi))*x*y, sqrt(15/(4*pi))*y*z, sqrt(15/(4*pi))*x*z,\n              sqrt(5/(16*pi))*(3*z*z-1), sqrt(15/(16*pi))*(x*x-y*y)])\nD = dorb(x,y,z)\nxs,ys,zs=sp.symbols('x y z')\nmonos=[xs**a*ys**b*zs**(4-a-b) for a in range(5) for b in range(5-a)]\ndef lap(p): return sp.diff(p,xs,2)+sp.diff(p,ys,2)+sp.diff(p,zs,2)\ntargets=[xs**a*ys**b*zs**(2-a-b) for a in range(3) for b in range(3-a)]\nM=sp.Matrix([[sp.Poly(lap(m),xs,ys,zs).coeff_monomial(t) for m in monos] for t in targets])\nns=M.nullspace()\nA4=[]\nfor v in ns:\n    h=sum(c*m for c,m in zip(v,monos))\n    f=sp.lambdify((xs,ys,zs),h,'numpy')\n    A4.append(np.asarray(f(x,y,z),dtype=float)*np.ones_like(x))\nA4=np.array(A4)\nG4=(A4*w)@A4.T\nY4=np.linalg.cholesky(np.linalg.inv(G4)).T@A4\nY2=D\nassert np.allclose((Y2*w)@Y2.T,np.eye(5)) and np.allclose((Y4*w)@Y4.T,np.eye(9))\nVang=np.zeros((5,)*4); V4=np.zeros((5,)*4)\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    Vang[a,b,c,d]=4*pi/5*sum(np.sum(w*D[a]*D[c]*Y2[q])*np.sum(w*D[b]*D[d]*Y2[q]) for q in range(5))\n    V4[a,b,c,d]=4*pi/9*sum(np.sum(w*D[a]*D[c]*Y4[q])*np.sum(w*D[b]*D[d]*Y4[q]) for q in range(9))\n# C4 about z: (x,y,z)->(-y,x,z)\nDr=dorb(-y,x,z)\nRorb=(D*w)@Dr.T   # Rorb[i,j]=int phi_i(x) phi_j(Rx)\nassert np.allclose(Rorb@Rorb.T,np.eye(5))\ndef apply_c(det, i, dag):\n    if dag:\n        if i in det: return None\n        pos=sum(1 for d in det if d<i); nd=tuple(sorted(det+(i,)))\n    else:\n        if i not in det: return None\n        pos=det.index(i); nd=tuple(d for d in det if d!=i)\n    return (-1)**pos, nd\ndef sector_basis(nup, ndn):\n    ups=[2*o for o in range(5)]; dns=[2*o+1 for o in range(5)]\n    B=[]\n    for a in itertools.combinations(ups,nup):\n        for b in itertools.combinations(dns,ndn):\n            B.append(tuple(sorted(a+b)))\n    return B\ndef run(x_dq, B=1.0, C=3003/722):\n    F2=49*B+7*C; F4=63*C/5\n    V=F2*Vang+F4*V4\n    h1=np.zeros(10)\n    diag=[-4*x_dq]*3+[6*x_dq]*2\n    for o in range(5):\n        for s in range(2): h1[2*o+s]=diag[o]\n    terms=[]\n    for i,j,k,l in itertools.product(range(10),repeat=4):\n        if (i%2)!=(k%2) or (j%2)!=(l%2): continue\n        val=V[i//2,j//2,k//2,l//2]\n        if abs(val)>1e-12: terms.append((i,j,k,l,0.5*val))\n    def mat(basis):\n        idx={d:n for n,d in enumerate(basis)}\n        N=len(basis); H=np.zeros((N,N))\n        for n,det in enumerate(basis):\n            for i in det: H[n,n]+=h1[i]\n            for (i,j,k,l,val) in terms:\n                r=apply_c(det,k,False)\n                if r is None: continue\n                s1,d1=r; r=apply_c(d1,l,False)\n                if r is None: continue\n                s2,d2=r; r=apply_c(d2,j,True)\n                if r is None: continue\n                s3,d3=r; r=apply_c(d3,i,True)\n                if r is None: continue\n                s4,d4=r\n                if d4 in idx: H[idx[d4],n]+=val*s1*s2*s3*s4\n        return H\n    def rot(basis):\n        N=len(basis); G=np.zeros((N,N))\n        Rso=np.zeros((10,10))\n        for o in range(5):\n            for o2 in range(5):\n                for s in range(2): Rso[2*o+s,2*o2+s]=Rorb[o,o2]\n        for n,det in enumerate(basis):\n            for m,nd in enumerate(basis):\n                G[m,n]=np.linalg.det(Rso[np.ix_(list(nd),list(det))])\n        return G\n    out={}\n    # quartets M_S=3/2\n    bq=sector_basis(3,0); Hq=mat(bq); Gq=rot(bq)\n    eq,vq=np.linalg.eigh(Hq)\n    # doublets M_S=1/2 : nup=2, ndn=1\n    bd=sector_basis(2,1); Hd=mat(bd); Gd=rot(bd)\n    ed,vd=np.linalg.eigh(Hd)\n    # check commuting\n    assert np.allclose(Hd@Gd,Gd@Hd,atol=1e-8)\n    terms_out=[]\n    # quartets: group by energy, character of C4 in each cluster\n    def clusters(e):\n        groups=[]; \n        for k,val in enumerate(e):\n            if groups and abs(val-groups[-1][0][1])<1e-7: groups[-1].append((k,val))\n            else: groups.append([(k,val)])\n        return groups\n    qres=[]\n    for g in clusters(eq):\n        ks=[k for k,_ in g]; V_=vq[:,ks]\n        chi=np.trace(V_.T@Gq@V_)\n        qres.append((g[0][1], len(ks), round(chi.real,3)))\n    # doublets: remove quartet eigenvalues from M_S=1/2 spectrum\n    # C4 on full M_S=1/2 space, decompose by eigenvalue; quartet components inside M_S=1/2 space also present\n    dres=[]\n    for g in clusters(ed):\n        ks=[k for k,_ in g]; V_=vd[:,ks]\n        chi=np.trace(V_.T@Gd@V_)\n        dres.append((g[0][1], len(ks), round(chi.real,3)))\n    # remove quartet energies (multiplicity from quartets' M_S=1/2 components)\n    return qres, dres\nif __name__=='__main__':\n    import sys\n    for xd in [1.0,2.2,3.5]:\n        q,dd=run(xd)\n        print('Dq/B',xd)\n        print(' quartets:',[(round(e,4),n,c) for e,n,c in q])\n        print(' M_S=1/2 :',[(round(e,4),n,c) for e,n,c in dd])\nEOF\npython3 d3.py",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "bdd20faae689631f0ef77cf3c40df71eae81d4936ea2e8af069c05938911389e",
+     "lines": 129,
+     "code": "import numpy as np, itertools, sympy as sp\nfrom math import pi, sqrt\nnt, nphi = 30, 60\nxg, wg = np.polynomial.legendre.leggauss(nt)\nphis = np.arange(nphi)*2*pi/nphi\nct, ph = np.meshgrid(xg, phis, indexing='ij'); W = (np.outer(wg, np.ones(nphi))*2*pi/nphi)\nst = np.sqrt(1-ct**2)\nP = np.stack([(st*np.cos(ph)).ravel(),(st*np.sin(ph)).ravel(),ct.ravel()],1); w = W.ravel()\nx,y,z = P[:,0],P[:,1],P[:,2]\ndef dorb(x,y,z):\n    return np.array([sqrt(15/(4*pi))*x*y, sqrt(15/(4*pi))*y*z, sqrt(15/(4*pi))*x*z,\n              sqrt(5/(16*pi))*(3*z*z-1), sqrt(15/(16*pi))*(x*x-y*y)])\nD = dorb(x,y,z)\nxs,ys,zs=sp.symbols('x y z')\nmonos=[xs**a*ys**b*zs**(4-a-b) for a in range(5) for b in range(5-a)]\ndef lap(p): return sp.diff(p,xs,2)+sp.diff(p,ys,2)+sp.diff(p,zs,2)\ntargets=[xs**a*ys**b*zs**(2-a-b) for a in range(3) for b in range(3-a)]\nM=sp.Matrix([[sp.Poly(lap(m),xs,ys,zs).coeff_monomial(t) for m in monos] for t in targets])\nns=M.nullspace()\nA4=[]\nfor v in ns:\n    h=sum(c*m for c,m in zip(v,monos))\n    f=sp.lambdify((xs,ys,zs),h,'numpy')\n    A4.append(np.asarray(f(x,y,z),dtype=float)*np.ones_like(x))\nA4=np.array(A4)\nG4=(A4*w)@A4.T\nY4=np.linalg.cholesky(np.linalg.inv(G4)).T@A4\nY2=D\nassert np.allclose((Y2*w)@Y2.T,np.eye(5)) and np.allclose((Y4*w)@Y4.T,np.eye(9))\nVang=np.zeros((5,)*4); V4=np.zeros((5,)*4)\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    Vang[a,b,c,d]=4*pi/5*sum(np.sum(w*D[a]*D[c]*Y2[q])*np.sum(w*D[b]*D[d]*Y2[q]) for q in range(5))\n    V4[a,b,c,d]=4*pi/9*sum(np.sum(w*D[a]*D[c]*Y4[q])*np.sum(w*D[b]*D[d]*Y4[q]) for q in range(9))\n# C4 about z: (x,y,z)->(-y,x,z)\nDr=dorb(-y,x,z)\nRorb=(D*w)@Dr.T   # Rorb[i,j]=int phi_i(x) phi_j(Rx)\nassert np.allclose(Rorb@Rorb.T,np.eye(5))\ndef apply_c(det, i, dag):\n    if dag:\n        if i in det: return None\n        pos=sum(1 for d in det if d<i); nd=tuple(sorted(det+(i,)))\n    else:\n        if i not in det: return None\n        pos=det.index(i); nd=tuple(d for d in det if d!=i)\n    return (-1)**pos, nd\ndef sector_basis(nup, ndn):\n    ups=[2*o for o in range(5)]; dns=[2*o+1 for o in range(5)]\n    B=[]\n    for a in itertools.combinations(ups,nup):\n        for b in itertools.combinations(dns,ndn):\n            B.append(tuple(sorted(a+b)))\n    return B\ndef run(x_dq, B=1.0, C=3003/722):\n    F2=49*B+7*C; F4=63*C/5\n    V=F2*Vang+F4*V4\n    h1=np.zeros(10)\n    diag=[-4*x_dq]*3+[6*x_dq]*2\n    for o in range(5):\n        for s in range(2): h1[2*o+s]=diag[o]\n    terms=[]\n    for i,j,k,l in itertools.product(range(10),repeat=4):\n        if (i%2)!=(k%2) or (j%2)!=(l%2): continue\n        val=V[i//2,j//2,k//2,l//2]\n        if abs(val)>1e-12: terms.append((i,j,k,l,0.5*val))\n    def mat(basis):\n        idx={d:n for n,d in enumerate(basis)}\n        N=len(basis); H=np.zeros((N,N))\n        for n,det in enumerate(basis):\n            for i in det: H[n,n]+=h1[i]\n            for (i,j,k,l,val) in terms:\n                r=apply_c(det,k,False)\n                if r is None: continue\n                s1,d1=r; r=apply_c(d1,l,False)\n                if r is None: continue\n                s2,d2=r; r=apply_c(d2,j,True)\n                if r is None: continue\n                s3,d3=r; r=apply_c(d3,i,True)\n                if r is None: continue\n                s4,d4=r\n                if d4 in idx: H[idx[d4],n]+=val*s1*s2*s3*s4\n        return H\n    def rot(basis):\n        N=len(basis); G=np.zeros((N,N))\n        Rso=np.zeros((10,10))\n        for o in range(5):\n            for o2 in range(5):\n                for s in range(2): Rso[2*o+s,2*o2+s]=Rorb[o,o2]\n        for n,det in enumerate(basis):\n            for m,nd in enumerate(basis):\n                G[m,n]=np.linalg.det(Rso[np.ix_(list(nd),list(det))])\n        return G\n    out={}\n    # quartets M_S=3/2\n    bq=sector_basis(3,0); Hq=mat(bq); Gq=rot(bq)\n    eq,vq=np.linalg.eigh(Hq)\n    # doublets M_S=1/2 : nup=2, ndn=1\n    bd=sector_basis(2,1); Hd=mat(bd); Gd=rot(bd)\n    ed,vd=np.linalg.eigh(Hd)\n    # check commuting\n    assert np.allclose(Hd@Gd,Gd@Hd,atol=1e-8)\n    terms_out=[]\n    # quartets: group by energy, character of C4 in each cluster\n    def clusters(e):\n        groups=[]; \n        for k,val in enumerate(e):\n            if groups and abs(val-groups[-1][0][1])<1e-7: groups[-1].append((k,val))\n            else: groups.append([(k,val)])\n        return groups\n    qres=[]\n    for g in clusters(eq):\n        ks=[k for k,_ in g]; V_=vq[:,ks]\n        chi=np.trace(V_.T@Gq@V_)\n        qres.append((g[0][1], len(ks), round(chi.real,3)))\n    # doublets: remove quartet eigenvalues from M_S=1/2 spectrum\n    # C4 on full M_S=1/2 space, decompose by eigenvalue; quartet components inside M_S=1/2 space also present\n    dres=[]\n    for g in clusters(ed):\n        ks=[k for k,_ in g]; V_=vd[:,ks]\n        chi=np.trace(V_.T@Gd@V_)\n        dres.append((g[0][1], len(ks), round(chi.real,3)))\n    # remove quartet energies (multiplicity from quartets' M_S=1/2 components)\n    return qres, dres\nif __name__=='__main__':\n    import sys\n    for xd in [1.0,2.2,3.5]:\n        q,dd=run(xd)\n        print('Dq/B',xd)\n        print(' quartets:',[(round(e,4),n,c) for e,n,c in q])\n        print(' M_S=1/2 :',[(round(e,4),n,c) for e,n,c in dd])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d3.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq/B 1.0\n quartets: [(np.float64(-44.469), 1, np.float64(-1.0)), (np.float64(-34.469), 3, np.float64(-1.0)), (np.float64(-27.9898), 3, np.float64(1.0)), (np.float64(-15.9482), 3, np.float64(1.0))]\n M_S=1/2 : [(np.float64(-44.469), 1, np.float64(-1.0)), (np.float64(-34.469), 3, np.float64(-1.0)), (np.float64(-27.9898), 3, np.float64(1.0)), (np.float64(-25.3207), 2, np.float64(0.0)), (np.float64(-24.3988), 3, np.float64(1.0)), (np.float64(-18.4554), 3, np.float64(-1.0)), (np.float64(-17.9911), 1, np.float64(1.0)), (np.float64(-15.9482), 3, np.float64(1.0)), (np.float64(-15.1302), 3, np.float64(-1.0)), (np.float64(-14.1834), 3, np.float64(1.0)), (np.float64(-11.9215), 2, np.float64(0.0)), (np.float64(-9.1202), 3, np.float64(1.0)), (np.float64(-4.5757), 3, np.float64(1.0)), (np.float64(-4.1823), 3, np.float64(-1.0)), (np.float64(2.0089), 1, np.float64(-1.0)), (np.float64(2.4423), 2, np.float64(-0.0)), (np.float64(2.9549), 3, np.float64(-1.0)), (np.float64(7.3225), 3, np.float64(1.0)), (np.float64(26.4725), 2, np.float64(0.0)), (np.float64(28.4944), 3, np.float64(-1.0))]\nDq/B 2.2\n quartets: [(np.float64(-58.869), 1, np.float64(-1.0)), (np.float64(-36.869), 3, np.float64(-1.0)), (np.float64(-27.2149), 3, np.float64(1.0)), (np.float64(-9.5231), 3, np.float64(1.0))]\n M_S=1/2 : [(np.float64(-58.869), 1, np.float64(-1.0)), (np.float64(-39.124), 2, np.float64(-0.0)), (np.float64(-38.2007), 3, np.float64(1.0)), (np.float64(-36.869), 3, np.float64(-1.0)), (np.float64(-29.3626), 3, np.float64(-1.0)), (np.float64(-27.2149), 3, np.float64(1.0)), (np.float64(-20.3911), 1, np.float64(1.0)), (np.float64(-17.2816), 3, np.float64(-1.0)), (np.float64(-16.6265), 3, np.float64(1.0)), (np.float64(-14.3145), 2, np.float64(0.0)), (np.float64(-9.8319), 3, np.float64(1.0)), (np.float64(-9.5231), 3, np.float64(1.0)), (np.float64(-2.499), 3, np.float64(-1.0)), (np.float64(-0.3911), 1, np.float64(-1.0)), (np.float64(4.8074), 3, np.float64(1.0)), (np.float64(7.1753), 3, np.float64(-1.0)), (np.float64(10.6588), 2, np.float64(0.0)), (np.float64(14.896), 3, np.float64(1.0)), (np.float64(35.6493), 3, np.float64(-1.0)), (np.float64(36.8522), 2, np.float64(-0.0))]\nDq/B 3.5\n quartets: [(np.float64(-74.469), 1, np.float64(-1.0)), (np.float64(-39.469), 3, np.float64(-1.0)), (np.float64(-28.7868), 3, np.float64(1.0)), (np.float64(-0.1512), 3, np.float64(1.0))]\n M_S=1/2 : [(np.float64(-74.469), 1, np.float64(-1.0)), (np.float64(-54.37), 2, np.float64(-0.0)), (np.float64(-53.5517), 3, np.float64(1.0)), (np.float64(-43.1277), 3, np.float64(-1.0)), (np.float64(-39.469), 3, np.float64(-1.0)), (np.float64(-28.7868), 3, np.float64(1.0)), (np.float64(-22.9911), 1, np.float64(1.0)), (np.float64(-19.6287), 3, np.float64(-1.0)), (np.float64(-19.2325), 3, np.float64(1.0)), (np.float64(-16.9167), 2, np.float64(0.0)), (np.float64(-11.7764), 3, np.float64(1.0)), (np.float64(-5.3152), 3, np.float64(-1.0)), (np.float64(-2.9911), 1, np.float64(-1.0)), (np.float64(-0.1512), 3, np.float64(1.0)), (np.float64(10.9236), 2, np.float64(0.0)), (np.float64(15.1352), 3, np.float64(1.0)), (np.float64(16.8935), 3, np.float64(-1.0)), (np.float64(24.4697), 3, np.float64(1.0)), (np.float64(44.8596), 3, np.float64(-1.0)), (np.float64(57.0357), 2, np.float64(-0.0))]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "Vang=np.zeros((5,)*4); V4=np.zeros((5,)*4)"
+    },
+    {
+     "script": "d3.py",
+     "line": 67,
+     "method": "matrix",
+     "text": "N=len(basis); H=np.zeros((N,N))"
+    },
+    {
+     "script": "d3.py",
+     "line": 83,
+     "method": "matrix",
+     "text": "N=len(basis); G=np.zeros((N,N))"
+    },
+    {
+     "script": "d3.py",
+     "line": 84,
+     "method": "matrix",
+     "text": "Rso=np.zeros((10,10))"
+    },
+    {
+     "script": "d3.py",
+     "line": 90,
+     "method": "matrix",
+     "text": "G[m,n]=np.linalg.det(Rso[np.ix_(list(nd),list(det))])"
+    },
+    {
+     "script": "d3.py",
+     "line": 95,
+     "method": "eigen_solver",
+     "text": "eq,vq=np.linalg.eigh(Hq)"
+    },
+    {
+     "script": "d3.py",
+     "line": 98,
+     "method": "eigen_solver",
+     "text": "ed,vd=np.linalg.eigh(Hd)"
+    },
+    {
+     "script": "d3.py",
+     "line": 125,
+     "method": "typed_table",
+     "text": "for xd in [1.0,2.2,3.5]:"
+    }
+   ],
+   "produces": [
+    "points[2].e_over_b"
+   ]
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-s2tzcfyu && python3 -c \"\nfrom d3 import run\nfor xd in [1.0,2.2,3.5]:\n    q,d=run(xd)\n    g=q[0][0]\n    quart=[(e-g,n,c,'Q') for e,n,c in q[1:]]\n    # remove quartet energies from doublet list\n    dl=[(e,n,c) for e,n,c in d]\n    for e,n,c in q:\n        for i,(ee,nn,cc) in enumerate(dl):\n            if abs(ee-e)<1e-6 and nn>=n:\n                dl[i]=(ee,nn-n,cc); break\n    dd=[(ee-g,nn,cc) for ee,nn,cc in dl if nn>0 and abs(ee-g)>1e-6]\n    print(xd, 'quartets', [(round(a,4),b,c) for a,b,c,_ in quart])\n    print('  doublets', [(round(a,4),b,c) for a,b,c in dd[:4]])\n\"\n",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1.0 quartets [(np.float64(10.0), 3, np.float64(-1.0)), (np.float64(16.4792), 3, np.float64(1.0)), (np.float64(28.5208), 3, np.float64(1.0))]\n  doublets [(np.float64(19.1483), 2, np.float64(0.0)), (np.float64(20.0702), 3, np.float64(1.0)), (np.float64(26.0136), 3, np.float64(-1.0)), (np.float64(26.4778), 1, np.float64(1.0))]\n2.2 quartets [(np.float64(22.0), 3, np.float64(-1.0)), (np.float64(31.6541), 3, np.float64(1.0)), (np.float64(49.3459), 3, np.float64(1.0))]\n  doublets [(np.float64(19.745), 2, np.float64(-0.0)), (np.float64(20.6683), 3, np.float64(1.0)), (np.float64(29.5063), 3, np.float64(-1.0)), (np.float64(38.4778), 1, np.float64(1.0))]\n3.5 quartets [(np.float64(35.0), 3, np.float64(-1.0)), (np.float64(45.6822), 3, np.float64(1.0)), (np.float64(74.3178), 3, np.float64(1.0))]\n  doublets [(np.float64(20.099), 2, np.float64(-0.0)), (np.float64(20.9173), 3, np.float64(1.0)), (np.float64(31.3413), 3, np.float64(-1.0)), (np.float64(51.4778), 1, np.float64(1.0))]",
+   "stdout_truncated": false,
+   "methods": [
+    "typed_table"
+   ],
+   "key_lines": [],
+   "produces": [
+    "points[1].e_over_b",
+    "points[3].dq_over_b",
+    "points[3].e_over_b",
+    "points[4].dq_over_b",
+    "points[4].e_over_b",
+    "points[5].dq_over_b",
+    "points[6].dq_over_b",
+    "points[6].e_over_b",
+    "points[7].dq_over_b",
+    "points[7].e_over_b",
+    "points[8].dq_over_b"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "points[0].dq_over_b",
+   "value": 1.0,
+   "weak": true,
+   "steps": [
+    1,
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    1,
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[0].e_over_b",
+   "value": 10.0,
+   "weak": true,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[1].dq_over_b",
+   "value": 1.0,
+   "weak": true,
+   "steps": [
+    1,
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    1,
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[1].e_over_b",
+   "value": 16.48,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[2].dq_over_b",
+   "value": 1.0,
+   "weak": true,
+   "steps": [
+    1,
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    1,
+    3
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[2].e_over_b",
+   "value": 19.15,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  },
+  {
+   "path": "points[3].dq_over_b",
+   "value": 2.2,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[3].e_over_b",
+   "value": 19.75,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[4].dq_over_b",
+   "value": 2.2,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[4].e_over_b",
+   "value": 20.67,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[5].dq_over_b",
+   "value": 2.2,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[5].e_over_b",
+   "value": 22.0,
+   "weak": true,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[6].dq_over_b",
+   "value": 3.5,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[6].e_over_b",
+   "value": 20.1,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[7].dq_over_b",
+   "value": 3.5,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[7].e_over_b",
+   "value": 20.92,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[8].dq_over_b",
+   "value": 3.5,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[8].e_over_b",
+   "value": 35.0,
+   "weak": true,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 5,
+  "n_scripts": 3,
+  "n_failed_steps": 1,
+  "n_values": 18,
+  "n_linked": 12,
+  "n_weak": 6,
+  "source_steps": [
+   3,
+   4
+  ],
+  "methods": [
+   "eigen_solver",
+   "typed_table"
+  ],
+  "edits_in_place": false
+ }
+}

@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch ./x_test 2>&1; echo $HOME; df -h . | tail -1

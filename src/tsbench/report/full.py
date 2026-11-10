@@ -2,6 +2,8 @@
 
     tsbench report full --runs DIR [--runs DIR2 ...] --out REPORT.html [--title T] [--no-gallery] [--no-figures]
                         [--coverage COVERAGE.json [--mutation DIR [DIR ...]]]
+                        [--split pilot|confirmatory] [--i-have-preregistered DOI]
+                        [--page-budget MB] [--publication] [--images DIR] [--redactions FILE]
 
 The page has six tabs (`TABS`): the models, the tasks, the published spectra, the checks of the benchmark code (with
 `--coverage`, a coverage.py JSON with `pytest.log` beside it, and `--mutation`, one or more folders of
@@ -9,10 +11,22 @@ The page has six tabs (`TABS`): the models, the tasks, the published spectra, th
 contents of three levels (`context()["toc"]`). Where each figure sits, at which width and with which question as its
 caption is data (`PLACEMENT`); the last section of a tab with figures lists them all. Every number comes from
 report/facts.py and report/method.py; every figure is a static SVG of report/svg/. The page states no interpretation.
-Every model of the run sets is analysed: the tabs Models, Tasks and Published spectra hold one view per model
-(`context()["views"]`, ids prefixed by the model), the tab Models starts with a comparison of the models (`COMPARE`)
-and a switch in the top bar picks the view. With one model there is one view without a prefix, no switch and no
-comparison.
+Every model of the run sets stands on the same pages, in the order of `base.model_key`: there is one layout and one
+table of contents. A table has one row per model where its rows differ by model, a task or a system has one row with
+the answers of every model, and each figure of a page of several models is its all-models version (`ALL_MODELS`,
+`_all_models_figures`) on one scale. With one model the tables have no model column and the figures are those of one
+run set (`_models_figures`).
+The page is one file. It holds every image and every code block of the runs, whole, and the per-run figures, so it may
+reach 100 MB; `--page-budget MB` limits what images and figures may take, the rest being only a link to a file beside
+the page (`gallery.ImagePool`). `--publication`, implied by the confirmatory split, refuses to write a page with such a
+link (`page.local_links`). `--images DIR` adds the images a run left outside its folder, from the index
+`<DIR>/<run set>.index.csv` (`gallery.image_index`). `--redactions FILE` is for a page built from a published copy
+whose machine paths were replaced: a transcript logged in the file counts as matching the hash of its manifest, and the
+page says how many did (`method.read_redactions`).
+The page reads the tasks of one split (`--split`, default pilot). A run set of the confirmatory split is refused
+without `--i-have-preregistered <DOI>`, and every run set must record the split asked for. A confirmatory page names
+the DOI in its header and opens the tab Models with the preregistered tests of each run set that holds
+hypotheses.json (`PREREG`, report/prereg.py).
 Like the gallery, the report writes scores.csv and per-run figures into the run folders when they are missing; build
 it from a copy of runs you want untouched. The page is templates/full.html.j2.
 """
@@ -26,8 +40,8 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from tsbench.report import facts, gallery, method, page, taskview
-from tsbench.report.base import pilot_hash
+from tsbench.report import comparison, facts, gallery, method, page, prereg, taskview
+from tsbench.report.base import SPLITS, display_model, model_key, split_hash, split_refusal
 from tsbench.report.svg import (
     bars,
     base,
@@ -52,7 +66,7 @@ from tsbench.report.svg import (
 from tsbench.score.artifacts import TranscriptCache
 from tsbench.score.run_sets import run_sets_in
 
-__all__ = ["ALL", "COMPARE", "MODEL_TABS", "PLACEMENT", "REPORT_VERSION", "TABS", "build_html", "context", "main",
+__all__ = ["ALL", "ALL_MODELS", "PLACEMENT", "PREREG", "REPORT_VERSION", "TABS", "build_html", "context", "main",
            "run_sets_in"]
 
 REPORT_VERSION = "4"
@@ -112,14 +126,33 @@ PLACEMENT: dict[str, list[tuple[str, list[tuple[str, str, str]]]]] = {
     ],
 }
 WIDTH = {"full": base.FULL_W, "half": base.HALF_W}
-# The tabs that hold one view per model, and the section that opens the tab Models when there are several models.
-MODEL_TABS = ("models", "tasks", "spectra")
-COMPARE = ("Models compared", [("model_shares", "full", "How often does each model answer correctly under A, B and C?"),
-                               ("model_paired", "full", "How much does C change the share, model by model?")])
+# The figures of the tabs Models, Tasks and Published spectra on a page of several models: per key its question. They
+# take the place of their one-model figure and are drawn at the full width.
+ALL_MODELS = {
+    "share": "How often does each model answer correctly under A, B and C?",
+    "paired": "How much does C change the share, model by model?",
+    "outcome": "Which kind of error does each model make under each condition?",
+    "swarm": "How far outside the tolerance do the wrong answers of each model lie?",
+    "sunburst": "Which call paths does each model take, and how do they end?",
+    "tool_output": "How much text does each tool return to each model?",
+    "cost": "How do tokens and the share correct differ by model and condition?",
+    "upset": "Which combination of conditions solves each task, model by model?",
+    "matrix": "Which server tool follows which in C, model by model?",
+    "cost_map": "Where does the cost of each model go, by class and task?",
+    "classes": "Which classes does each model solve under each condition?",
+    "ledger": "How far from passing is each answer of each model, task by task?",
+    "literature": "How far do the paper value and the answers of each model lie from the oracle fit?",
+}
+MAP_HEIGHT = 360.0, 96.0  # the map of the model that cost most, and the lowest map that still holds its headers
 COMPARE_PAIRS = ("C − A", "C − B")  # the paired differences of the comparison table
+# The section that opens the tab Models of a confirmatory page whose run sets hold hypotheses.json, and its tables.
+PREREG = "Preregistered tests"
+PREREG_TABLES = (("primary", "Primary family"), ("secondary", "Secondary tests"), ("mcnemar", "McNemar tests"),
+                 ("efficiency", "Efficiency ratios"))
 # The tables a table-of-contents entry points to: per tab and section (id, title). The template gives each the id.
 TABLES = {
-    "models": {"Overview": [("tbl-shares", "Share correct"), ("tbl-paired", "Paired differences")],
+    "models": {"Overview": [("tbl-models", "Models"), ("tbl-shares", "Share correct"),
+                            ("tbl-paired", "Paired differences")],
                "Outcomes": [("tbl-outcome", "Runs per category")],
                "Tool use": [("tbl-tools", "Runs with and without a call"), ("tbl-paths", "Call paths")],
                "Cost": [("tbl-medians", "Median per run"), ("tbl-usd", "Cost in USD")]},
@@ -137,13 +170,14 @@ NOT_RECORDED = facts.NOT_RECORDED
 NO_REAL_COST = "no real cost (gateway)"
 
 
-def section_id(tab: str, title: str, pfx: str = "") -> str:
-    """The html id of a section (h2) of a tab: `models-error-size`; in the view of a model `models-<pfx>error-size`."""
-    return f"{tab}-{pfx}" + re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+def section_id(tab: str, title: str) -> str:
+    """The html id of a section (h2) of a tab: `models-error-size`."""
+    return f"{tab}-" + re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
 
 
 def _prefixes(names: list[str]) -> dict[str, str]:
-    """The id prefix of each model's view: "" for a single model, else the slug of its name and "-", unique."""
+    """The id prefix of what each model repeats (its solution paths): "" for a single model, else the slug of its
+    name and "-", unique."""
     if len(names) <= 1:
         return dict.fromkeys(names, "")
     out: dict[str, str] = {}
@@ -305,8 +339,8 @@ def _page_header(heads: list[dict]) -> dict:
 
 
 def _models_figures(b: dict, href: Callable[[str], str] = task_href) -> dict[str, Callable[[float], str]]:
-    """Per figure key of the tabs Models, Tasks and Published spectra: the builder at a given width. `href` is the
-    link of a task mark to its row in the view of the same model."""
+    """Per figure key of the tabs Models, Tasks and Published spectra: the builder at a given width, for one model.
+    `href` is the link of a task mark to its row."""
     c_calls = bool([r for r in b["calls"] if r["cond"] == "C"])
     estimate = bool(b["header"].get("cost_is_estimate"))
     axes = [a for a in b["cost"]["axes"] if a[0] != "duration_s" and _spread(b["cost"]["runs"], a[0])
@@ -359,15 +393,99 @@ def _platform_figures(p: dict) -> dict[str, Callable[[float], str]]:
             "tree": lambda w: platform.file_tree(p["tree"]["entries"], p["tree"]["chain"], width=w)}
 
 
-def _compare_figures(rows: list[dict]) -> dict[str, Callable[[float], str]]:
-    return {"model_shares": lambda w: models.model_shares(rows, width=w),
-            "model_paired": lambda w: models.model_paired(rows, width=w)}
+def _categories(benches: Sequence[dict]) -> list[tuple[str, str]]:
+    """The outcome categories of several models, in the order of `facts.CATEGORIES` and `facts.EXTRA`."""
+    seen = {k: label for b in benches for k, label in b["categories"]}
+    rank = {k: i for i, (k, _) in enumerate([*facts.CATEGORIES, *facts.EXTRA])}
+    return sorted(seen.items(), key=lambda kv: rank.get(kv[0], len(rank)))
 
 
-def _draw(builders: dict[str, Callable[[float], str]], pfx: str = "",
+def _bubble_points(benches: Mapping[str, dict]) -> list[dict]:
+    """One point per model and condition: the median output tokens of `medians` and the share correct of `shares`."""
+    out = []
+    for model, b in benches.items():
+        medians = {m["cond"]: m for m in b["cost"]["medians"]}
+        out += [{"model": model, "label": display_model(model), "cond": s["cond"], "share": s["share"], "k": s["k"],
+                 "n": s["n"], "tokens": medians.get(s["cond"], {}).get("output_tokens")} for s in b["shares"]]
+    return out
+
+
+def _cost_maps(benches: Mapping[str, dict], categories: list[tuple[str, str]],
+               width: float) -> list[tuple[str, str]]:
+    """The cost map of each model with a real cost, at a height in proportion to its total (`MAP_HEIGHT`): one area
+    scale, except for a map raised to the least height that stays readable, which says so. A gateway model has no real
+    cost and no map."""
+    rows = {m: [{**r, "value": r["values"].get("cost_usd") or 0.0} for r in b["runs"]] for m, b in benches.items()
+            if not b["header"].get("cost_is_estimate")}
+    totals = {m: sum(r["value"] for r in rs) for m, rs in rows.items()}
+    top = max(totals.values(), default=0.0) or 1.0
+    tall, low = MAP_HEIGHT
+    return [(m, maps.run_map(rows[m], categories, "USD", width=width, height=max(low, tall * totals[m] / top),
+                             raised=tall * totals[m] / top < low) if m in rows else "") for m in benches]
+
+
+def _all_models_figures(benches: Mapping[str, dict], compare: list[dict],
+                        href: Callable[[str], str] = task_href) -> dict[str, Callable[[float], str]]:
+    """Per figure key of the tabs Models, Tasks and Published spectra: the builder at a given width, for all models on
+    one scale. A model is a row or a band where the figure can hold it; a figure that cannot is drawn once per model,
+    as panels of `base.panels`."""
+    names, bs = list(benches), list(benches.values())
+    categories = _categories(bs)
+    tools = sorted({t for b in bs for t in b["tools"]})
+    transitions = max((n for b in bs for n in b["transitions"].values()), default=0)
+    scale = outcome.upset_scale([b["upset"] for b in bs])
+
+    def small(title: str, draw: Callable[[dict, float], str], w: float, cols: int = 2) -> str:
+        pw = base.panel_width(w, cols)
+        return base.panels(title, [(m, draw(b, pw)) for m, b in benches.items()], width=w, cols=cols)
+
+    def matrix_of(b: dict, w: float) -> str:
+        if not [r for r in b["calls"] if r["cond"] == "C"]:
+            return ""
+        return matrix.transition_matrix(tools, b["transitions"], width=w, top=transitions)
+
+    return {
+        "share": lambda w: models.model_shares(compare, width=w),
+        "paired": lambda w: models.model_paired(compare, width=w),
+        "outcome": lambda w: outcome.outcome_diverging(
+            [{**o, "label": f"{m} · {o['cond']}", "group": m} for m, b in benches.items() for o in b["outcome"]],
+            categories, width=w),
+        "swarm": lambda w: errors.beeswarm(
+            [{**g, "model": m, "label": f"{m} · {g['cond']}"} for m, b in benches.items() for g in b["swarm"]],
+            width=w, task_href=href),
+        "sunburst": lambda w: small("Sunburst of call paths per model",
+                                    lambda b, p: flows.sunburst(b["calls"], width=p) if b["calls"] else "", w),
+        "tool_output": lambda w: toolout.tool_rows([(m, b["tool_output"]) for m, b in benches.items()], width=w),
+        "cost": lambda w: models.model_bubbles(_bubble_points(benches), width=w),
+        "upset": lambda w: small("Tasks per subset of conditions per model", lambda b, p: outcome.upset(
+            b["upset"], width=p, excluded=b.get("upset_excluded") or (), conds=b["header"]["conds"], scale=scale), w),
+        "matrix": lambda w: small("Tool transitions per model", matrix_of, w, cols=1),
+        "cost_map": lambda w: base.panels("USD of every run per model", _cost_maps(benches, categories, w), width=w,
+                                          cols=1),
+        "classes": lambda w: models.class_heat(
+            [{"model": m, "conds": b["header"]["conds"], "classes": b["tasks_view"]} for m, b in benches.items()],
+            comparison.heat_color, width=w),
+        "ledger": lambda w: small("Task ledger per model",
+                                  lambda b, p: ledger.task_ledger(b["ledger"], width=p, task_href=href), w, cols=1),
+        "literature": lambda w: small(
+            "Reported against oracle values per model",
+            lambda b, p: dots.literature_dots(b["literature"], width=p, task_href=href) if b["literature"] else "",
+            w, cols=1),
+    } if names else {}
+
+
+def _placement(multi: bool) -> dict[str, list[tuple[str, list[tuple[str, str, str]]]]]:
+    """`PLACEMENT`; on a page of several models the figures of `ALL_MODELS` take their question and the full width."""
+    if not multi:
+        return PLACEMENT
+    return {tab: [(section, [(k, "full", ALL_MODELS[k]) if k in ALL_MODELS else (k, w, q) for k, w, q in figs])
+                  for section, figs in sections] for tab, sections in PLACEMENT.items()}
+
+
+def _draw(builders: dict[str, Callable[[float], str]],
           placement: dict[str, list[tuple[str, list[tuple[str, str, str]]]]] = PLACEMENT) -> dict[str, dict]:
     """Every placed figure that has a builder, drawn at its width: key -> {tab, section, width, question, id, svg}.
-    The id is `fig-<pfx><key>`. A builder that returns nothing (no data) leaves its figure out."""
+    The id is `fig-<key>`. A builder that returns nothing (no data) leaves its figure out."""
     out = {}
     for tab, sections in placement.items():
         for section, figs in sections:
@@ -377,7 +495,7 @@ def _draw(builders: dict[str, Callable[[float], str]], pfx: str = "",
                 svg = builders[key](WIDTH[width])
                 if svg:
                     out[key] = {"tab": tab, "section": section, "width": width, "question": question,
-                                "id": f"fig-{pfx}{key}", "svg": page.svg(svg)}
+                                "id": f"fig-{key}", "svg": page.svg(svg)}
     return out
 
 
@@ -445,40 +563,47 @@ def _keep(benches: Mapping[str, dict]) -> set[tuple[str, str, str, int]] | None:
 # ---------------------------------------------------------------- table of contents
 
 
-def _tab_toc(tab: str, figs: dict[str, dict], b: dict | None, c: dict | None, gal: dict | None,
-             pfx: str = "") -> list[tuple[int, str, str]]:
-    """The entries of the table of contents of a tab (or of one model's view of it) in page order: (level, id, title);
-    level 2 a section, 3 a sub-section, 4 a figure, a table or a task."""
+def _tab_toc(tab: str, figs: dict[str, dict], blocks: list[dict], c: dict | None, gal: dict | None,
+             placement: dict = PLACEMENT, multi: bool = False) -> list[tuple[int, str, str]]:
+    """The entries of the table of contents of a tab in page order: (level, id, title); level 2 a section, 3 a
+    sub-section, 4 a figure, a table or a task."""
     entries: list[tuple[int, str, str]] = []
-    for section, placed in PLACEMENT[tab]:
+    for section, placed in placement[tab]:
         if tab == "checks" and c is None and section != "Overview":
             continue
-        entries.append((2, section_id(tab, section, pfx), section))
+        entries.append((2, section_id(tab, section), section))
         if not (tab == "checks" and c is None):
-            entries += [(4, _table_id(i, pfx), title) for i, title in TABLES.get(tab, {}).get(section, [])]
-        entries += _sub_entries(tab, section, b, c, gal)
+            entries += [(4, i, title) for i, title in TABLES.get(tab, {}).get(section, [])
+                        if multi or i != "tbl-models"]
+        entries += _sub_entries(tab, section, blocks, c, gal)
         entries += [(4, figs[k]["id"], q) for k, _, q in placed if k in figs]
     return entries
 
 
-def _compare_toc(figs: dict[str, dict]) -> list[tuple[int, str, str]]:
-    """The entries of the comparison of the models: its section, its table and its figures."""
-    title, placed = COMPARE
-    return [(2, section_id("models", title), title), (4, "tbl-models", "Models"),
-            *[(4, figs[k]["id"], q) for k, _, q in placed if k in figs]]
+def _family_title(block: dict, kind: str, title: str) -> str:
+    """The title of the Holm table names the family of its block (primary, or the secondary family of plans 2a-2c)."""
+    return "Secondary family" if kind == "primary" and block.get("family") == "secondary" else title
 
 
-def _table_id(ident: str, pfx: str) -> str:
-    """`tbl-shares` in the view of a model: `tbl-<pfx>shares`."""
-    return "tbl-" + pfx + ident.removeprefix("tbl-")
+def _prereg_toc(blocks: list[dict]) -> list[tuple[int, str, str]]:
+    """The entries of the preregistered tests: their section and per block its tables (ids as the macro
+    `prereg_tables` of _macros.html.j2 gives them); [] without a block."""
+    if not blocks:
+        return []
+    out = [(2, section_id("models", PREREG), PREREG)]
+    for i, b in enumerate(blocks, 1):
+        sfx, of = ("", "") if i == 1 else (f"-{i}", f" · {b['set']}")
+        out += [(4, f"tbl-hyp-{kind}{sfx}", _family_title(b, kind, title) + of) for kind, title in PREREG_TABLES
+                if b[kind]]
+    return out
 
 
-def _sub_entries(tab: str, section: str, b: dict | None, c: dict | None,
+def _sub_entries(tab: str, section: str, blocks: list[dict], c: dict | None,
                  gal: dict | None) -> list[tuple[int, str, str]]:
     """The sub-sections and rows of a section that the table of contents lists."""
     out: list[tuple[int, str, str]] = []
-    if (tab, section) == ("tasks", "Tasks") and b:
-        for block in b["tasks_view"]:
+    if (tab, section) == ("tasks", "Tasks"):
+        for block in blocks:
             out.append((3, block["anchor"], block["class"]))
             out += [(4, row["anchor"], row["id"]) for row in block["tasks"]]
     elif (tab, section) == ("checks", "Coverage") and c:
@@ -510,54 +635,66 @@ def _run_classes(gal: dict) -> list[dict]:
 
 
 def context(run_sets, out: pathlib.Path, title: str | None = None, coverage=None, mutation=(),
-            with_gallery: bool = True, make_figs: bool = True) -> dict:
+            with_gallery: bool = True, make_figs: bool = True, budget: int | None = None, split: str = "pilot",
+            doi: str | None = None, images: pathlib.Path | None = None,
+            redactions: pathlib.Path | None = None) -> dict:
     """The facts of the six tabs, their figures, the method tables, the table of contents and the gallery.
     `coverage` (coverage.py JSON) and `mutation` (folders of `<shard>/<shard>.json`) give the tab Code checks; without
-    `coverage` the tab names the missing input. `views` holds per model, most evaluable runs first, what the tabs of
-    `MODEL_TABS` show of it: {model, pfx, bench, figs, paths, task_ids, toc}."""
+    `coverage` the tab names the missing input. `views` holds per model, in the order of `model_key`, its facts and
+    call paths: {model, bench, paths, task_ids}; `task_blocks` and `systems` hold the rows of the tasks and the
+    published systems with the answers of every model. `budget` is the size in bytes that the images and figures of the
+    gallery may fill the page to, None: no limit. `split` names the tasks that are read; a confirmatory page carries
+    `doi` in its header and the preregistered tests in `hypotheses`. `images`: see `gallery.collect_runs`. `redactions`:
+    the log of a published copy (`method.read_redactions`)."""
     out = pathlib.Path(out)
+    confirmatory = split == "confirmatory"
     reader = TranscriptCache()  # the facts and the gallery read each transcript through it
-    benches = facts.benchmarks(run_sets, out, reader)
+    benches = facts.benchmarks(run_sets, out, reader, split=split)
+    benches = {m: benches[m] for m in sorted(benches, key=model_key)}
     multi = len(benches) > 1
     checks = None
     if coverage:
         checks = facts.checks(pathlib.Path(coverage), [pathlib.Path(m) for m in mutation], SRC,
                               TESTS if TESTS.is_dir() else None)
-    plat = facts.platform(run_sets, keep=_keep(benches))
-    meth = method.facts(run_sets, benches, checks, plat, version=REPORT_VERSION)
+    plat = facts.platform(run_sets, keep=_keep(benches), split=split)
+    log = method.read_redactions(pathlib.Path(redactions)) if redactions else None
+    meth = method.facts(run_sets, benches, checks, plat, version=REPORT_VERSION, split=split, doi=doi, redactions=log)
     if checks:
         _checks_view(checks)
-    gal = gallery.context(run_sets, out.parent, make_figs, reader)[0] if with_gallery else None
+    gal = gallery.context(run_sets, out.parent, make_figs, reader, split, budget, images)[0] if with_gallery else None
     first = _gallery_anchors(gal)
     cards = {card["anchor"] for t in gal["run_tasks"] for card in t["cards"]} if gal else set()
     pfx = _prefixes(list(benches))
-    views = [_model_view(m, b, pfx[m], first.get(m, {}), cards, checks, gal) for m, b in benches.items()]
+    views = [_model_view(m, b, first.get(m, {}), cards) for m, b in benches.items()]
     compare = _compare_view(facts.models_overview(benches)) if multi else None
-    figs = _draw(_platform_figures(plat) | (_checks_figures(checks) if checks else {}))
-    toc = {tab: _tab_toc(tab, figs, None, checks, gal) for tab, _ in TABS if tab not in MODEL_TABS}
-    if compare is not None:
-        figs |= _draw(_compare_figures(compare), placement={"models": [COMPARE]})
-        toc |= {"models": _compare_toc(figs), "tasks": [], "spectra": []}
-    else:
-        toc |= views[0]["toc"]
-    toc = {tab: toc[tab] for tab, _ in TABS}
-    header = _page_header([v["bench"]["header"] for v in views])
+    placement = _placement(multi)
+    builders = _platform_figures(plat) | (_checks_figures(checks) if checks else {})
+    builders |= _all_models_figures(benches, compare) if compare is not None else _models_figures(views[0]["bench"])
+    figs = _draw(builders, placement)
+    task_blocks = _task_blocks(views)
+    tests = prereg.hypotheses(run_sets) if confirmatory else []
+    toc = {tab: _tab_toc(tab, figs, task_blocks, checks, gal, placement, multi) for tab, _ in TABS}
+    toc["models"] = _prereg_toc(tests) + toc["models"]
+    header = {**_page_header([v["bench"]["header"] for v in views]), "split": split,
+              "preregistration": doi if confirmatory else None}
     task_ids = set().union(*(v["task_ids"] for v in views))
-    pilot = pilot_hash()
+    tasks_sha = split_hash(split)
     survivors = _survivors(checks) if checks else []
     unlisted = checks["mutation"]["unlisted"] if checks else []
     return {"title": title or "TS-MCP benchmark report", "header": header, "bench": views[0]["bench"],
             "views": views, "multi": multi, "compare": compare, "compare_conds": header["conds"],
+            "task_blocks": task_blocks, "systems": _systems(views),
+            "hypotheses": tests, "PREREG": PREREG,
             "checks": checks, "platform": plat, "method": meth, "gal": gal, "figs": figs,
-            "solution_paths": [{**sp, "hid": v["pfx"] + sp["id"], "model": v["model"]}
+            "solution_paths": [{**sp, "hid": pfx[v["model"]] + sp["id"], "model": v["model"]}
                                for v in views for sp in v["bench"]["solution_paths"]],
             "survivors": survivors, "survivor_rows": survivor_rows(survivors, unlisted=unlisted),
             "run_classes": _run_classes(gal) if gal else [], "code_conds": _code_conds(gal) if gal else [],
-            "task_ids": task_ids, "task_href": _task_linker(pfx, task_ids),
+            "task_ids": task_ids, "task_href": _task_linker(task_ids),
             "notes": _notes(benches, checks, plat), "toc": toc,
-            "tabs": TABS, "model_tabs": MODEL_TABS, "placement": PLACEMENT, "ALL": ALL, "COMPARE": COMPARE,
+            "tabs": TABS, "placement": placement, "ALL": ALL,
             "compare_pairs": COMPARE_PAIRS, "section_id": section_id,
-            "ident": {"version": REPORT_VERSION, "tasks": (pilot or "")[:7],
+            "ident": {"version": REPORT_VERSION, "tasks": (tasks_sha or "")[:7],
                       "commit": header["commit"] or ""}}
 
 
@@ -593,34 +730,54 @@ def survivor_rows(survivors: list[dict], modules: int = 15, functions: int = 3,
     return rows
 
 
-def _model_view(model: str, b: dict, pfx: str, first: dict[tuple[str, str], str], cards: set[str], checks: dict | None,
-                gal: dict | None) -> dict:
-    """What the tabs of `MODEL_TABS` show of one model: its facts with the ids of its view (task rows `task-<pfx><id>`,
-    classes `cls-<pfx><class>`), its figures (`fig-<pfx><key>`, task marks linked into the same view), its call paths
-    and its table of contents."""
+def _model_view(model: str, b: dict, first: dict[tuple[str, str], str], cards: set[str]) -> dict:
+    """The facts of one model: with their text forms, the ids of the classes (`cls-<class>`) and tasks (`task-<id>`),
+    the links of its answers to their run cards, and its call paths."""
     _view(b)
     for block in b["tasks_view"]:
-        block["anchor"] = _html_id("cls-" + pfx, block["class"])
+        block["anchor"] = _html_id("cls-", block["class"])
         for row in block["tasks"]:
-            row["anchor"] = f"task-{pfx}{row['id']}"
+            row["anchor"] = f"task-{row['id']}"
     _answer_links(b, first, cards)
-    figs = _draw(_models_figures(b, lambda task: f"#task-{pfx}{task}"), pfx)
-    return {"model": model, "pfx": pfx, "bench": b, "figs": figs, "paths": flows.path_rows(b["calls"]),
-            "task_ids": {row["id"] for blk in b["tasks_view"] for row in blk["tasks"]},
-            "toc": {tab: _tab_toc(tab, figs, b, checks, gal, pfx) for tab in MODEL_TABS}}
+    return {"model": model, "bench": b, "paths": flows.path_rows(b["calls"]),
+            "task_ids": {row["id"] for blk in b["tasks_view"] for row in blk["tasks"]}}
 
 
-def _task_linker(pfx: dict[str, str], task_ids: set[str]) -> Callable[..., str | None]:
-    """The link of a task named outside the views (gallery, solution paths) to its row in the view of `model`; a
-    model without a view links to the first view; a task without a row has no link."""
-    default = next(iter(pfx.values()), "")
+def _task_blocks(views: list[dict]) -> list[dict]:
+    """The task view of all models: one block per class and one row per task, in the order of their first appearance,
+    each what the task view of its first model says. `by_model` of a block lists `(model, block)`, `by_cond` of a row
+    lists per condition `(model, answer)`."""
+    blocks: dict[str, dict] = {}
+    rows: dict[str, dict] = {}
+    for v in views:
+        for blk in v["bench"]["tasks_view"]:
+            block = blocks.setdefault(blk["class"], {**blk, "tasks": [], "by_model": []})
+            block["by_model"].append((v["model"], blk))
+            for row in blk["tasks"]:
+                if row["id"] not in rows:
+                    rows[row["id"]] = {**row, "by_cond": {}}
+                    block["tasks"].append(rows[row["id"]])
+                for cond, answer in row["answers"].items():
+                    rows[row["id"]]["by_cond"].setdefault(cond, []).append((v["model"], answer))
+    return list(blocks.values())
 
-    def href(task: str, model: str | None = None) -> str | None:
-        if task not in task_ids:
-            return None
-        return f"#task-{pfx.get(model, default) if model is not None else default}{task}"
 
-    return href
+def _systems(views: list[dict]) -> list[dict]:
+    """The published systems of all models: one row per task, what `literature` of its first model says, and `by_cond`
+    per condition `(model, reported, text)`."""
+    out: dict[str, dict] = {}
+    for v in views:
+        for s in v["bench"]["literature"]:
+            row = out.setdefault(s["task"], {**s, "by_cond": {}})
+            for cond, reported in s["reported"].items():
+                if reported:
+                    row["by_cond"].setdefault(cond, []).append((v["model"], reported, s["reported_text"][cond]))
+    return list(out.values())
+
+
+def _task_linker(task_ids: set[str]) -> Callable[[str], str | None]:
+    """The link of a task named in the gallery or a solution path to its row; a task without a row has no link."""
+    return lambda task: f"#task-{task}" if task in task_ids else None
 
 
 def build_html(ctx: dict) -> str:
@@ -639,21 +796,44 @@ def main(argv: list[str] | None = None) -> int:
                     help="with --coverage: folders of <shard>/<shard>.json mutation results, merged")
     ap.add_argument("--no-gallery", action="store_true", help="leave out the run gallery (the largest part)")
     ap.add_argument("--no-figures", action="store_true", help="do not (re)draw the per-run figures of the gallery")
+    ap.add_argument("--split", default="pilot", choices=SPLITS, help="the task split of the run sets (default pilot)")
+    ap.add_argument("--i-have-preregistered", dest="preregistered", metavar="DOI", default=None,
+                    help="the DOI of the preregistration; needed for the confirmatory split")
+    ap.add_argument("--page-budget", type=float, default=None, metavar="MB",
+                    help="the page size that images and per-run figures may fill; beyond it they are only linked "
+                         "(default: no limit, everything is embedded and the page is one file)")
+    ap.add_argument("--images", default=None, metavar="DIR",
+                    help="folder of <run set>.index.csv: images a run left outside its folder are added from it")
+    ap.add_argument("--redactions", default=None, metavar="FILE",
+                    help="the log of a published copy (columns sha256_original, sha256_published): a transcript whose "
+                         "machine paths it records as replaced counts as matching its manifest")
+    ap.add_argument("--publication", action="store_true",
+                    help="fail rather than write a page that links a local file (always so for the confirmatory split)")
     a = ap.parse_args(argv)
     run_sets = run_sets_in(a.runs)
     if not run_sets:
         ap.error("no run set found under --runs")
     if a.mutation and not a.coverage:
         ap.error("--mutation needs --coverage")
+    if refused := split_refusal(run_sets, a.split, a.preregistered):
+        print(f"tsbench report full: {refused}", file=sys.stderr)
+        return 2
     out = pathlib.Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
         ctx = context(run_sets, out, a.title, a.coverage, [pathlib.Path(m) for m in a.mutation],
-                      not a.no_gallery, not a.no_figures)
-    except (OSError, ValueError) as e:  # an unreadable or malformed coverage or mutation file
+                      not a.no_gallery, not a.no_figures,
+                      None if a.page_budget is None else int(a.page_budget * 1024 * 1024), a.split, a.preregistered,
+                      pathlib.Path(a.images) if a.images else None, a.redactions)
+    except (OSError, ValueError) as e:  # an unreadable or malformed coverage, mutation or redaction file
         print(f"tsbench report full: {e}", file=sys.stderr)
         return 2
     html = build_html(ctx)
+    local = page.local_links(html)
+    if local and (a.publication or a.split == "confirmatory"):
+        print(f"tsbench report full: {page.plural(len(local), 'link')} to a local file, for example {local[0]}; a "
+              "published page holds everything itself: leave out --page-budget", file=sys.stderr)
+        return 2
     out.write_text(html, encoding="utf-8")
     print(f"wrote {out} ({len(html) / 1e6:.1f} MB)")
     return 0

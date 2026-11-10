@@ -1,0 +1,2 @@
+
+cd /tmp/tsbench-run-tsr9v_05 && sed -i 's/\*np.sqrt(4\*np.pi\/(2\*k+1))\*5/*np.sqrt(4*np.pi\/(2*k+1))/; s/H=HC+A\*(Dq+1e-6)\*B/H=HC+A*(Dq+1e-4)*B; H0=HC+A*Dq*B/; s/w\[j\]-w\[i\]<1e-5/w[j]-w[i]<1e-8/; s/out.append((w\[i\],/out.append((np.trace(V.T@H0@V)\/deg\/B,/' ts.py && python ts.py && sha256sum diagram.png

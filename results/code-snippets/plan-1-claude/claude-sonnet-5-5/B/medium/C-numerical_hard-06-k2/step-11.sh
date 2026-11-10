@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> && sed 's/ck\[k\]\[(d\[0\],b\[0\])\]/ck[k][(b[0],d[0])]/; s/m.npy/m2.npy/' a.py > a2.py && python3 a2.py && sed 's/m.npy/m2.npy/' c.py > c2.py && python3 c2.py | head -20

@@ -1,0 +1,1 @@
+mv glob.py globalfit.py && rm -rf __pycache__/glob* ; timeout 900 python3 globalfit.py

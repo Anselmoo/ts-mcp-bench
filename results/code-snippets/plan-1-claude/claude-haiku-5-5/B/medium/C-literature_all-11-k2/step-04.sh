@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch /tmp/x 2>&1; python3 -c "print('py ok')"

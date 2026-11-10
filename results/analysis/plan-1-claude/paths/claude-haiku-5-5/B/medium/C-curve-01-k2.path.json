@@ -1,0 +1,546 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-curve-01-k2.jsonl",
+ "transcript_sha256": "ddba3a9bd6408509f494988323bc80e5c6e7da5413a78868f1b39020ca0e59ae",
+ "answer": {
+  "points": [
+   {
+    "dq_over_b": 0.9,
+    "term": "5T2",
+    "e_over_b": 9.0
+   },
+   {
+    "dq_over_b": 0.9,
+    "term": "3T1",
+    "e_over_b": 16.25
+   },
+   {
+    "dq_over_b": 0.9,
+    "term": "3E",
+    "e_over_b": 22.59
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "3T1",
+    "e_over_b": 4.84
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "1T2",
+    "e_over_b": 17.07
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "1E",
+    "e_over_b": 18.43
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "5E",
+    "e_over_b": 6.68
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "1T2",
+    "e_over_b": 12.69
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "1E",
+    "e_over_b": 14.09
+   }
+  ],
+  "reason": "I diagonalised the full 210-determinant d4 Hamiltonian (Slater-Condon F2, F4 from B=1, C=4.454; crystal field −4Dq on t2g and +6Dq on eg), grouped the levels by total spin and by Oh irrep (degeneracy plus C4 character), and measured each term's energy relative to the lowest term. The ground term is 5E for Dq/B = 0.90 and 2.15, and 3T1 for Dq/B = 3.35 (where the 5E term lies 6.68 B above it), so the excited-term lists are referenced to different ground terms; the 5T2 at 10Dq is 9.00 B at Dq/B = 0.90."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Build d4 Hamiltonian and diagonalize at given Dq",
+   "command": "\ncat << 'EOF' > /tmp/d4.py\nimport numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.linalg import eigh\nB=1.0; C=3657/821\nF4=441*C/35; F2=(441*B+5*F4)/9\n# spin-orbital index: idx = 2*(m+2)+s  (s=0 up,1 down)\nms=[-2,-1,0,1,2]\ndef so(m,s): return 2*(m+2)+s\n# angular integrals via quadrature\nnt=40; x,w=np.polynomial.legendre.leggauss(nt)\nth=np.arccos(x); nph=60; ph=np.arange(nph)*2*np.pi/nph\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=np.outer(w,np.ones(nph))*(2*np.pi/nph)\ndef Y(l,m): return sph_harm(m,l,PH,TH)\ndef Ck(k,q): return np.sqrt(4*np.pi/(2*k+1))*Y(k,q)\ndef A(k,q,m,mp):\n    return np.sum(W*np.conj(Y(2,m))*Ck(k,q)*Y(2,mp))\nFk={0:0.0,2:F2,4:F4}\n# two-electron integrals\nV=np.zeros((10,10,10,10))\nfor m1,m2,m3,m4 in itertools.product(ms,repeat=4):\n    val=0\n    for k in (2,4):\n        s=0\n        for q in range(-k,k+1):\n            s+=(-1)**q*A(k,q,m1,m3)*A(k,-q,m2,m4)\n        val+=Fk[k]*s\n    val=val.real\n    if abs(val)<1e-12: continue\n    for s1 in (0,1):\n        for s2 in (0,1):\n            V[so(m1,s1),so(m2,s2),so(m3,s1),so(m4,s2)]=val\n# determinants\ndets=[d for d in itertools.combinations(range(10),4)]\nindex={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef apply_cdag_c(i,j,state):\n    # state: sorted tuple; returns (sign, newstate) or None for c_i^dag c_j\n    occ=list(state)\n    if j not in occ: return None\n    sgn=(-1)**sum(1 for o in occ if o<j)\n    occ.remove(j)\n    if i in occ: return None\n    sgn*=(-1)**sum(1 for o in occ if o<i)\n    occ.append(i); occ.sort()\n    return sgn,tuple(occ)\ndef apply_2(i,j,k,l,state):\n    # c_i^dag c_j^dag c_l c_k  (k applied first)\n    r=apply_cdag_c_gen(l,k,state)\n    if r is None: return None\n    s1,st1=r\n    r=apply_cdag_c_gen(j,None,st1) if False else None\n    # c_j^dag c_i^dag? careful: c_i^dag c_j^dag = -c_j^dag c_i^dag ; do c_j^dag then c_i^dag\n    occ=list(st1)\n    if j in occ: return None\n    s2=(-1)**sum(1 for o in occ if o<j); occ.append(j); occ.sort()\n    if i in occ: return None\n    s3=(-1)**sum(1 for o in occ if o<i); occ.append(i); occ.sort()\n    return s1*s2*s3,tuple(occ)\ndef apply_cdag_c_gen(l,k,state):\n    # c_l c_k : annihilate k then l\n    occ=list(state)\n    if k not in occ: return None\n    s=(-1)**sum(1 for o in occ if o<k); occ.remove(k)\n    if l not in occ: return None\n    s*=(-1)**sum(1 for o in occ if o<l); occ.remove(l)\n    return s,tuple(occ)\ndef build_op2(V):\n    H=np.zeros((N,N))\n    nz=np.argwhere(np.abs(V)>1e-12)\n    for a,d in enumerate(dets):\n        for i,j,k,l in nz:\n            r=apply_2(i,j,k,l,d)\n            if r is None: continue\n            s,st=r\n            H[index[st],a]+=0.5*V[i,j,k,l]*s\n    return H\ndef build_1(h):  # h[i,j] c_i^dag c_j\n    H=np.zeros((N,N))\n    for a,d in enumerate(dets):\n        for i,j in np.argwhere(np.abs(h)>1e-14):\n            r=apply_cdag_c(i,j,d)\n            if r is None: continue\n            s,st=r\n            H[index[st],a]+=h[i,j]*s\n    return H\nHee=build_2=build_op2(V)\n# crystal field one-electron matrix in m basis\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\neg=[vec({0:1}), vec({2:1/r2,-2:1/r2}), ]\nt2g=[vec({2:1/r2,-2:-1/r2}*0+{2:1/r2,-2:-1/r2}) ]\n# build proper orthonormal real orbitals\ndxy=vec({2:1/(1j*r2),-2:-1/(1j*r2)})\ndyz=vec({1:1/(1j*r2),-1:1/(1j*r2)})\ndxz=vec({1:1/r2,-1:-1/r2})\ndx2=vec({2:1/r2,-2:1/r2})\ndz2=vec({0:1})\nPeg=sum(np.outer(v,v.conj()) for v in [dz2,dx2])\nPt2=sum(np.outer(v,v.conj()) for v in [dxy,dyz,dxz])\n# one-electron spin-orbital matrix\ndef h_cf(Dq):\n    h=np.zeros((10,10),complex)\n    for m1 in ms:\n        for m2 in ms:\n            for s in (0,1):\n                h[so(m1,s),so(m2,s)]=(-4*Dq*Pt2[m1+2,m2+2]+6*Dq*Peg[m1+2,m2+2])\n    return h\n# spin operators\nSp=np.zeros((10,10)); Sm=np.zeros((10,10))\nSz=np.zeros((10,10))\nfor m in ms:\n    Sp[so(m,0),so(m,1)]=1; Sm[so(m,1),so(m,0)]=1\n    Sz[so(m,0),so(m,0)]=0.5; Sz[so(m,1),so(m,1)]=-0.5\nSpo=build_1(Sp); Smo=build_1(Sm); Szo=build_1(Sz)\nS2=Szo@Szo+0.5*(Spo@Smo+Smo@Spo)\n# Lz rotation (C4 about z)\nLz=np.zeros((10,10))\nfor m in ms:\n    for s in (0,1): Lz[so(m,s),so(m,s)]=m\nLzo=build_1(Lz)\nfrom scipy.linalg import expm\nR4=expm(-1j*np.pi/2*Lzo)\nnp.save('/tmp/Hee.npy',Hee); np.save('/tmp/S2.npy',S2); np.save('/tmp/R4.npy',R4)\nimport pickle\npickle.dump(dict(Hee=Hee,S2=S2,R4=R4,Lzo=Lzo),open('/tmp/ops.pkl','wb'))\n# check 3P-3F for d2 check: build d2 sector quickly separately is skipped\ndef one_body(h): return build_1(h)\nresults={}\nfor Dq in [0.90,2.15,3.35]:\n    Hcf=build_1(h_cf(Dq))\n    H=Hee+Hcf\n    M=H+1000*S2\n    ev,evec=np.linalg.eigh(M)\n    # group\n    out=[]\n    i=0\n    while i<N:\n        j=i\n        while j+1<N and abs(ev[j+1]-ev[i])<1e-6: j+=1\n        mult=j-i+1\n        vecs=evec[:,i:j+1]\n        Eall=np.real(np.mean(np.diag(vecs.conj().T@H@vecs)))\n        S2v=np.real(np.trace(vecs.conj().T@S2@vecs))/mult\n        S=(-1+np.sqrt(1+4*S2v))/2\n        # character of C4\n        chi=np.trace(vecs.conj().T@R4@vecs)\n        out.append((round(Eall,6),round(S,3),mult,np.round(chi,3)))\n        i=j+1\n    results[Dq]=out\n    print(\"Dq/B=\",Dq)\n    for o in out: print(o)\nEOF\npython3 /tmp/d4.py\n",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "8c705803e67d952af10445cc38da2956a904c2e1ec25d6f0d8bd84e68b6e74c5",
+     "lines": 154,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.linalg import eigh\nB=1.0; C=3657/821\nF4=441*C/35; F2=(441*B+5*F4)/9\n# spin-orbital index: idx = 2*(m+2)+s  (s=0 up,1 down)\nms=[-2,-1,0,1,2]\ndef so(m,s): return 2*(m+2)+s\n# angular integrals via quadrature\nnt=40; x,w=np.polynomial.legendre.leggauss(nt)\nth=np.arccos(x); nph=60; ph=np.arange(nph)*2*np.pi/nph\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=np.outer(w,np.ones(nph))*(2*np.pi/nph)\ndef Y(l,m): return sph_harm(m,l,PH,TH)\ndef Ck(k,q): return np.sqrt(4*np.pi/(2*k+1))*Y(k,q)\ndef A(k,q,m,mp):\n    return np.sum(W*np.conj(Y(2,m))*Ck(k,q)*Y(2,mp))\nFk={0:0.0,2:F2,4:F4}\n# two-electron integrals\nV=np.zeros((10,10,10,10))\nfor m1,m2,m3,m4 in itertools.product(ms,repeat=4):\n    val=0\n    for k in (2,4):\n        s=0\n        for q in range(-k,k+1):\n            s+=(-1)**q*A(k,q,m1,m3)*A(k,-q,m2,m4)\n        val+=Fk[k]*s\n    val=val.real\n    if abs(val)<1e-12: continue\n    for s1 in (0,1):\n        for s2 in (0,1):\n            V[so(m1,s1),so(m2,s2),so(m3,s1),so(m4,s2)]=val\n# determinants\ndets=[d for d in itertools.combinations(range(10),4)]\nindex={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef apply_cdag_c(i,j,state):\n    # state: sorted tuple; returns (sign, newstate) or None for c_i^dag c_j\n    occ=list(state)\n    if j not in occ: return None\n    sgn=(-1)**sum(1 for o in occ if o<j)\n    occ.remove(j)\n    if i in occ: return None\n    sgn*=(-1)**sum(1 for o in occ if o<i)\n    occ.append(i); occ.sort()\n    return sgn,tuple(occ)\ndef apply_2(i,j,k,l,state):\n    # c_i^dag c_j^dag c_l c_k  (k applied first)\n    r=apply_cdag_c_gen(l,k,state)\n    if r is None: return None\n    s1,st1=r\n    r=apply_cdag_c_gen(j,None,st1) if False else None\n    # c_j^dag c_i^dag? careful: c_i^dag c_j^dag = -c_j^dag c_i^dag ; do c_j^dag then c_i^dag\n    occ=list(st1)\n    if j in occ: return None\n    s2=(-1)**sum(1 for o in occ if o<j); occ.append(j); occ.sort()\n    if i in occ: return None\n    s3=(-1)**sum(1 for o in occ if o<i); occ.append(i); occ.sort()\n    return s1*s2*s3,tuple(occ)\ndef apply_cdag_c_gen(l,k,state):\n    # c_l c_k : annihilate k then l\n    occ=list(state)\n    if k not in occ: return None\n    s=(-1)**sum(1 for o in occ if o<k); occ.remove(k)\n    if l not in occ: return None\n    s*=(-1)**sum(1 for o in occ if o<l); occ.remove(l)\n    return s,tuple(occ)\ndef build_op2(V):\n    H=np.zeros((N,N))\n    nz=np.argwhere(np.abs(V)>1e-12)\n    for a,d in enumerate(dets):\n        for i,j,k,l in nz:\n            r=apply_2(i,j,k,l,d)\n            if r is None: continue\n            s,st=r\n            H[index[st],a]+=0.5*V[i,j,k,l]*s\n    return H\ndef build_1(h):  # h[i,j] c_i^dag c_j\n    H=np.zeros((N,N))\n    for a,d in enumerate(dets):\n        for i,j in np.argwhere(np.abs(h)>1e-14):\n            r=apply_cdag_c(i,j,d)\n            if r is None: continue\n            s,st=r\n            H[index[st],a]+=h[i,j]*s\n    return H\nHee=build_2=build_op2(V)\n# crystal field one-electron matrix in m basis\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\neg=[vec({0:1}), vec({2:1/r2,-2:1/r2}), ]\nt2g=[vec({2:1/r2,-2:-1/r2}*0+{2:1/r2,-2:-1/r2}) ]\n# build proper orthonormal real orbitals\ndxy=vec({2:1/(1j*r2),-2:-1/(1j*r2)})\ndyz=vec({1:1/(1j*r2),-1:1/(1j*r2)})\ndxz=vec({1:1/r2,-1:-1/r2})\ndx2=vec({2:1/r2,-2:1/r2})\ndz2=vec({0:1})\nPeg=sum(np.outer(v,v.conj()) for v in [dz2,dx2])\nPt2=sum(np.outer(v,v.conj()) for v in [dxy,dyz,dxz])\n# one-electron spin-orbital matrix\ndef h_cf(Dq):\n    h=np.zeros((10,10),complex)\n    for m1 in ms:\n        for m2 in ms:\n            for s in (0,1):\n                h[so(m1,s),so(m2,s)]=(-4*Dq*Pt2[m1+2,m2+2]+6*Dq*Peg[m1+2,m2+2])\n    return h\n# spin operators\nSp=np.zeros((10,10)); Sm=np.zeros((10,10))\nSz=np.zeros((10,10))\nfor m in ms:\n    Sp[so(m,0),so(m,1)]=1; Sm[so(m,1),so(m,0)]=1\n    Sz[so(m,0),so(m,0)]=0.5; Sz[so(m,1),so(m,1)]=-0.5\nSpo=build_1(Sp); Smo=build_1(Sm); Szo=build_1(Sz)\nS2=Szo@Szo+0.5*(Spo@Smo+Smo@Spo)\n# Lz rotation (C4 about z)\nLz=np.zeros((10,10))\nfor m in ms:\n    for s in (0,1): Lz[so(m,s),so(m,s)]=m\nLzo=build_1(Lz)\nfrom scipy.linalg import expm\nR4=expm(-1j*np.pi/2*Lzo)\nnp.save('/tmp/Hee.npy',Hee); np.save('/tmp/S2.npy',S2); np.save('/tmp/R4.npy',R4)\nimport pickle\npickle.dump(dict(Hee=Hee,S2=S2,R4=R4,Lzo=Lzo),open('/tmp/ops.pkl','wb'))\n# check 3P-3F for d2 check: build d2 sector quickly separately is skipped\ndef one_body(h): return build_1(h)\nresults={}\nfor Dq in [0.90,2.15,3.35]:\n    Hcf=build_1(h_cf(Dq))\n    H=Hee+Hcf\n    M=H+1000*S2\n    ev,evec=np.linalg.eigh(M)\n    # group\n    out=[]\n    i=0\n    while i<N:\n        j=i\n        while j+1<N and abs(ev[j+1]-ev[i])<1e-6: j+=1\n        mult=j-i+1\n        vecs=evec[:,i:j+1]\n        Eall=np.real(np.mean(np.diag(vecs.conj().T@H@vecs)))\n        S2v=np.real(np.trace(vecs.conj().T@S2@vecs))/mult\n        S=(-1+np.sqrt(1+4*S2v))/2\n        # character of C4\n        chi=np.trace(vecs.conj().T@R4@vecs)\n        out.append((round(Eall,6),round(S,3),mult,np.round(chi,3)))\n        i=j+1\n    results[Dq]=out\n    print(\"Dq/B=\",Dq)\n    for o in out: print(o)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d4.py",
+     "written_in_step": 0
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 160: /tmp/d4.py: Read-only file system\npython3: can't open file '/tmp/d4.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "d4.py",
+     "line": 68,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 105,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 112,
+     "method": "matrix",
+     "text": "Sp=np.zeros((10,10)); Sm=np.zeros((10,10))"
+    },
+    {
+     "script": "d4.py",
+     "line": 113,
+     "method": "matrix",
+     "text": "Sz=np.zeros((10,10))"
+    },
+    {
+     "script": "d4.py",
+     "line": 120,
+     "method": "matrix",
+     "text": "Lz=np.zeros((10,10))"
+    },
+    {
+     "script": "d4.py",
+     "line": 132,
+     "method": "typed_table",
+     "text": "for Dq in [0.90,2.15,3.35]:"
+    },
+    {
+     "script": "d4.py",
+     "line": 136,
+     "method": "eigen_solver",
+     "text": "ev,evec=np.linalg.eigh(M)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Check writable directory",
+   "command": "cd ~ 2>/dev/null && pwd; touch ./x_test && echo ok; ls -ld /tmp $HOME 2>&1 | head",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch './x_test': Read-only file system\ndrwxrwxrwt 32 nobody nogroup 884736 Nov  3 19:48 /tmp\ndrwx------  6 <USER>  <USER>     4096 Nov  3 07:57 /tmp/tsbench-home-xehwqch9\nShell cwd was reset to /tmp/tsbench-run-unwm560q",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Create writable working directory and check numpy",
+   "command": "mkdir -p /tmp/tsbench-home-xehwqch9/w && cd /tmp/tsbench-home-xehwqch9/w && python3 -c \"import numpy, scipy; print(numpy.__version__, scipy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/w’: Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Check numpy and scipy availability",
+   "command": "python3 -c \"import numpy, scipy; print(numpy.__version__, scipy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "2.5.4 1.18.1",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Diagonalize d4 Hamiltonian at three Dq values",
+   "command": "\npython3 - << 'EOF'\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y\nfrom scipy.linalg import expm\nC=3657/821; B=1.0\nF4=441*C/35; F2=(441*B+5*F4)/9\nms=[-2,-1,0,1,2]\ndef so(m,s): return 2*(m+2)+s\nnt=40; x,w=np.polynomial.legendre.leggauss(nt)\nth=np.arccos(x); nph=60; ph=np.arange(nph)*2*np.pi/nph\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=np.outer(w,np.ones(nph))*(2*np.pi/nph)\ndef Y(l,m): return sph_harm_y(l,m,TH,PH)\ndef Ck(k,q): return np.sqrt(4*np.pi/(2*k+1))*Y(k,q)\ncache={}\ndef A(k,q,m,mp):\n    key=(k,q,m,mp)\n    if key not in cache:\n        cache[key]=np.sum(W*np.conj(Y(2,m))*Ck(k,q)*Y(2,mp))\n    return cache[key]\nFk={2:F2,4:F4}\nV=np.zeros((10,10,10,10))\nfor m1,m2,m3,m4 in itertools.product(ms,repeat=4):\n    val=0\n    for k in (2,4):\n        s=0\n        for q in range(-k,k+1):\n            s+=(-1)**q*A(k,q,m1,m3)*A(k,-q,m2,m4)\n        val+=Fk[k]*s\n    val=val.real\n    if abs(val)<1e-12: continue\n    for s1 in (0,1):\n        for s2 in (0,1):\n            V[so(m1,s1),so(m2,s2),so(m3,s1),so(m4,s2)]=val\ndets=list(itertools.combinations(range(10),4))\nindex={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef cdag_c(i,j,occ):\n    # c_i^dag c_j on sorted tuple occ\n    occ=list(occ)\n    if j not in occ: return None\n    s=(-1)**sum(1 for o in occ if o<j); occ.remove(j)\n    if i in occ: return None\n    s*=(-1)**sum(1 for o in occ if o<i); occ.append(i); occ.sort()\n    return s,tuple(occ)\ndef ann(k,occ):\n    occ=list(occ)\n    if k not in occ: return None\n    s=(-1)**sum(1 for o in occ if o<k); occ.remove(k); return s,tuple(occ)\ndef cre(i,occ):\n    occ=list(occ)\n    if i in occ: return None\n    s=(-1)**sum(1 for o in occ if o<i); occ.append(i); occ.sort(); return s,tuple(occ)\ndef build_2(V):\n    H=np.zeros((N,N))\n    nz=np.argwhere(np.abs(V)>1e-12)\n    for a,d in enumerate(dets):\n        for i,j,k,l in nz:\n            # c_i^dag c_j^dag c_l c_k |d>\n            r=ann(k,d)\n            if r is None: continue\n            s1,o1=r\n            r=ann(l,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cre(j,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cre(i,o3)\n            if r is None: continue\n            s4,o4=r\n            H[index[o4],a]+=0.5*V[i,j,k,l]*s1*s2*s3*s4\n    return H\ndef build_1(h):\n    H=np.zeros((N,N),complex)\n    nz=np.argwhere(np.abs(h)>1e-14)\n    for a,d in enumerate(dets):\n        for i,j in nz:\n            r=cdag_c(i,j,d)\n            if r is None: continue\n            s,st=r\n            H[index[st],a]+=h[i,j]*s\n    return H\nHee=build_2(V)\n# check: d2 check not done here; check trace\nprint(\"Hee trace\",np.trace(Hee).real)\nr2=np.sqrt(2)\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\ndxy=vec({2:1/(1j*r2),-2:-1/(1j*r2)})\ndyz=vec({1:1/(1j*r2),-1:1/(1j*r2)})\ndxz=vec({1:1/r2,-1:-1/r2})\ndx2=vec({2:1/r2,-2:1/r2})\ndz2=vec({0:1})\nPeg=sum(np.outer(v,v.conj()) for v in [dz2,dx2])\nPt2=sum(np.outer(v,v.conj()) for v in [dxy,dyz,dxz])\ndef h_cf(Dq):\n    h=np.zeros((10,10),complex)\n    for m1 in ms:\n        for m2 in ms:\n            for s in (0,1):\n                h[so(m1,s),so(m2,s)]=(-4*Dq*Pt2[m1+2,m2+2]+6*Dq*Peg[m1+2,m2+2])\n    return h\nSp=np.zeros((10,10)); Sm=np.zeros((10,10)); Sz=np.zeros((10,10))\nfor m in ms:\n    Sp[so(m,0),so(m,1)]=1; Sm[so(m,1),so(m,0)]=1\n    Sz[so(m,0),so(m,0)]=0.5; Sz[so(m,1),so(m,1)]=-0.5\nSpo=build_1(Sp); Smo=build_1(Sm); Szo=build_1(Sz)\nS2=(Szo@Szo+0.5*(Spo@Smo+Smo@Spo)).real\nLz=np.zeros((10,10))\nfor m in ms:\n    for s in (0,1): Lz[so(m,s),so(m,s)]=m\nLzo=build_1(Lz)\nR4=expm(-1j*np.pi/2*Lzo)\nprint(\"S2 check max eig\", np.round(np.linalg.eigvalsh(S2)[[0,-1]],3))\nfor Dq in [0.90,2.15,3.35]:\n    H=Hee+build_1(h_cf(Dq))\n    M=H+1000*S2\n    ev,evec=np.linalg.eigh(M)\n    out=[]; i=0\n    while i<N:\n        j=i\n        while j+1<N and abs(ev[j+1]-ev[i])<1e-5: j+=1\n        mult=j-i+1\n        vecs=evec[:,i:j+1]\n        E=np.real(np.trace(vecs.conj().T@H@vecs))/mult\n        S2v=np.real(np.trace(vecs.conj().T@S2@vecs))/mult\n        S=(-1+np.sqrt(1+4*S2v))/2\n        chi=np.trace(vecs.conj().T@R4@vecs)/mult\n        out.append((round(E,4),round(S,2),mult,np.round(chi,3)))\n        i=j+1\n    print(\"Dq/B=\",Dq)\n    for o in out: print(o)\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "c43f2814b62df5a0cc32b75b10e216025fea686b57c297be1771735ab9561c84",
+     "lines": 133,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y\nfrom scipy.linalg import expm\nC=3657/821; B=1.0\nF4=441*C/35; F2=(441*B+5*F4)/9\nms=[-2,-1,0,1,2]\ndef so(m,s): return 2*(m+2)+s\nnt=40; x,w=np.polynomial.legendre.leggauss(nt)\nth=np.arccos(x); nph=60; ph=np.arange(nph)*2*np.pi/nph\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=np.outer(w,np.ones(nph))*(2*np.pi/nph)\ndef Y(l,m): return sph_harm_y(l,m,TH,PH)\ndef Ck(k,q): return np.sqrt(4*np.pi/(2*k+1))*Y(k,q)\ncache={}\ndef A(k,q,m,mp):\n    key=(k,q,m,mp)\n    if key not in cache:\n        cache[key]=np.sum(W*np.conj(Y(2,m))*Ck(k,q)*Y(2,mp))\n    return cache[key]\nFk={2:F2,4:F4}\nV=np.zeros((10,10,10,10))\nfor m1,m2,m3,m4 in itertools.product(ms,repeat=4):\n    val=0\n    for k in (2,4):\n        s=0\n        for q in range(-k,k+1):\n            s+=(-1)**q*A(k,q,m1,m3)*A(k,-q,m2,m4)\n        val+=Fk[k]*s\n    val=val.real\n    if abs(val)<1e-12: continue\n    for s1 in (0,1):\n        for s2 in (0,1):\n            V[so(m1,s1),so(m2,s2),so(m3,s1),so(m4,s2)]=val\ndets=list(itertools.combinations(range(10),4))\nindex={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef cdag_c(i,j,occ):\n    # c_i^dag c_j on sorted tuple occ\n    occ=list(occ)\n    if j not in occ: return None\n    s=(-1)**sum(1 for o in occ if o<j); occ.remove(j)\n    if i in occ: return None\n    s*=(-1)**sum(1 for o in occ if o<i); occ.append(i); occ.sort()\n    return s,tuple(occ)\ndef ann(k,occ):\n    occ=list(occ)\n    if k not in occ: return None\n    s=(-1)**sum(1 for o in occ if o<k); occ.remove(k); return s,tuple(occ)\ndef cre(i,occ):\n    occ=list(occ)\n    if i in occ: return None\n    s=(-1)**sum(1 for o in occ if o<i); occ.append(i); occ.sort(); return s,tuple(occ)\ndef build_2(V):\n    H=np.zeros((N,N))\n    nz=np.argwhere(np.abs(V)>1e-12)\n    for a,d in enumerate(dets):\n        for i,j,k,l in nz:\n            # c_i^dag c_j^dag c_l c_k |d>\n            r=ann(k,d)\n            if r is None: continue\n            s1,o1=r\n            r=ann(l,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cre(j,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cre(i,o3)\n            if r is None: continue\n            s4,o4=r\n            H[index[o4],a]+=0.5*V[i,j,k,l]*s1*s2*s3*s4\n    return H\ndef build_1(h):\n    H=np.zeros((N,N),complex)\n    nz=np.argwhere(np.abs(h)>1e-14)\n    for a,d in enumerate(dets):\n        for i,j in nz:\n            r=cdag_c(i,j,d)\n            if r is None: continue\n            s,st=r\n            H[index[st],a]+=h[i,j]*s\n    return H\nHee=build_2(V)\n# check: d2 check not done here; check trace\nprint(\"Hee trace\",np.trace(Hee).real)\nr2=np.sqrt(2)\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\ndxy=vec({2:1/(1j*r2),-2:-1/(1j*r2)})\ndyz=vec({1:1/(1j*r2),-1:1/(1j*r2)})\ndxz=vec({1:1/r2,-1:-1/r2})\ndx2=vec({2:1/r2,-2:1/r2})\ndz2=vec({0:1})\nPeg=sum(np.outer(v,v.conj()) for v in [dz2,dx2])\nPt2=sum(np.outer(v,v.conj()) for v in [dxy,dyz,dxz])\ndef h_cf(Dq):\n    h=np.zeros((10,10),complex)\n    for m1 in ms:\n        for m2 in ms:\n            for s in (0,1):\n                h[so(m1,s),so(m2,s)]=(-4*Dq*Pt2[m1+2,m2+2]+6*Dq*Peg[m1+2,m2+2])\n    return h\nSp=np.zeros((10,10)); Sm=np.zeros((10,10)); Sz=np.zeros((10,10))\nfor m in ms:\n    Sp[so(m,0),so(m,1)]=1; Sm[so(m,1),so(m,0)]=1\n    Sz[so(m,0),so(m,0)]=0.5; Sz[so(m,1),so(m,1)]=-0.5\nSpo=build_1(Sp); Smo=build_1(Sm); Szo=build_1(Sz)\nS2=(Szo@Szo+0.5*(Spo@Smo+Smo@Spo)).real\nLz=np.zeros((10,10))\nfor m in ms:\n    for s in (0,1): Lz[so(m,s),so(m,s)]=m\nLzo=build_1(Lz)\nR4=expm(-1j*np.pi/2*Lzo)\nprint(\"S2 check max eig\", np.round(np.linalg.eigvalsh(S2)[[0,-1]],3))\nfor Dq in [0.90,2.15,3.35]:\n    H=Hee+build_1(h_cf(Dq))\n    M=H+1000*S2\n    ev,evec=np.linalg.eigh(M)\n    out=[]; i=0\n    while i<N:\n        j=i\n        while j+1<N and abs(ev[j+1]-ev[i])<1e-5: j+=1\n        mult=j-i+1\n        vecs=evec[:,i:j+1]\n        E=np.real(np.trace(vecs.conj().T@H@vecs))/mult\n        S2v=np.real(np.trace(vecs.conj().T@S2@vecs))/mult\n        S=(-1+np.sqrt(1+4*S2v))/2\n        chi=np.trace(vecs.conj().T@R4@vecs)/mult\n        out.append((round(E,4),round(S,2),mult,np.round(chi,3)))\n        i=j+1\n    print(\"Dq/B=\",Dq)\n    for o in out: print(o)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Hee trace -5452.190012180266\nS2 check max eig [-0.  6.]\nDq/B= 0.9\n(np.float64(-36.0338), np.float64(0.0), 3, np.complex128(-0.333-0j))\n(np.float64(-35.3548), np.float64(0.0), 2, np.complex128(-0-0j))\n(np.float64(-30.2709), np.float64(-0.0), 1, np.complex128(1+0j))\n(np.float64(-29.907), np.float64(0.0), 1, np.complex128(-1+0j))\n(np.float64(-29.3963), np.float64(0.0), 3, np.complex128(-0.333-0j))\n(np.float64(-27.6781), np.float64(0.0), 3, np.complex128(0.333-0j))\n(np.float64(-23.675), np.float64(0.0), 2, np.complex128(0j))\n(np.float64(-21.5378), np.float64(0.0), 3, np.complex128(-0.333-0j))\n(np.float64(-19.1255), np.float64(0.0), 2, np.complex128(0j))\n(np.float64(-18.4849), np.float64(0.0), 1, np.complex128(1+0j))\n(np.float64(-15.2379), np.float64(0.0), 3, np.complex128(0.333+0j))\n(np.float64(-13.3616), np.float64(-0.0), 3, np.complex128(-0.333+0j))\n(np.float64(-10.3559), np.float64(0.0), 3, np.complex128(0.333+0j))\n(np.float64(-9.8612), np.float64(0.0), 1, np.complex128(1-0j))\n(np.float64(-9.1883), np.float64(0.0), 3, np.complex128(-0.333+0j))\n(np.float64(-8.2737), np.float64(0.0), 1, np.complex128(-1-0j))\n(np.float64(4.2734), np.float64(0.0), 3, np.complex128(0.333+0j))\n(np.float64(4.5919), np.float64(0.0), 1, np.complex128(1-0j))\n(np.float64(6.2264), np.float64(0.0), 2, np.complex128(-0+0j))\n(np.float64(12.0525), np.float64(0.0), 3, np.complex128(-0.333-0j))\n(np.float64(25.5586), np.float64(0.0), 3, np.complex128(-0.333+0j))\n(np.float64(29.203), np.float64(-0.0), 2, np.complex128(-0-0j))\n(np.float64(53.5707), np.float64(0.0), 1, np.complex128(1+0j))\n(np.float64(-47.5626), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-41.2246), np.float64(1.0), 6, np.complex128(-0+0j))\n(np.float64(-39.844), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-39.2193), np.float64(1.0), 9, np.complex128(-0.333-0j))\n(np.float64(-37.3948), np.float64(1.0), 3, np.complex128(-1+0j))\n(np.float64(-36.999), np.float64(1.0), 3, np.complex128(1+0j))\n(np.float64(-33.8154), np.float64(1.0), 6, np.complex128(-0j))\n(np.float64(-32.6185), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-31.3457), np.float64(1.0), 9, np.complex128(-0.333+0j))\n(np.float64(-30.4363), np.float64(1.0), 9, np.complex128(0.333-0j))\n(np.float64(-26.0516), np.float64(1.0), 9, np.complex128(-0.333-0j))\n(np.float64(-24.9571), np.float64(1.0), 6, np.complex128(-0-0j))\n(np.float64(-24.1187), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-23.6289), np.float64(1.0), 9, np.complex128(-0.333-0j))\n(np.float64(-4.5732), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-0.2403), np.float64(1.0), 3, np.complex128(-1-0j))\n(np.float64(0.6133), np.float64(1.0), 9, np.complex128(-0.333-0j))\n(np.float64(0.8861), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-63.8163), np.float64(2.0), 10, np.complex128(-0j))\n(np.float64(-54.8163), np.float64(2.0), 15, np.complex128(-0.333-0j))\nDq/B= 2.15\n(np.float64(-54.2423), np.float64(0.0), 3, np.complex128(-0.333-0j))\n(np.float64(-52.8909), np.float64(0.0), 2, np.complex128(-0+0j))\n(np.float64(-43.3314), np.float64(-0.0), 1, np.complex128(1+0j))\n(np.float64(-36.7283), np.float64(0.0), 1, np.complex128(-1-0j))\n(np.float64(-36.536), np.float64(0.0), 3, np.complex128(-0.333-0j))\n(np.float64(-33.8061), np.float64(0.0), 3, np.complex128(0.333-0j))\n(np.float64(-31.058), np.float64(0.0), 2, np.complex128(-0+0j))\n(np.float64(-17.9418), np.float64(-0.0), 1, np.complex128(1-0j))\n(np.float64(-16.5049), np.float64(0.0), 3, np.complex128(0.333+0j))\n(np.float64(-16.37), np.float64(0.0), 3, np.complex128(-0.333+0j))\n(np.float64(-15.1508), np.float64(0.0), 3, np.complex128(-0.333+0j))\n(np.float64(-14.6827), np.float64(0.0), 2, np.complex128(-0j))\n(np.float64(-12.1345), np.float64(0.0), 1, np.complex128(1-0j))\n(np.float64(-4.835), np.float64(0.0), 3, np.complex128(-0.333+0j))\n(np.float64(-3.9525), np.float64(0.0), 1, np.complex128(-1-0j))\n(np.float64(-3.1553), np.float64(0.0), 3, np.complex128(0.333+0j))\n(np.float64(9.7396), np.float64(0.0), 2, np.complex128(-0+0j))\n(np.float64(11.9677), np.float64(-0.0), 3, np.complex128(0.333-0j))\n(np.float64(21.505), np.float64(0.0), 3, np.complex128(-0.333-0j))\n(np.float64(25.3081), np.float64(0.0), 1, np.complex128(1+0j))\n(np.float64(31.2223), np.float64(0.0), 3, np.complex128(-0.333-0j))\n(np.float64(33.666), np.float64(0.0), 2, np.complex128(0j))\n(np.float64(60.1452), np.float64(0.0), 1, np.complex128(1+0j))\n(np.float64(-66.4766), np.float64(1.0), 9, np.complex128(0.333-0j))\n(np.float64(-48.5035), np.float64(1.0), 6, np.complex128(-0j))\n(np.float64(-47.3081), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-46.2886), np.float64(1.0), 9, np.complex128(-0.333+0j))\n(np.float64(-44.499), np.float64(1.0), 3, np.complex128(1-0j))\n(np.float64(-43.7624), np.float64(1.0), 3, np.complex128(-1-0j))\n(np.float64(-40.3636), np.float64(1.0), 6, np.complex128(-0j))\n(np.float64(-32.1436), np.float64(1.0), 9, np.complex128(0.333-0j))\n(np.float64(-29.5459), np.float64(1.0), 9, np.complex128(-0.333-0j))\n(np.float64(-26.4558), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-24.1122), np.float64(1.0), 9, np.complex128(-0.333+0j))\n(np.float64(-21.13), np.float64(1.0), 6, np.complex128(-0j))\n(np.float64(-19.7378), np.float64(1.0), 9, np.complex128(-0.333-0j))\n(np.float64(-15.3755), np.float64(1.0), 9, np.complex128(0.333-0j))\n(np.float64(-1.2076), np.float64(1.0), 9, np.complex128(0.333-0j))\n(np.float64(3.6273), np.float64(1.0), 3, np.complex128(-1-0j))\n(np.float64(8.2), np.float64(1.0), 9, np.complex128(0.333-0j))\n(np.float64(12.5524), np.float64(1.0), 9, np.complex128(-0.333-0j))\n(np.float64(-71.3163), np.float64(2.0), 10, np.complex128(-0j))\n(np.float64(-49.8163), np.float64(2.0), 15, np.complex128(-0.333-0j))\nDq/B= 3.35\n(np.float64(-72.4994), np.float64(0.0), 3, np.complex128(-0.333+0j))\n(np.float64(-71.1046), np.float64(0.0), 2, np.complex128(-0-0j))\n(np.float64(-58.3801), np.float64(0.0), 1, np.complex128(1-0j))\n(np.float64(-43.6212), np.float64(0.0), 1, np.complex128(-1+0j))\n(np.float64(-43.5508), np.float64(0.0), 3, np.complex128(-0.333+0j))\n(np.float64(-40.4303), np.float64(0.0), 3, np.complex128(0.333+0j))\n(np.float64(-38.1733), np.float64(0.0), 2, np.complex128(-0-0j))\n(np.float64(-26.1042), np.float64(0.0), 1, np.complex128(1-0j))\n(np.float64(-22.0552), np.float64(0.0), 3, np.complex128(0.333+0j))\n(np.float64(-19.9584), np.float64(0.0), 3, np.complex128(-0.333+0j))\n(np.float64(-11.4615), np.float64(0.0), 3, np.complex128(-0.333+0j))\n(np.float64(-9.9595), np.float64(0.0), 2, np.complex128(-0j))\n(np.float64(-8.2383), np.float64(0.0), 1, np.complex128(1-0j))\n(np.float64(-0.123), np.float64(0.0), 3, np.complex128(-0.333-0j))\n(np.float64(0.5404), np.float64(0.0), 1, np.complex128(-1-0j))\n(np.float64(1.6037), np.float64(0.0), 3, np.complex128(0.333-0j))\n(np.float64(13.8988), np.float64(0.0), 2, np.complex128(0j))\n(np.float64(26.0512), np.float64(0.0), 3, np.complex128(-0.333+0j))\n(np.float64(26.5832), np.float64(0.0), 3, np.complex128(0.333-0j))\n(np.float64(38.1128), np.float64(0.0), 2, np.complex128(-0-0j))\n(np.float64(41.9533), np.float64(0.0), 1, np.complex128(1+0j))\n(np.float64(44.7353), np.float64(0.0), 3, np.complex128(-0.333-0j))\n(np.float64(74.815), np.float64(0.0), 1, np.complex128(1-0j))\n(np.float64(-85.1917), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-55.6287), np.float64(1.0), 6, np.complex128(-0+0j))\n(np.float64(-54.479), np.float64(1.0), 9, np.complex128(0.333-0j))\n(np.float64(-53.3491), np.float64(1.0), 9, np.complex128(-0.333+0j))\n(np.float64(-51.699), np.float64(1.0), 3, np.complex128(1-0j))\n(np.float64(-50.2955), np.float64(1.0), 3, np.complex128(-1-0j))\n(np.float64(-47.3213), np.float64(1.0), 6, np.complex128(-0+0j))\n(np.float64(-35.6202), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-34.3507), np.float64(1.0), 9, np.complex128(-0.333+0j))\n(np.float64(-21.8039), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(-20.2978), np.float64(1.0), 9, np.complex128(-0.333-0j))\n(np.float64(-16.647), np.float64(1.0), 6, np.complex128(-0-0j))\n(np.float64(-14.4944), np.float64(1.0), 9, np.complex128(-0.333-0j))\n(np.float64(-11.5563), np.float64(1.0), 9, np.complex128(0.333+0j))\n(np.float64(5.2956), np.float64(1.0), 9, np.complex128(0.333-0j))\n(np.float64(7.7604), np.float64(1.0), 3, np.complex128(-1-0j))\n(np.float64(20.1883), np.float64(1.0), 9, np.complex128(0.333-0j))\n(np.float64(27.3598), np.float64(1.0), 9, np.complex128(-0.333-0j))\n(np.float64(-78.5163), np.float64(2.0), 10, np.complex128(-0-0j))\n(np.float64(-45.0163), np.float64(2.0), 15, np.complex128(-0.333-0j))",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 53,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 73,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 98,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 104,
+     "method": "matrix",
+     "text": "Sp=np.zeros((10,10)); Sm=np.zeros((10,10)); Sz=np.zeros((10,10))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 110,
+     "method": "matrix",
+     "text": "Lz=np.zeros((10,10))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 115,
+     "method": "eigen_solver",
+     "text": "print(\"S2 check max eig\", np.round(np.linalg.eigvalsh(S2)[[0,-1]],3))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 116,
+     "method": "typed_table",
+     "text": "for Dq in [0.90,2.15,3.35]:"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 119,
+     "method": "eigen_solver",
+     "text": "ev,evec=np.linalg.eigh(M)"
+    }
+   ],
+   "produces": [
+    "points[3].e_over_b",
+    "points[5].e_over_b"
+   ]
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Check Slater-integral normalization on d2 free-ion terms",
+   "command": "\npython3 - << 'EOF'\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y\nC=3657/821; B=1.0\nF4=441*C/35; F2=(441*B+5*F4)/9\nms=[-2,-1,0,1,2]\ndef so(m,s): return 2*(m+2)+s\nnt=40; x,w=np.polynomial.legendre.leggauss(nt)\nth=np.arccos(x); nph=60; ph=np.arange(nph)*2*np.pi/nph\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=np.outer(w,np.ones(nph))*(2*np.pi/nph)\ndef Y(l,m): return sph_harm_y(l,m,TH,PH)\ndef A(k,q,m,mp): return np.sum(W*np.conj(Y(2,m))*np.sqrt(4*np.pi/(2*k+1))*Y(k,q)*Y(2,mp))\nFk={2:F2,4:F4}\nV=np.zeros((10,10,10,10))\nfor m1,m2,m3,m4 in itertools.product(ms,repeat=4):\n    val=sum(Fk[k]*sum((-1)**q*A(k,q,m1,m3)*A(k,-q,m2,m4) for q in range(-k,k+1)) for k in (2,4))\n    val=val.real\n    if abs(val)<1e-12: continue\n    for s1 in (0,1):\n        for s2 in (0,1):\n            V[so(m1,s1),so(m2,s2),so(m3,s1),so(m4,s2)]=val\ndef run(n):\n    dets=list(itertools.combinations(range(10),n)); index={d:i for i,d in enumerate(dets)}; N=len(dets)\n    H=np.zeros((N,N)); nz=np.argwhere(np.abs(V)>1e-12)\n    def cre(i,occ):\n        if i in occ: return None\n        s=(-1)**sum(1 for o in occ if o<i); return s,tuple(sorted(occ+[i]))\n    def ann(k,occ):\n        if k not in occ: return None\n        s=(-1)**sum(1 for o in occ if o<k); return s,tuple(o for o in occ if o!=k)\n    for a,d in enumerate(dets):\n        for i,j,k,l in nz:\n            r=ann(k,list(d)); \n            if r is None: continue\n            s1,o1=r; r=ann(l,list(o1))\n            if r is None: continue\n            s2,o2=r; r=cre(j,list(o2))\n            if r is None: continue\n            s3,o3=r; r=cre(i,list(o3))\n            if r is None: continue\n            s4,o4=r\n            H[index[o4],a]+=0.5*V[i,j,k,l]*s1*s2*s3*s4\n    Sp=np.zeros((10,10))\n    for m in ms: Sp[so(m,0),so(m,1)]=1\n    Sz=np.zeros((10,10))\n    for m in ms: Sz[so(m,0),so(m,0)]=0.5; Sz[so(m,1),so(m,1)]=-0.5\n    return dets,H\ndets,H=run(2)\n# S2 for d2 via Sz and S+ S-\nev,evec=np.linalg.eigh(H)\nprint(\"d2 eigen grouped:\")\ni=0\nwhile i<len(ev):\n    j=i\n    while j+1<len(ev) and abs(ev[j+1]-ev[i])<1e-6: j+=1\n    print(round(ev[i],4), j-i+1); i=j+1\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "7b3f1de2950166eea4d478c1cd5eba760096f0ad1381111be1e09946b0044891",
+     "lines": 55,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y\nC=3657/821; B=1.0\nF4=441*C/35; F2=(441*B+5*F4)/9\nms=[-2,-1,0,1,2]\ndef so(m,s): return 2*(m+2)+s\nnt=40; x,w=np.polynomial.legendre.leggauss(nt)\nth=np.arccos(x); nph=60; ph=np.arange(nph)*2*np.pi/nph\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=np.outer(w,np.ones(nph))*(2*np.pi/nph)\ndef Y(l,m): return sph_harm_y(l,m,TH,PH)\ndef A(k,q,m,mp): return np.sum(W*np.conj(Y(2,m))*np.sqrt(4*np.pi/(2*k+1))*Y(k,q)*Y(2,mp))\nFk={2:F2,4:F4}\nV=np.zeros((10,10,10,10))\nfor m1,m2,m3,m4 in itertools.product(ms,repeat=4):\n    val=sum(Fk[k]*sum((-1)**q*A(k,q,m1,m3)*A(k,-q,m2,m4) for q in range(-k,k+1)) for k in (2,4))\n    val=val.real\n    if abs(val)<1e-12: continue\n    for s1 in (0,1):\n        for s2 in (0,1):\n            V[so(m1,s1),so(m2,s2),so(m3,s1),so(m4,s2)]=val\ndef run(n):\n    dets=list(itertools.combinations(range(10),n)); index={d:i for i,d in enumerate(dets)}; N=len(dets)\n    H=np.zeros((N,N)); nz=np.argwhere(np.abs(V)>1e-12)\n    def cre(i,occ):\n        if i in occ: return None\n        s=(-1)**sum(1 for o in occ if o<i); return s,tuple(sorted(occ+[i]))\n    def ann(k,occ):\n        if k not in occ: return None\n        s=(-1)**sum(1 for o in occ if o<k); return s,tuple(o for o in occ if o!=k)\n    for a,d in enumerate(dets):\n        for i,j,k,l in nz:\n            r=ann(k,list(d)); \n            if r is None: continue\n            s1,o1=r; r=ann(l,list(o1))\n            if r is None: continue\n            s2,o2=r; r=cre(j,list(o2))\n            if r is None: continue\n            s3,o3=r; r=cre(i,list(o3))\n            if r is None: continue\n            s4,o4=r\n            H[index[o4],a]+=0.5*V[i,j,k,l]*s1*s2*s3*s4\n    Sp=np.zeros((10,10))\n    for m in ms: Sp[so(m,0),so(m,1)]=1\n    Sz=np.zeros((10,10))\n    for m in ms: Sz[so(m,0),so(m,0)]=0.5; Sz[so(m,1),so(m,1)]=-0.5\n    return dets,H\ndets,H=run(2)\n# S2 for d2 via Sz and S+ S-\nev,evec=np.linalg.eigh(H)\nprint(\"d2 eigen grouped:\")\ni=0\nwhile i<len(ev):\n    j=i\n    while j+1<len(ev) and abs(ev[j+1]-ev[i])<1e-6: j+=1\n    print(round(ev[i],4), j-i+1); i=j+1\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "d2 eigen grouped:\n-14.2361 21\n-0.3274 5\n0.7639 9\n6.6726 9\n38.9442 1",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "V=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 23,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N)); nz=np.argwhere(np.abs(V)>1e-12)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "Sp=np.zeros((10,10))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 44,
+     "method": "matrix",
+     "text": "Sz=np.zeros((10,10))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 49,
+     "method": "eigen_solver",
+     "text": "ev,evec=np.linalg.eigh(H)"
+    }
+   ],
+   "produces": [
+    "points[6].e_over_b"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "points[0].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[0].e_over_b",
+   "value": 9.0,
+   "weak": true,
+   "steps": [
+    1,
+    2,
+    4,
+    5
+   ],
+   "typed_in_steps": [
+    4,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[1].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[1].e_over_b",
+   "value": 16.25,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[2].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[2].e_over_b",
+   "value": 22.59,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[3].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[3].e_over_b",
+   "value": 4.84,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[4].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[4].e_over_b",
+   "value": 17.07,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[5].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[5].e_over_b",
+   "value": 18.43,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[6].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[6].e_over_b",
+   "value": 6.68,
+   "weak": false,
+   "steps": [
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  },
+  {
+   "path": "points[7].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[7].e_over_b",
+   "value": 12.69,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[8].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[8].e_over_b",
+   "value": 14.09,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 6,
+  "n_scripts": 3,
+  "n_failed_steps": 2,
+  "n_values": 18,
+  "n_linked": 3,
+  "n_weak": 1,
+  "source_steps": [
+   4,
+   5
+  ],
+  "methods": [
+   "eigen_solver",
+   "typed_table"
+  ],
+  "edits_in_place": false
+ }
+}

@@ -1,0 +1,1 @@
+pwd; touch ./x_test 2>&1 && echo cwd_ok; ls -ld /var/tmp 2>/dev/null; touch /var/tmp/x 2>&1 && echo vartmp_ok

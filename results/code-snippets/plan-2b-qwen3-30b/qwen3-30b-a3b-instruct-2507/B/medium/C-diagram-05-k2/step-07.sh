@@ -1,0 +1,1 @@
+mkdir -p /tmp/pip && cd /tmp/pip && python3 -m ensurepip --upgrade

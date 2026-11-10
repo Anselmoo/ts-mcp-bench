@@ -1,0 +1,326 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-racah_c-05-k2.jsonl",
+ "transcript_sha256": "29eb61e6c43b404ee5b7d1244a27308986fb513af9399a189d0f3b72f27a8bf0",
+ "answer": {
+  "Dq": 1750.0,
+  "B": 618.0,
+  "C": 2176.0,
+  "out_of_scope": false,
+  "reason": "Dq from 10Dq = ν1, B from the 4T1g trace (ν2+ν3 = 30Dq+15B), and C from the Dq-independent 2Eg level 9B+3C = 12090 cm⁻¹."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check Python numerical libraries",
+   "command": "pip list 2>/dev/null | grep -i -E \"sympy|numpy\" ; python3 -c \"import sympy,numpy;print(sympy.__version__,numpy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1.14.0 2.5.4",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d3 Coulomb matrix and label terms numerically",
+   "command": "cat << 'EOF' > /tmp/d3.py\nimport itertools, numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N\n# spin-orbitals: (m, s) m in -2..2, s=+1 (up) / -1 (down)\nso=[(m,s) for m in range(-2,3) for s in (1,-1)]\nidx={x:i for i,x in enumerate(so)}\ndef ang(k,a,b,c,d):\n    # <a b|Y_k(1,2)|c d> angular factor (no radial), a,b,c,d are orbital m values (l=2)\n    tot=0.0\n    for q in range(-k,k+1):\n        g1=complex(N(gaunt(2,k,2,-a,q,c)))*(-1)**a\n        g2=complex(N(gaunt(2,k,2,-b,-q,d)))*(-1)**b\n        tot+= (-1)**q * g1*g2\n    return tot*4*np.pi/(2*k+1)\ndef Vint(F):  # F dict k->F^k ; returns function <ab|V|cd> over orbital m\n    cache={}\n    def f(a,b,c,d):\n        key=(a,b,c,d)\n        if key in cache: return cache[key]\n        v=0.0\n        for k in (0,2,4):\n            v+=F[k]*ang(k,a,b,c,d).real\n        cache[key]=v\n        return v\n    return f\nstates=list(itertools.combinations(range(10),3))\nsid={s:i for i,s in enumerate(states)}\ndef apply_ops(ops, st):\n    # ops list of (type,index) applied right-to-left; returns (sign, newstate) or None\n    occ=list(st); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':  # annihilate\n            if i not in occ: return None\n            p=occ.index(i); sign*= (-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            # insert at sorted position\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign, tuple(sorted(occ))\ndef build(F):\n    V=Vint(F)\n    H=np.zeros((120,120))\n    # two-body: 1/2 sum <ab|V|cd> a+_a a+_b a_d a_c\n    for st in states:\n        j=sid[st]\n        for a in range(10):\n            for b in range(10):\n                for c in range(10):\n                    for d in range(10):\n                        ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n                        # spin delta\n                        if sa!=sc or sb!=sd: continue\n                        val=V(ma,mb,mc,md)\n                        if abs(val)<1e-12: continue\n                        r=apply_ops([('c',a),('c',b),('a',d),('a',c)],st)\n                        if r is None: continue\n                        sg,ns=r\n                        H[sid[ns],j]+=0.5*sg*val\n    return H\ndef S2():\n    # S^2 = S-S+ + Sz(Sz+1)\n    Sp=np.zeros((120,120)); Sz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        n_up=sum(1 for x in st if so[x][1]==1)\n        Sz[j]=0.5*(n_up-(3-n_up))\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if ma==mb and sa==1 and sb==-1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Sp[sid[ns],j]+=sg\n    Sm=Sp.T\n    S2m=Sm@Sp+np.diag(Sz*(Sz+1))\n    return S2m\ndef L2():\n    # L^2 via L+ L-\n    Lp=np.zeros((120,120)); Lz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        Lz[j]=sum(so[x][0] for x in st)\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if sa==sb and ma==mb+1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Lp[sid[ns],j]+=sg*np.sqrt(6-mb*(mb+1))\n    Lm=Lp.T\n    return Lm@Lp+np.diag(Lz*(Lz+1))\nEOF\ncd /tmp && cat << 'EOF' > run.py\nfrom d3 import *\nimport numpy as np\nS2m=S2(); L2m=L2()\nres=[]\nfor F2,F4 in [(1.0,0.0),(0.0,1.0),(1.0,1.0)]:\n    F={0:0.0,2:F2,4:F4}\n    H=build(F)\n    # project: diagonalize H + mu*S2 + nu*L2 to label (S,L)\n    M=H+1e3*S2m+1e-3*L2m\n    w,v=np.linalg.eigh(M)\n    out=[]\n    for i in range(120):\n        s2=v[:,i]@S2m@v[:,i]; l2=v[:,i]@L2m@v[:,i]; e=v[:,i]@H@v[:,i]\n        out.append((round(s2,3),round(l2,3),round(e,6)))\n    import collections\n    d=collections.Counter(out)\n    print(F2,F4)\n    for k in sorted(d): print(k,d[k])\nEOF\npython3 run.py 2>&1 | head -80",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "086202f9ea15c41ea96c4340e9c6da20b20da32059ba2dbc4765739880c073d7",
+     "lines": 89,
+     "code": "import itertools, numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N\n# spin-orbitals: (m, s) m in -2..2, s=+1 (up) / -1 (down)\nso=[(m,s) for m in range(-2,3) for s in (1,-1)]\nidx={x:i for i,x in enumerate(so)}\ndef ang(k,a,b,c,d):\n    # <a b|Y_k(1,2)|c d> angular factor (no radial), a,b,c,d are orbital m values (l=2)\n    tot=0.0\n    for q in range(-k,k+1):\n        g1=complex(N(gaunt(2,k,2,-a,q,c)))*(-1)**a\n        g2=complex(N(gaunt(2,k,2,-b,-q,d)))*(-1)**b\n        tot+= (-1)**q * g1*g2\n    return tot*4*np.pi/(2*k+1)\ndef Vint(F):  # F dict k->F^k ; returns function <ab|V|cd> over orbital m\n    cache={}\n    def f(a,b,c,d):\n        key=(a,b,c,d)\n        if key in cache: return cache[key]\n        v=0.0\n        for k in (0,2,4):\n            v+=F[k]*ang(k,a,b,c,d).real\n        cache[key]=v\n        return v\n    return f\nstates=list(itertools.combinations(range(10),3))\nsid={s:i for i,s in enumerate(states)}\ndef apply_ops(ops, st):\n    # ops list of (type,index) applied right-to-left; returns (sign, newstate) or None\n    occ=list(st); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':  # annihilate\n            if i not in occ: return None\n            p=occ.index(i); sign*= (-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            # insert at sorted position\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign, tuple(sorted(occ))\ndef build(F):\n    V=Vint(F)\n    H=np.zeros((120,120))\n    # two-body: 1/2 sum <ab|V|cd> a+_a a+_b a_d a_c\n    for st in states:\n        j=sid[st]\n        for a in range(10):\n            for b in range(10):\n                for c in range(10):\n                    for d in range(10):\n                        ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n                        # spin delta\n                        if sa!=sc or sb!=sd: continue\n                        val=V(ma,mb,mc,md)\n                        if abs(val)<1e-12: continue\n                        r=apply_ops([('c',a),('c',b),('a',d),('a',c)],st)\n                        if r is None: continue\n                        sg,ns=r\n                        H[sid[ns],j]+=0.5*sg*val\n    return H\ndef S2():\n    # S^2 = S-S+ + Sz(Sz+1)\n    Sp=np.zeros((120,120)); Sz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        n_up=sum(1 for x in st if so[x][1]==1)\n        Sz[j]=0.5*(n_up-(3-n_up))\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if ma==mb and sa==1 and sb==-1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Sp[sid[ns],j]+=sg\n    Sm=Sp.T\n    S2m=Sm@Sp+np.diag(Sz*(Sz+1))\n    return S2m\ndef L2():\n    # L^2 via L+ L-\n    Lp=np.zeros((120,120)); Lz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        Lz[j]=sum(so[x][0] for x in st)\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if sa==sb and ma==mb+1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Lp[sid[ns],j]+=sg*np.sqrt(6-mb*(mb+1))\n    Lm=Lp.T\n    return Lm@Lp+np.diag(Lz*(Lz+1))\n"
+    },
+    {
+     "name": "run.py",
+     "sha256": "6724dc86be4c2003ba801593623d1c9c66ec6aa78664f9779030d2d572a4c0a2",
+     "lines": 18,
+     "code": "from d3 import *\nimport numpy as np\nS2m=S2(); L2m=L2()\nres=[]\nfor F2,F4 in [(1.0,0.0),(0.0,1.0),(1.0,1.0)]:\n    F={0:0.0,2:F2,4:F4}\n    H=build(F)\n    # project: diagonalize H + mu*S2 + nu*L2 to label (S,L)\n    M=H+1e3*S2m+1e-3*L2m\n    w,v=np.linalg.eigh(M)\n    out=[]\n    for i in range(120):\n        s2=v[:,i]@S2m@v[:,i]; l2=v[:,i]@L2m@v[:,i]; e=v[:,i]@H@v[:,i]\n        out.append((round(s2,3),round(l2,3),round(e,6)))\n    import collections\n    d=collections.Counter(out)\n    print(F2,F4)\n    for k in sorted(d): print(k,d[k])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 112: /tmp/d3.py: Read-only file system\n/bin/bash: line 203: run.py: Read-only file system\npython3: can't open file '/tmp/run.py': [Errno 2] No such file or directory\nShell cwd was reset to /tmp/tsbench-run-osjm3hnd",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "H=np.zeros((120,120))"
+    },
+    {
+     "script": "d3.py",
+     "line": 62,
+     "method": "matrix",
+     "text": "Sp=np.zeros((120,120)); Sz=np.zeros(120)"
+    },
+    {
+     "script": "d3.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "Lp=np.zeros((120,120)); Lz=np.zeros(120)"
+    },
+    {
+     "script": "run.py",
+     "line": 10,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(M)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d3 Coulomb matrix and label terms numerically",
+   "command": "mkdir -p ~/w && cd ~/w && cat << 'EOF' > d3.py\nimport itertools, numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N\nso=[(m,s) for m in range(-2,3) for s in (1,-1)]\ndef ang(k,a,b,c,d):\n    tot=0.0\n    for q in range(-k,k+1):\n        g1=complex(N(gaunt(2,k,2,-a,q,c)))*(-1)**a\n        g2=complex(N(gaunt(2,k,2,-b,-q,d)))*(-1)**b\n        tot+= (-1)**q * g1*g2\n    return tot*4*np.pi/(2*k+1)\nstates=list(itertools.combinations(range(10),3))\nsid={s:i for i,s in enumerate(states)}\ndef apply_ops(ops, st):\n    occ=list(st); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign, tuple(sorted(occ))\ndef angtab():\n    T={}\n    for a,b,c,d in itertools.product(range(-2,3),repeat=4):\n        T[(a,b,c,d)]={k:ang(k,a,b,c,d).real for k in (0,2,4)}\n    return T\nAT=angtab()\ndef build(F):\n    H=np.zeros((120,120))\n    for st in states:\n        j=sid[st]\n        for a in range(10):\n            for b in range(10):\n                for c in range(10):\n                    for d in range(10):\n                        ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n                        if sa!=sc or sb!=sd: continue\n                        val=sum(F[k]*AT[(ma,mb,mc,md)][k] for k in (0,2,4))\n                        if abs(val)<1e-12: continue\n                        r=apply_ops([('c',a),('c',b),('a',d),('a',c)],st)\n                        if r is None: continue\n                        sg,ns=r\n                        H[sid[ns],j]+=0.5*sg*val\n    return H\ndef S2():\n    Sp=np.zeros((120,120)); Sz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        n_up=sum(1 for x in st if so[x][1]==1)\n        Sz[j]=0.5*(n_up-(3-n_up))\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if ma==mb and sa==1 and sb==-1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Sp[sid[ns],j]+=sg\n    return Sp.T@Sp+np.diag(Sz*(Sz+1))\ndef L2():\n    Lp=np.zeros((120,120)); Lz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        Lz[j]=sum(so[x][0] for x in st)\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if sa==sb and ma==mb+1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Lp[sid[ns],j]+=sg*np.sqrt(6-mb*(mb+1))\n    return Lp.T@Lp+np.diag(Lz*(Lz+1))\nEOF\ncat << 'EOF' > run.py\nfrom d3 import *\nimport collections\nS2m=S2(); L2m=L2()\nfor F2,F4 in [(1.0,0.0),(0.0,1.0)]:\n    H=build({0:0.0,2:F2,4:F4})\n    M=H+1e3*S2m+1e-3*L2m\n    w,v=np.linalg.eigh(M)\n    out=[]\n    for i in range(120):\n        x=v[:,i]\n        out.append((round(x@S2m@x,2),round(x@L2m@x,2),round(x@H@x,4)))\n    d=collections.Counter([(a,b) for a,b,_ in out])\n    print(\"F2,F4=\",F2,F4)\n    for k in sorted(d): \n        es=sorted(set(round(e,4) for a,b,e in out if (a,b)==k))\n        print(k,d[k],es)\nEOF\ntimeout 900 python3 run.py",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "3071048efe269ed2f00d0fc939a97e38aa787fbd5828a932f9df97a9e29a051e",
+     "lines": 71,
+     "code": "import itertools, numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N\nso=[(m,s) for m in range(-2,3) for s in (1,-1)]\ndef ang(k,a,b,c,d):\n    tot=0.0\n    for q in range(-k,k+1):\n        g1=complex(N(gaunt(2,k,2,-a,q,c)))*(-1)**a\n        g2=complex(N(gaunt(2,k,2,-b,-q,d)))*(-1)**b\n        tot+= (-1)**q * g1*g2\n    return tot*4*np.pi/(2*k+1)\nstates=list(itertools.combinations(range(10),3))\nsid={s:i for i,s in enumerate(states)}\ndef apply_ops(ops, st):\n    occ=list(st); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign, tuple(sorted(occ))\ndef angtab():\n    T={}\n    for a,b,c,d in itertools.product(range(-2,3),repeat=4):\n        T[(a,b,c,d)]={k:ang(k,a,b,c,d).real for k in (0,2,4)}\n    return T\nAT=angtab()\ndef build(F):\n    H=np.zeros((120,120))\n    for st in states:\n        j=sid[st]\n        for a in range(10):\n            for b in range(10):\n                for c in range(10):\n                    for d in range(10):\n                        ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n                        if sa!=sc or sb!=sd: continue\n                        val=sum(F[k]*AT[(ma,mb,mc,md)][k] for k in (0,2,4))\n                        if abs(val)<1e-12: continue\n                        r=apply_ops([('c',a),('c',b),('a',d),('a',c)],st)\n                        if r is None: continue\n                        sg,ns=r\n                        H[sid[ns],j]+=0.5*sg*val\n    return H\ndef S2():\n    Sp=np.zeros((120,120)); Sz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        n_up=sum(1 for x in st if so[x][1]==1)\n        Sz[j]=0.5*(n_up-(3-n_up))\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if ma==mb and sa==1 and sb==-1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Sp[sid[ns],j]+=sg\n    return Sp.T@Sp+np.diag(Sz*(Sz+1))\ndef L2():\n    Lp=np.zeros((120,120)); Lz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        Lz[j]=sum(so[x][0] for x in st)\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if sa==sb and ma==mb+1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Lp[sid[ns],j]+=sg*np.sqrt(6-mb*(mb+1))\n    return Lp.T@Lp+np.diag(Lz*(Lz+1))\n"
+    },
+    {
+     "name": "run.py",
+     "sha256": "627b53025afb8e104b6b25b30bb1a943f358d05f16b373a2ed80a2ebfe48bf26",
+     "lines": 16,
+     "code": "from d3 import *\nimport collections\nS2m=S2(); L2m=L2()\nfor F2,F4 in [(1.0,0.0),(0.0,1.0)]:\n    H=build({0:0.0,2:F2,4:F4})\n    M=H+1e3*S2m+1e-3*L2m\n    w,v=np.linalg.eigh(M)\n    out=[]\n    for i in range(120):\n        x=v[:,i]\n        out.append((round(x@S2m@x,2),round(x@L2m@x,2),round(x@H@x,4)))\n    d=collections.Counter([(a,b) for a,b,_ in out])\n    print(\"F2,F4=\",F2,F4)\n    for k in sorted(d): \n        es=sorted(set(round(e,4) for a,b,e in out if (a,b)==k))\n        print(k,d[k],es)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/w’: Read-only file system\nTraceback (most recent call last):\n  File \"/tmp/tsbench-run-osjm3hnd/run.py\", line 1, in <module>\n    from d3 import *\nModuleNotFoundError: No module named 'd3'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 31,
+     "method": "matrix",
+     "text": "H=np.zeros((120,120))"
+    },
+    {
+     "script": "d3.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "Sp=np.zeros((120,120)); Sz=np.zeros(120)"
+    },
+    {
+     "script": "d3.py",
+     "line": 61,
+     "method": "matrix",
+     "text": "Lp=np.zeros((120,120)); Lz=np.zeros(120)"
+    },
+    {
+     "script": "run.py",
+     "line": 7,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(M)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Build d3 Coulomb matrix and label terms numerically",
+   "command": "cd \"$(mktemp -d /var/tmp/d3XXXX 2>/dev/null || mktemp -d)\" && pwd && cat << 'EOF' > d3.py\nimport itertools, numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N\nso=[(m,s) for m in range(-2,3) for s in (1,-1)]\ndef ang(k,a,b,c,d):\n    tot=0.0\n    for q in range(-k,k+1):\n        g1=complex(N(gaunt(2,k,2,-a,q,c)))*(-1)**a\n        g2=complex(N(gaunt(2,k,2,-b,-q,d)))*(-1)**b\n        tot+= (-1)**q * g1*g2\n    return tot*4*np.pi/(2*k+1)\nstates=list(itertools.combinations(range(10),3))\nsid={s:i for i,s in enumerate(states)}\ndef apply_ops(ops, st):\n    occ=list(st); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign, tuple(sorted(occ))\ndef angtab():\n    T={}\n    for a,b,c,d in itertools.product(range(-2,3),repeat=4):\n        T[(a,b,c,d)]={k:ang(k,a,b,c,d).real for k in (0,2,4)}\n    return T\nAT=angtab()\ndef build(F):\n    H=np.zeros((120,120))\n    for st in states:\n        j=sid[st]\n        for a in range(10):\n            for b in range(10):\n                for c in range(10):\n                    for d in range(10):\n                        ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n                        if sa!=sc or sb!=sd: continue\n                        val=sum(F[k]*AT[(ma,mb,mc,md)][k] for k in (0,2,4))\n                        if abs(val)<1e-12: continue\n                        r=apply_ops([('c',a),('c',b),('a',d),('a',c)],st)\n                        if r is None: continue\n                        sg,ns=r\n                        H[sid[ns],j]+=0.5*sg*val\n    return H\ndef S2():\n    Sp=np.zeros((120,120)); Sz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        n_up=sum(1 for x in st if so[x][1]==1)\n        Sz[j]=0.5*(n_up-(3-n_up))\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if ma==mb and sa==1 and sb==-1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Sp[sid[ns],j]+=sg\n    return Sp.T@Sp+np.diag(Sz*(Sz+1))\ndef L2():\n    Lp=np.zeros((120,120)); Lz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        Lz[j]=sum(so[x][0] for x in st)\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if sa==sb and ma==mb+1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Lp[sid[ns],j]+=sg*np.sqrt(6-mb*(mb+1))\n    return Lp.T@Lp+np.diag(Lz*(Lz+1))\nEOF\ncat << 'EOF' > run.py\nfrom d3 import *\nimport collections\nS2m=S2(); L2m=L2()\nfor F2,F4 in [(1.0,0.0),(0.0,1.0)]:\n    H=build({0:0.0,2:F2,4:F4})\n    M=H+1e3*S2m+1e-3*L2m\n    w,v=np.linalg.eigh(M)\n    out=[]\n    for i in range(120):\n        x=v[:,i]\n        out.append((round(x@S2m@x,2),round(x@L2m@x,2),round(x@H@x,4)))\n    d=collections.Counter([(a,b) for a,b,_ in out])\n    print(\"F2,F4=\",F2,F4)\n    for k in sorted(d):\n        es=sorted(set(round(e,4) for a,b,e in out if (a,b)==k))\n        print(k,d[k],es)\nEOF\ntimeout 900 python3 run.py",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "3071048efe269ed2f00d0fc939a97e38aa787fbd5828a932f9df97a9e29a051e",
+     "lines": 71,
+     "code": "import itertools, numpy as np\nfrom sympy.physics.wigner import gaunt\nfrom sympy import N\nso=[(m,s) for m in range(-2,3) for s in (1,-1)]\ndef ang(k,a,b,c,d):\n    tot=0.0\n    for q in range(-k,k+1):\n        g1=complex(N(gaunt(2,k,2,-a,q,c)))*(-1)**a\n        g2=complex(N(gaunt(2,k,2,-b,-q,d)))*(-1)**b\n        tot+= (-1)**q * g1*g2\n    return tot*4*np.pi/(2*k+1)\nstates=list(itertools.combinations(range(10),3))\nsid={s:i for i,s in enumerate(states)}\ndef apply_ops(ops, st):\n    occ=list(st); sign=1\n    for typ,i in reversed(ops):\n        if typ=='a':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign, tuple(sorted(occ))\ndef angtab():\n    T={}\n    for a,b,c,d in itertools.product(range(-2,3),repeat=4):\n        T[(a,b,c,d)]={k:ang(k,a,b,c,d).real for k in (0,2,4)}\n    return T\nAT=angtab()\ndef build(F):\n    H=np.zeros((120,120))\n    for st in states:\n        j=sid[st]\n        for a in range(10):\n            for b in range(10):\n                for c in range(10):\n                    for d in range(10):\n                        ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n                        if sa!=sc or sb!=sd: continue\n                        val=sum(F[k]*AT[(ma,mb,mc,md)][k] for k in (0,2,4))\n                        if abs(val)<1e-12: continue\n                        r=apply_ops([('c',a),('c',b),('a',d),('a',c)],st)\n                        if r is None: continue\n                        sg,ns=r\n                        H[sid[ns],j]+=0.5*sg*val\n    return H\ndef S2():\n    Sp=np.zeros((120,120)); Sz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        n_up=sum(1 for x in st if so[x][1]==1)\n        Sz[j]=0.5*(n_up-(3-n_up))\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if ma==mb and sa==1 and sb==-1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Sp[sid[ns],j]+=sg\n    return Sp.T@Sp+np.diag(Sz*(Sz+1))\ndef L2():\n    Lp=np.zeros((120,120)); Lz=np.zeros(120)\n    for st in states:\n        j=sid[st]\n        Lz[j]=sum(so[x][0] for x in st)\n        for a in range(10):\n            for b in range(10):\n                ma,sa=so[a]; mb,sb=so[b]\n                if sa==sb and ma==mb+1:\n                    r=apply_ops([('c',a),('a',b)],st)\n                    if r: sg,ns=r; Lp[sid[ns],j]+=sg*np.sqrt(6-mb*(mb+1))\n    return Lp.T@Lp+np.diag(Lz*(Lz+1))\n"
+    },
+    {
+     "name": "run.py",
+     "sha256": "0588699849918491727d391d46a292ba73e845fcf724a87578032b38524f4777",
+     "lines": 16,
+     "code": "from d3 import *\nimport collections\nS2m=S2(); L2m=L2()\nfor F2,F4 in [(1.0,0.0),(0.0,1.0)]:\n    H=build({0:0.0,2:F2,4:F4})\n    M=H+1e3*S2m+1e-3*L2m\n    w,v=np.linalg.eigh(M)\n    out=[]\n    for i in range(120):\n        x=v[:,i]\n        out.append((round(x@S2m@x,2),round(x@L2m@x,2),round(x@H@x,4)))\n    d=collections.Counter([(a,b) for a,b,_ in out])\n    print(\"F2,F4=\",F2,F4)\n    for k in sorted(d):\n        es=sorted(set(round(e,4) for a,b,e in out if (a,b)==k))\n        print(k,d[k],es)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "<SANDBOX_TMP>/tmp.gIlMPjOlU8\nF2,F4= 1.0 0.0\n(np.float64(0.75), np.float64(2.0)) 6 [np.float64(-0.1224)]\n(np.float64(0.75), np.float64(6.0)) 20 [np.float64(-0.1815), np.float64(0.3856)]\n(np.float64(0.75), np.float64(12.0)) 14 [np.float64(0.1837)]\n(np.float64(0.75), np.float64(20.0)) 18 [np.float64(-0.2245)]\n(np.float64(0.75), np.float64(30.0)) 22 [np.float64(-0.1224)]\n(np.float64(3.75), np.float64(2.0)) 12 [np.float64(-0.0)]\n(np.float64(3.75), np.float64(12.0)) 28 [np.float64(-0.3061)]\nF2,F4= 0.0 1.0\n(np.float64(0.75), np.float64(2.0)) 6 [np.float64(-0.0272)]\n(np.float64(0.75), np.float64(6.0)) 20 [np.float64(-0.2001), np.float64(0.2137)]\n(np.float64(0.75), np.float64(12.0)) 14 [np.float64(-0.1973)]\n(np.float64(0.75), np.float64(20.0)) 18 [np.float64(0.0295)]\n(np.float64(0.75), np.float64(30.0)) 22 [np.float64(-0.0272)]\n(np.float64(3.75), np.float64(2.0)) 12 [np.float64(-0.3333)]\n(np.float64(3.75), np.float64(12.0)) 28 [np.float64(-0.1633)]\nShell cwd was reset to /tmp/tsbench-run-osjm3hnd",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 31,
+     "method": "matrix",
+     "text": "H=np.zeros((120,120))"
+    },
+    {
+     "script": "d3.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "Sp=np.zeros((120,120)); Sz=np.zeros(120)"
+    },
+    {
+     "script": "d3.py",
+     "line": 61,
+     "method": "matrix",
+     "text": "Lp=np.zeros((120,120)); Lz=np.zeros(120)"
+    },
+    {
+     "script": "run.py",
+     "line": 7,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(M)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Compute t2g^3 doublet energies from Coulomb matrix",
+   "command": "cd <SANDBOX_TMP>/tmp.gIlMPjOlU8 && cat << 'EOF' > t2g.py\nfrom d3 import *\nimport collections\n# real t2g orbitals as combos of complex m (dict m->coef), normalized\nr2=np.sqrt(2)\nt2g={'xy':{-2:1j/r2,2:-1j/r2},'xz':{-1:1/r2,1:-1/r2},'yz':{-1:1j/r2,1:1j/r2}}\ndef vec_from_ops(orb_list):\n    # orb_list: list of (realname, spin) ; returns dict occ->coeff in complex Fock basis\n    vecs={():1.0}\n    for name,s in orb_list:\n        new=collections.defaultdict(complex)\n        for occ,c in vecs.items():\n            for m,cm in t2g[name].items():\n                idx_=so.index((m,s))\n                r=apply_ops([('c',idx_)],occ)\n                if r is None: continue\n                sg,ns=r\n                new[ns]+=c*cm*sg\n        vecs=new\n    return vecs\n# build t2g^3 basis: choose 3 distinct spin-orbitals from 6 (3 orbitals x 2 spins)\nspinorbs=[(n,s) for n in ['xy','xz','yz'] for s in (1,-1)]\nbasis=[]\nfor comb in itertools.combinations(spinorbs,3):\n    v=vec_from_ops(list(comb))\n    basis.append(v)\n# gram / vectors in 120-dim\ndef tovec(v):\n    x=np.zeros(120,dtype=complex)\n    for occ,c in v.items(): x[sid[occ]]+=c\n    return x\nB=np.array([tovec(v) for v in basis]).T  # 120 x 20 (not orthonormal necessarily)\nQ,R=np.linalg.qr(B)\n# orthonormal basis for span\nu,s,vh=np.linalg.svd(B,full_matrices=False)\nQb=u[:,s>1e-9]\nprint(\"dim t2g^3:\",Qb.shape[1])\nfor F2,F4 in [(1.0,0.0),(0.0,1.0)]:\n    H=build({0:0.0,2:F2,4:F4}).astype(complex)\n    Ht=Qb.conj().T@H@Qb\n    S2m=S2(); S2t=Qb.conj().T@S2m@Qb\n    M=Ht+1e3*S2t\n    w,v=np.linalg.eigh(M)\n    res=[]\n    for i in range(len(w)):\n        x=v[:,i]\n        res.append((round((x.conj()@S2t@x).real,3), round((x.conj()@Ht@x).real,5)))\n    print(F2,F4, collections.Counter([a for a,b in res]))\n    for S in sorted(set(a for a,b in res)):\n        print(' S2=',S, sorted(set(b for a,b in res if a==S)))\nEOF\npython3 t2g.py",
+   "scripts": [
+    {
+     "name": "t2g.py",
+     "sha256": "80d26224618dca3b030e92499acc593c06eaaccd5c59983c3d2295ff2c8f1c2c",
+     "lines": 49,
+     "code": "from d3 import *\nimport collections\n# real t2g orbitals as combos of complex m (dict m->coef), normalized\nr2=np.sqrt(2)\nt2g={'xy':{-2:1j/r2,2:-1j/r2},'xz':{-1:1/r2,1:-1/r2},'yz':{-1:1j/r2,1:1j/r2}}\ndef vec_from_ops(orb_list):\n    # orb_list: list of (realname, spin) ; returns dict occ->coeff in complex Fock basis\n    vecs={():1.0}\n    for name,s in orb_list:\n        new=collections.defaultdict(complex)\n        for occ,c in vecs.items():\n            for m,cm in t2g[name].items():\n                idx_=so.index((m,s))\n                r=apply_ops([('c',idx_)],occ)\n                if r is None: continue\n                sg,ns=r\n                new[ns]+=c*cm*sg\n        vecs=new\n    return vecs\n# build t2g^3 basis: choose 3 distinct spin-orbitals from 6 (3 orbitals x 2 spins)\nspinorbs=[(n,s) for n in ['xy','xz','yz'] for s in (1,-1)]\nbasis=[]\nfor comb in itertools.combinations(spinorbs,3):\n    v=vec_from_ops(list(comb))\n    basis.append(v)\n# gram / vectors in 120-dim\ndef tovec(v):\n    x=np.zeros(120,dtype=complex)\n    for occ,c in v.items(): x[sid[occ]]+=c\n    return x\nB=np.array([tovec(v) for v in basis]).T  # 120 x 20 (not orthonormal necessarily)\nQ,R=np.linalg.qr(B)\n# orthonormal basis for span\nu,s,vh=np.linalg.svd(B,full_matrices=False)\nQb=u[:,s>1e-9]\nprint(\"dim t2g^3:\",Qb.shape[1])\nfor F2,F4 in [(1.0,0.0),(0.0,1.0)]:\n    H=build({0:0.0,2:F2,4:F4}).astype(complex)\n    Ht=Qb.conj().T@H@Qb\n    S2m=S2(); S2t=Qb.conj().T@S2m@Qb\n    M=Ht+1e3*S2t\n    w,v=np.linalg.eigh(M)\n    res=[]\n    for i in range(len(w)):\n        x=v[:,i]\n        res.append((round((x.conj()@S2t@x).real,3), round((x.conj()@Ht@x).real,5)))\n    print(F2,F4, collections.Counter([a for a,b in res]))\n    for S in sorted(set(a for a,b in res)):\n        print(' S2=',S, sorted(set(b for a,b in res if a==S)))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t2g.py",
+     "written_in_step": 4
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "dim t2g^3: 20\n1.0 0.0 Counter({np.float64(0.75): 16, np.float64(3.75): 4})\n S2= 0.75 [np.float64(-0.12245), np.float64(-0.0)]\n S2= 3.75 [np.float64(-0.30612)]\n0.0 1.0 Counter({np.float64(0.75): 16, np.float64(3.75): 4})\n S2= 0.75 [np.float64(-0.02721), np.float64(0.06349)]\n S2= 3.75 [np.float64(-0.16327)]\nShell cwd was reset to /tmp/tsbench-run-osjm3hnd",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "t2g.py",
+     "line": 42,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(M)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Count multiplicities of t2g^3 term energies",
+   "command": "cd <SANDBOX_TMP>/tmp.gIlMPjOlU8 && cat >> t2g.py << 'EOF'\n\nfor F2,F4 in [(1.0,0.0),(0.0,1.0)]:\n    H=build({0:0.0,2:F2,4:F4}).astype(complex)\n    Ht=Qb.conj().T@H@Qb\n    S2t=Qb.conj().T@S2()@Qb\n    w,v=np.linalg.eigh(Ht+1e3*S2t)\n    cnt=collections.Counter()\n    for i in range(len(w)):\n        x=v[:,i]; s=round((x.conj()@S2t@x).real,2); e=round((x.conj()@Ht@x).real,5)\n        cnt[(s,e)]+=1\n    print(F2,F4,dict(cnt))\nEOF\npython3 t2g.py | tail -2",
+   "scripts": [
+    {
+     "name": "t2g.py",
+     "sha256": "cd85be691117daeb040ab34176ebb52f4014b76322ad879ff279acec1bc7581a",
+     "lines": 11,
+     "code": "\nfor F2,F4 in [(1.0,0.0),(0.0,1.0)]:\n    H=build({0:0.0,2:F2,4:F4}).astype(complex)\n    Ht=Qb.conj().T@H@Qb\n    S2t=Qb.conj().T@S2()@Qb\n    w,v=np.linalg.eigh(Ht+1e3*S2t)\n    cnt=collections.Counter()\n    for i in range(len(w)):\n        x=v[:,i]; s=round((x.conj()@S2t@x).real,2); e=round((x.conj()@Ht@x).real,5)\n        cnt[(s,e)]+=1\n    print(F2,F4,dict(cnt))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "t2g.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1.0 0.0 {(np.float64(0.75), np.float64(-0.12245)): 10, (np.float64(0.75), np.float64(-0.0)): 6, (np.float64(3.75), np.float64(-0.30612)): 4}\n0.0 1.0 {(np.float64(0.75), np.float64(-0.02721)): 10, (np.float64(0.75), np.float64(0.06349)): 6, (np.float64(3.75), np.float64(-0.16327)): 4}\nShell cwd was reset to /tmp/tsbench-run-osjm3hnd",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "t2g.py",
+     "line": 6,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(Ht+1e3*S2t)"
+    }
+   ],
+   "produces": []
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1750.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "B",
+   "value": 618.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 2176.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 6,
+  "n_scripts": 8,
+  "n_failed_steps": 1,
+  "n_values": 3,
+  "n_linked": 0,
+  "n_weak": 0,
+  "source_steps": [],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": true
+ }
+}

@@ -2,7 +2,8 @@
 was left out, as tables. Every value is read from a file (the task-set hash, the manifests, the prompt files, the
 scores tables, `tsbench.core.intervals`) or from the facts it is given, never typed in.
 
-    facts(run_sets, benches, checks, platform, version=...)   the tables of the tab "Method and platform"
+    facts(run_sets, benches, checks, platform, version=..., split="pilot", doi=None)
+                                                    the tables of the tab "Method and platform"
 
 Keys: `identity`, `protocol`, `statistics`, `class_intervals`, `provenance`, `exclusions`, `limits`
 (each a list of row dicts, except `protocol`: a dict with the lists `conditions` and `settings`).
@@ -27,17 +28,17 @@ import pathlib
 import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 from tsbench.core import intervals, resource
 from tsbench.plan import DEFAULT_SYSTEM_PROMPT
 from tsbench.report import facts as facts_mod
 from tsbench.report import science
-from tsbench.report.base import as_bool, as_run_sets, is_true, pilot_hash
+from tsbench.report.base import as_bool, as_run_sets, is_true, model_key, split_hash
 from tsbench.score.run_sets import RunSet
 from tsbench.stats import analysis
 
-__all__ = ["SMALL_CLASS", "SOURCES", "facts"]
+__all__ = ["SMALL_CLASS", "SOURCES", "Redactions", "facts", "read_redactions"]
 
 NOT_RECORDED = facts_mod.NOT_RECORDED
 ALL_MODELS = "all models"  # the model of an exclusion that belongs to the run set, not to one model
@@ -111,20 +112,40 @@ SOURCES: dict[str, dict[str, list[str]]] = {
 }
 
 
+class Redactions(NamedTuple):
+    """A log of published transcripts: the file name of the log and its (sha256 original, sha256 published) pairs."""
+
+    name: str
+    pairs: frozenset[tuple[str, str]]
+
+
+def read_redactions(path: pathlib.Path) -> Redactions:
+    """The log of a published copy whose machine paths were replaced (columns `sha256_original`, `sha256_published`).
+    Raises ValueError when a column is missing, OSError when the file cannot be read."""
+    with path.open(encoding="utf-8", newline="") as fh:
+        table = csv.DictReader(fh)
+        missing = {"sha256_original", "sha256_published"} - set(table.fieldnames or ())
+        if missing:
+            raise ValueError(f"{path.name}: no column {', '.join(sorted(missing))}")
+        return Redactions(path.name, frozenset((r["sha256_original"], r["sha256_published"]) for r in table))
+
+
 def facts(run_sets: Sequence[RunSet | pathlib.Path | str], benches: Mapping[str, dict], checks: dict | None,
-          platform: dict, *, version: str) -> dict:
+          platform: dict, *, version: str, split: str = "pilot", doi: str | None = None,
+          redactions: Redactions | None = None) -> dict:
     """The method tables; `version` is `full.REPORT_VERSION`. `benches` are the benchmark facts per model, in the
     order of `facts.benchmarks`; `checks` and `platform` are the facts of the code checks and the platform (they may be
-    None / empty without effect on the tables)."""
+    None / empty without effect on the tables). `split` is the task split of the page and `doi` the preregistration of
+    a confirmatory page. `redactions` is the log of a published copy: see `_glob`."""
     sets = as_run_sets(run_sets)
     mans = [facts_mod._manifest(rs) for rs in sets]
     rows = _scores(sets)
     return {
-        "identity": _identity(sets, mans, version),
+        "identity": _identity(sets, mans, version, split, doi),
         "protocol": _protocol(sets, mans, benches),
-        "statistics": _statistics(),
+        "statistics": _statistics(split),
         "class_intervals": _class_intervals(benches),
-        "provenance": _provenance(sets, (checks or {}).get("inputs") or {}),
+        "provenance": _provenance(sets, (checks or {}).get("inputs") or {}, redactions),
         "exclusions": _exclusions(rows, benches, sets, mans),
         "limits": _limits(benches, sets, mans, rows, platform or {}),
     }
@@ -155,13 +176,17 @@ def _scores(sets: list[RunSet]) -> list[dict]:
 # ---------------------------------------------------------------- identity
 
 
-def _identity(sets: list[RunSet], mans: list[dict], version: str) -> list[dict]:
-    """Report version, task-set hash, build time and, per run set, the folder, code commit, plan and task-set hash of
-    its manifest (a hash that differs from the task file is marked "differs")."""
-    pilot = pilot_hash() or NOT_RECORDED
+def _identity(sets: list[RunSet], mans: list[dict], version: str, split: str = "pilot",
+              doi: str | None = None) -> list[dict]:
+    """Report version, task-set hash of the split, the preregistration of a confirmatory page, build time and, per run
+    set, the folder, code commit, plan and task-set hash of its manifest (a hash that differs from the task file is
+    marked "differs")."""
+    expected = split_hash(split) or NOT_RECORDED
     built = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M UTC")
     rows = [{"item": "Report version", "value": version, "source": "report/full.py (REPORT_VERSION)"},
-            {"item": "Task set (pilot) sha256", "value": pilot, "source": "tasks/tasks.sha256"},
+            {"item": f"Task set ({split}) sha256", "value": expected, "source": "tasks/tasks.sha256"},
+            *([{"item": "Preregistration (DOI)", "value": doi, "source": "--i-have-preregistered"}]
+              if split == "confirmatory" and doi else []),
             {"item": "Page built", "value": built, "source": "clock"}]
     many = len(sets) > 1
     for rs, m in zip(sets, mans, strict=True):
@@ -169,7 +194,7 @@ def _identity(sets: list[RunSet], mans: list[dict], version: str) -> list[dict]:
                                              else ", working tree clean") if m.get("git_commit") else None
         recorded = m.get("tasks_sha256")
         check = None if not recorded else \
-            f"{recorded} (matches the task file)" if recorded == pilot else f"{recorded} (differs from the task file)"
+            f"{recorded} ({'matches' if recorded == expected else 'differs from'} the task file)"
         rows += [{"item": _suffixed("Run set", rs, many), "value": rs.name, "source": "folder name"},
                  facts_mod.distinct_row(_suffixed("Code commit", rs, many), [commit]),
                  facts_mod.distinct_row(_suffixed("Plan id", rs, many), [m.get("plan_id")]),
@@ -294,8 +319,9 @@ def _settings(sets: list[RunSet], mans: list[dict]) -> list[dict]:
               for got, _ in turns if got]
     turns_source = next((src for got, src in turns if got), "–")
     return [
-        facts_mod.distinct_row("Models requested", (x for m in mans for x in m.get("models_requested") or [])),
-        facts_mod.distinct_row("Models reported by the endpoint", reported),
+        facts_mod.distinct_row("Models requested", (x for m in mans for x in m.get("models_requested") or []),
+                               key=model_key),
+        facts_mod.distinct_row("Models reported by the endpoint", reported, key=lambda x: model_key(x.split(":")[0])),
         facts_mod.distinct_row("Effort", (m.get("effort") for m in mans)),
         facts_mod.distinct_row("Runs per task planned (k)", ks),
         facts_mod.distinct_row("Budget (USD)", (m.get("budget_usd") for m in mans)),
@@ -310,8 +336,9 @@ def _settings(sets: list[RunSet], mans: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------- statistics and class intervals
 
 
-def _statistics() -> list[dict]:
-    """The methods behind every interval and p value; the parameters are read from the code that computes them."""
+def _statistics(split: str = "pilot") -> list[dict]:
+    """The methods behind every interval and p value; the parameters are read from the code that computes them. The
+    McNemar p of a model is descriptive; a confirmatory page has the preregistered tests in a table of their own."""
     paired = inspect.signature(analysis.bootstrap_ci).parameters
     boot = f"{intervals.RESAMPLES} resamples, seed {intervals.SEED}"
     return [
@@ -331,7 +358,8 @@ def _statistics() -> list[dict]:
         {"quantity": "Exact McNemar p",
          "definition": "Two-sided exact test of the tasks solved by one condition only (b and c): "
                        "p = min(1, 2 · P(X ≤ min(b, c))) with X binomial(b + c, 1/2).",
-         "parameters": "descriptive; no hypothesis is tested in the pilot"},
+         "parameters": "descriptive; the preregistered tests are in the tab Models" if split == "confirmatory"
+                       else "descriptive; no hypothesis is tested in the pilot"},
         {"quantity": "Error ratio", "definition": "Relative error of the worst required parameter of a fit answer "
          "divided by its tolerance.", "parameters": "tolerance of the task record"},
         {"quantity": "Class interval",
@@ -343,7 +371,7 @@ def _statistics() -> list[dict]:
 def _class_intervals(benches: Mapping[str, dict]) -> list[dict]:
     """Per model, class and condition: tasks solved (k) of the tasks (n) and the bootstrap interval of the task
     verdicts, one block of classes per model in the order of `benches`. The verdicts are the marks of
-    `bench["classes"]` (`facts._solved`); a task with no evaluable run under a condition has no mark (None) and is left
+    `bench["classes"]` (`base.solved`); a task with no evaluable run under a condition has no mark (None) and is left
     out of that condition's k and n. A class of two tasks says n = 2."""
     out = []
     for model, bench in benches.items():
@@ -372,9 +400,11 @@ def _file(path: pathlib.Path, shown: str) -> dict:
 
 
 def _glob(root: pathlib.Path, pattern: str, shown: str, recorded: dict | None = None,
-          name: re.Pattern[str] | None = None) -> dict:
+          name: re.Pattern[str] | None = None, redactions: Redactions | None = None) -> dict:
     """One entry for the files of a glob: their count, the digest of their listing and, when the manifest records
-    hashes, how many of them match. With `name`, only the files whose name it finds are listed."""
+    hashes, how many of them match. With `name`, only the files whose name it finds are listed. A file of a published
+    copy matches also when `redactions` logs its replacement: its hash is the published one and the original one is
+    the hash the manifest records. The text says how many went that way."""
     files = sorted(p for p in root.glob(pattern) if p.is_file() and not SKIP_PARTS & set(p.relative_to(root).parts)
                    and (name is None or name.search(p.name)))
     hashes = [(p.relative_to(root).as_posix(), facts_mod._sha256(p)) for p in files]
@@ -383,11 +413,16 @@ def _glob(root: pathlib.Path, pattern: str, shown: str, recorded: dict | None = 
     if recorded is not None:
         names = {p: sha for p, sha in hashes}
         ok = sum(1 for key, sha in recorded.items() if names.get(f"{key}.jsonl") == sha)
-        entry["verified"] = f"{ok} of {len(recorded)} recorded hashes match"
+        pairs = redactions.pairs if redactions else frozenset()
+        replaced = sum(1 for key, sha in recorded.items() if (sha, names.get(f"{key}.jsonl")) in pairs)
+        entry["verified"] = f"{ok + replaced} of {len(recorded)} recorded hashes match"
+        if replaced:
+            entry["verified"] += f", {replaced} through the path replacement of {redactions.name}"
     return entry
 
 
-def _resolve(token: str, sets: list[RunSet], inputs: dict[str, list[dict]]) -> list[dict]:
+def _resolve(token: str, sets: list[RunSet], inputs: dict[str, list[dict]],
+             redactions: Redactions | None = None) -> list[dict]:
     kind, _, name = token.partition(":")
     if kind == "ext":
         if inputs.get(name):
@@ -407,7 +442,7 @@ def _resolve(token: str, sets: list[RunSet], inputs: dict[str, list[dict]]) -> l
         if name == "transcripts":
             recorded = facts_mod._manifest(rs).get("transcripts")
             out.append(_glob(rs.path, TRANSCRIPTS, rs.name, recorded if isinstance(recorded, dict) else None,
-                             TRANSCRIPT_NAME))
+                             TRANSCRIPT_NAME, redactions))
         elif "*" in name:
             out.append(_glob(rs.path, name, rs.name))
         else:
@@ -415,7 +450,8 @@ def _resolve(token: str, sets: list[RunSet], inputs: dict[str, list[dict]]) -> l
     return out
 
 
-def _provenance(sets: list[RunSet], inputs: dict[str, list[dict]]) -> list[dict]:
+def _provenance(sets: list[RunSet], inputs: dict[str, list[dict]],
+                redactions: Redactions | None = None) -> list[dict]:
     """One row per page key of `SOURCES`: the source files with their sha256 (a glob: count and digest), the fields
     read. A token is resolved once."""
     resolved: dict[str, list[dict]] = {}
@@ -424,7 +460,7 @@ def _provenance(sets: list[RunSet], inputs: dict[str, list[dict]]) -> list[dict]
         files = []
         for token in src["files"]:
             if token not in resolved:
-                resolved[token] = _resolve(token, sets, inputs)
+                resolved[token] = _resolve(token, sets, inputs, redactions)
             files += resolved[token]
         out.append({"key": key, "files": files, "fields": list(src["fields"])})
     return out
@@ -491,10 +527,32 @@ def _run_state(m: dict) -> str | None:
     return "; ".join(["not finished", *parts])
 
 
+def _stop_reason(session: dict) -> str | None:
+    """Why an earlier session of a run set stopped before its last run; None when it did not."""
+    stop = session.get("stop")
+    if isinstance(stop, dict):
+        scope = f", {stop['scope']} cap" if stop.get("scope") else ""
+        return f"{str(stop.get('reason', 'unknown')).replace('_', ' ')}{scope}"
+    if session.get("stopped_by_budget"):
+        return "the budget"
+    return "interrupted" if session.get("interrupted") else None
+
+
+def _stops(m: dict) -> str | None:
+    """The stops and the resumes that led to the last session of a run set, per reason; None for one session."""
+    earlier = m.get("earlier_sessions") or []
+    if not earlier:
+        return None
+    reasons = Counter(r for r in map(_stop_reason, earlier) if r)
+    n = sum(reasons.values())
+    text = f"{n} stop{'' if n == 1 else 's'}, {len(earlier)} resume{'' if len(earlier) == 1 else 's'}"
+    return f"{text}: " + "; ".join(f"{r} {k}" for r, k in reasons.items()) if reasons else text
+
+
 def _stop_rows(sets: list[RunSet], mans: list[dict]) -> list[dict]:
-    """The limits that the manifests record: how each run set ended, the runs never started, the rate-limited runs and
-    the aborted cells. A row appears only when its manifest holds the field (and, but for the state, a count above
-    0)."""
+    """The limits that the manifests record: how each run set ended, the stops and resumes on the way, the runs that
+    the last session did not start, the rate-limited runs and the aborted cells. A row appears only when its manifest
+    holds the field (and, but for the state, a count above 0)."""
     many = len(sets) > 1
     out = []
     for rs, m in zip(sets, mans, strict=True):
@@ -502,6 +560,7 @@ def _stop_rows(sets: list[RunSet], mans: list[dict]) -> list[dict]:
         not_run = {k: counts[k] for k in NOT_RUN if counts.get(k)}
         cells = [c for c in m.get("aborted_cells") or [] if isinstance(c, dict)]
         rows = [("Run state", _run_state(m), "MANIFEST.json (finished, interrupted, stop, stopped_by_budget)"),
+                ("Stops and resumes", _stops(m), "MANIFEST.prev-*.json (stop, stopped_by_budget, interrupted)"),
                 ("Runs not started", f"{sum(not_run.values())} ("
                  + ", ".join(f"{k.removeprefix('not_run_').replace('_', ' ')} {n}" for k, n in not_run.items()) + ")"
                  if not_run else None, "MANIFEST.json (counts.not_run_*)"),

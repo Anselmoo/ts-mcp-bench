@@ -1,0 +1,5 @@
+src=open('<SANDBOX_TMP>/w/d4.py').read()
+src=src.replace("Spm=onebody(Sp); S2=Spm.T@Spm+2*np.eye(N)","""Spm=onebody(Sp)
+Sz=np.diag([sum(so[i][1]-0.5 for i in D) for D in dets])
+S2=Spm.T@Spm+Sz@Sz+Sz""")
+open('<SANDBOX_TMP>/w/d4.py','w').write(src)

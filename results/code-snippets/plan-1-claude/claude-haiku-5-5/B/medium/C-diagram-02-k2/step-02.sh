@@ -1,0 +1,1 @@
+pwd; ls -ld . ; touch ./test_w && echo writable && rm ./test_w

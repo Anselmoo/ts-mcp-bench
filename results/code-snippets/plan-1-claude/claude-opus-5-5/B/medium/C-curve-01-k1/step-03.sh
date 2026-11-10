@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-hjamwf2n; touch x && echo writable; ls; echo $TMPDIR

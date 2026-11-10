@@ -1,0 +1,1 @@
+which python3; python3 -c "import numpy"; python3 -m pip --version; ls /usr/bin | grep -i py | head

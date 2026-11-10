@@ -1,0 +1,1 @@
+python3 -c "from scipy.special import sph_harm_y; print('ok')" 2>&1; python3 -c "import numpy,scipy;print(numpy.__version__,scipy.__version__)"

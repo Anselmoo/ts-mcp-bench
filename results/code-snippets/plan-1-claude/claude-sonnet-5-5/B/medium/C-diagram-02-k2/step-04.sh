@@ -1,0 +1,1 @@
+pwd; touch x.tmp && echo ok; echo $TMPDIR

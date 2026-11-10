@@ -1,0 +1,1 @@
+echo $HOME; ls -ld $HOME /tmp 2>&1; mkdir -p ~/w && echo ok

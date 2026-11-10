@@ -1,0 +1,1 @@
+echo $HOME; ls -ld $HOME /tmp 2>&1; touch $HOME/x && echo homeok

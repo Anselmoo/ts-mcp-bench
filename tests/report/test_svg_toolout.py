@@ -4,13 +4,14 @@ import math
 import random
 import xml.etree.ElementTree as ET
 
+import pytest
 from svg_helpers import classes as _classes
 from svg_helpers import root as _root
 from svg_helpers import texts as _texts
 from svg_helpers import tip as _tip
 
 from tsbench.report.svg.base import number
-from tsbench.report.svg.toolout import tool_output
+from tsbench.report.svg.toolout import tool_output, tool_rows
 
 NS = "{http://www.w3.org/2000/svg}"
 
@@ -300,3 +301,35 @@ def test_kchars_round_a_half_up_in_both_ranges():
     assert [_kchars(n) for n in (5250, 5350, 12500, 13500, 999_499, 999_500)] == [
         "5.3k", "5.4k", "13k", "14k", "999k", "1.0M"]
     assert [_kchars(n) for n in (845, 1_250_000, 1_350_000)] == ["845", "1.3M", "1.4M"]
+
+
+# ---------------------------------------------------------------- several models
+
+
+TOOL_MODELS = [("m-a", [{"cond": "C", "task": "t", "k": 1, "correct": True,
+                         "calls": [{"tool": "ts_fit", "chars": 1200}, {"tool": "ts_fit", "chars": 800},
+                                   {"tool": "ts_plot", "chars": 0}]}]),
+               ("m-b", [{"cond": "B", "task": "t", "k": 1, "correct": False, "calls": [{"tool": "Bash", "chars": 500}]},
+                        {"cond": "C", "task": "t", "k": 1, "correct": True,
+                         "calls": [{"tool": "ts_fit", "chars": 4000}]}])]
+
+
+def test_tool_rows_have_a_line_per_model_and_tool_on_one_axis():
+    svg = tool_rows(TOOL_MODELS)
+    words = _texts(svg)
+    assert words.count("C · ts_fit") == 2 and words.count("B · Bash") == 2 and words.count("C · ts_plot") == 2
+    assert "2.0k chars · 2 calls" in words and "4.0k chars · 1 call" in words
+    assert words.count("no call") == 2  # m-a has no Bash, m-b no ts_plot
+    assert "m-a · C · ts_fit: " + number(2000) + " characters returned in 2 calls" in svg
+
+
+def test_a_tool_bar_is_as_long_as_its_characters():
+    svg_root = _root(tool_rows(TOOL_MODELS))
+    bars = {_tip(e): float(e.attrib["width"]) for e in svg_root.iter("{http://www.w3.org/2000/svg}rect") if _tip(e)}
+    a = next(v for k, v in bars.items() if k.startswith("m-a · C · ts_fit"))
+    b = next(v for k, v in bars.items() if k.startswith("m-b · C · ts_fit"))
+    assert b / a == pytest.approx(2.0, rel=0.01)
+
+
+def test_tool_rows_without_a_call_are_empty():
+    assert tool_rows([("m", [{"cond": "A", "task": "t", "calls": []}])]) == ""

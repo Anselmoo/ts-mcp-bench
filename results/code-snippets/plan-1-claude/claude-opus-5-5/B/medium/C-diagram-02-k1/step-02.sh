@@ -1,0 +1,1 @@
+pwd; ls; touch x && rm x && echo writable

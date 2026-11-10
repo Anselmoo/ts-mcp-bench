@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> && sed -i 's/two({2:1,4:0})/two({2:49,4:0})/g; s/two({2:1\/7,4:1\/35})/two({2:7,4:12.6})/g' a.py && python3 a.py && python3 g.py

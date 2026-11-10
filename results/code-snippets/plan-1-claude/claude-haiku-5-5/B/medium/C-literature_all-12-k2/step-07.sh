@@ -1,0 +1,1 @@
+sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y/; s/sph_harm(m,2,PH,TH)/sph_harm_y(2,m,TH,PH)/; s/sph_harm(mp,2,PH,TH)/sph_harm_y(2,mp,TH,PH)/' ff.py && python3 ff.py

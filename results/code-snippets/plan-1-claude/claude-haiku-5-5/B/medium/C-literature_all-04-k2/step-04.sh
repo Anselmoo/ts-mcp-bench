@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch ~/x 2>&1; echo $HOME; df -h /dev/shm 2>/dev/null | tail -1

@@ -1,0 +1,1 @@
+cd /dev/shm; ls a.py || echo gone

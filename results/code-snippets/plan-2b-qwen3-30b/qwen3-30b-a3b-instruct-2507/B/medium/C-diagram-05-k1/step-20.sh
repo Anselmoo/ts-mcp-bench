@@ -1,0 +1,1 @@
+echo 'import sys; print(sys.executable)' | python3

@@ -1,0 +1,1 @@
+sha256sum diagram.png; cat <SANDBOX_TMP>/me7/pts.json | head -c 300

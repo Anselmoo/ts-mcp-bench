@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null; mkdir -p ./w && echo ok; pwd

@@ -1,0 +1,1 @@
+python3 -c "import numpy, scipy; print(numpy.__version__, scipy.__version__)"; python3 -c "import matplotlib; print(matplotlib.__version__)"; pwd

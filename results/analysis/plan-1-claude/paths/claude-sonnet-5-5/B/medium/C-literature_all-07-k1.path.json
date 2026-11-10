@@ -1,0 +1,276 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-sonnet-5-5/B/medium/C-literature_all-07-k1.jsonl",
+ "transcript_sha256": "00b0e4ea3c657db210af49e918884bebad34e8d56aad46a9eff274f34e3f6361",
+ "answer": {
+  "Dq": 580.0,
+  "B": 722.0,
+  "C": 3155.0,
+  "out_of_scope": false,
+  "reason": "Full d5 quartet diagonalization fitted exactly to the three bands gives Dq≈580, B≈722, C≈3155 cm^-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat > /tmp/a.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2): # <2m1|C^k|2m2>\n    return float(gaunt(2,k,2,-m1,m1-m2,m2)*(-1)**m1) if False else None\nfrom sympy import Rational\nfrom sympy.physics.quantum.cg import CG\ndef c(k,m1,m2):\n    # <l m1|C^k_q|l m2>, q=m1-m2 ; = (-1)^m1 sqrt(5*5) 3j(2 -m1;k q;2 m2)\n    from sympy.physics.wigner import wigner_3j\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in (0,2,4) for a in ms for b in ms}\ndef ck_(k,a,b): return C[(k,a,b)]\n# two-electron integrals <ab|1/r|cd> = sum_k F^k c^k(a,c) c^k(b,d)  (a->c electron1, b->d electron2)\ndef V(F):\n    v=np.zeros((5,5,5,5))\n    for i,a in enumerate(ms):\n     for j,b in enumerate(ms):\n      for k_,cc in enumerate(ms):\n       for l,d in enumerate(ms):\n        if a+b!=cc+d: continue\n        v[i,j,k_,l]=sum(F[k]*ck_(k,a,cc)*ck_(k,d,b) for k in (0,2,4))\n    return v\n# spin orbitals: (m,s)\nso=[(i,s) for i in range(5) for s in (0,1)]\ndets=[d for d in itertools.combinations(range(10),5) if sum(so[x][1] for x in d)==1]  # 2 down? Ms=1/2 -> 3up2down\nprint(len(dets))\nidx={d:i for i,d in enumerate(dets)}\n# one-body: crystal field in real d basis; use complex basis: Oh potential Dq*(...) \n# V_oh matrix elements: 21Dq/... use: <m|V|m'>: diag: m=±2:Dq, ±1:-4Dq, 0:6Dq; off <2|V|-2>=5Dq\nh=np.zeros((5,5))\nfor m,vv in zip(ms,[1,-4,6,-4,1]): h[m+2,m+2]=vv\nh[0,4]=h[4,0]=5\ndef build(Dq,B,Cc):\n    F4=B*0  # Racah: B=F2-5F4, C=... use F2=49F4+... \n    # F2=7(... ) : A=F0-49F4, B=F2/49-5F4/441, C=35F4/441\n    F4=Cc*441/35*0+0\n    f4=Cc*441/35/1.0  # wrong placeholder\n    return None\ndef Fs(B,Cc):\n    # C=35F4/441 (F in Condon-Shortley F^k units -> use F4 = 441C/35? ) with B=(F2-5F4)/49\n    F4=441*Cc/35; F2=49*B+5*F4\n    return [0,F2,F4]\n# check: with F^k=Racah F^k convention c^k as above? use F_k Slater: E uses F^k directly with c^k c^k\ndef H(Dq,B,Cc):\n    F=Fs(B,Cc); v=V(F)\n    Hm=np.zeros((len(dets),len(dets)))\n    for I,d in enumerate(dets):\n        # one body\n        for p in d:\n            for q in range(10):\n                if so[q][1]!=so[p][1]: continue\n                hv=Dq*h[so[q][0],so[p][0]]\n                if hv==0: continue\n                if q!=p and q in d: continue\n                nd=[x for x in d if x!=p]+[q] if q!=p else list(d)\n                # sign\n                sign=1\n                l=list(d); pos=l.index(p); l[pos]=q\n                # sort with parity\n                perm=sorted(range(5),key=lambda i:l[i]); \n                par=np.linalg.det(np.eye(5)[perm]); nd=tuple(sorted(l))\n                Hm[idx[nd],I]+=hv*par\n        # two-body: 1/2 sum <pq|rs> a+p a+q a_s a_r\n        for r in d:\n          for s in d:\n            if r==s: continue\n            for p in range(10):\n              for q in range(10):\n                if p==q: continue\n                if so[p][1]!=so[r][1] or so[q][1]!=so[s][1]: continue\n                val=v[so[p][0],so[q][0],so[r][0],so[s][0]]\n                if val==0: continue\n                l=list(d)\n                # apply a_s a_r: remove r then s with signs\n                def rem(l,x):\n                    i=l.index(x); return (-1)**i, l[:i]+l[i+1:]\n                def add(l,x):\n                    if x in l: return 0,l\n                    l2=[x]+l; return 1,l2\n                s1,l1=rem(l,r); s2,l2=rem(l1,s)\n                # a_s a_r |d> : first r then s\n                a1,l3=add(l2,q); \n                if a1==0: continue\n                a2,l4=add(l3,p)\n                if a2==0: continue\n                # sort sign: list l4 order -> sorted\n                perm=sorted(range(5),key=lambda i:l4[i]); par=np.linalg.det(np.eye(5)[perm])\n                Hm[idx[tuple(sorted(l4))],I]+=0.5*val*s1*s2*par\n    return Hm\ndef lev(Dq,B,Cc):\n    e=np.linalg.eigvalsh(H(Dq,B,Cc)); e=np.round(e-e[0],3); return e\nif __name__==\"__main__\":\n    print(np.unique(np.round(lev(800,860,3850),0)))\nE\npython3 /tmp/a.py",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "b10e363bb21c2213ac8b08f7d0d59504043fca250f6f5df3a15833ba28bb3fd6",
+     "lines": 95,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2): # <2m1|C^k|2m2>\n    return float(gaunt(2,k,2,-m1,m1-m2,m2)*(-1)**m1) if False else None\nfrom sympy import Rational\nfrom sympy.physics.quantum.cg import CG\ndef c(k,m1,m2):\n    # <l m1|C^k_q|l m2>, q=m1-m2 ; = (-1)^m1 sqrt(5*5) 3j(2 -m1;k q;2 m2)\n    from sympy.physics.wigner import wigner_3j\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nC={(k,a,b):c(k,a,b) for k in (0,2,4) for a in ms for b in ms}\ndef ck_(k,a,b): return C[(k,a,b)]\n# two-electron integrals <ab|1/r|cd> = sum_k F^k c^k(a,c) c^k(b,d)  (a->c electron1, b->d electron2)\ndef V(F):\n    v=np.zeros((5,5,5,5))\n    for i,a in enumerate(ms):\n     for j,b in enumerate(ms):\n      for k_,cc in enumerate(ms):\n       for l,d in enumerate(ms):\n        if a+b!=cc+d: continue\n        v[i,j,k_,l]=sum(F[k]*ck_(k,a,cc)*ck_(k,d,b) for k in (0,2,4))\n    return v\n# spin orbitals: (m,s)\nso=[(i,s) for i in range(5) for s in (0,1)]\ndets=[d for d in itertools.combinations(range(10),5) if sum(so[x][1] for x in d)==1]  # 2 down? Ms=1/2 -> 3up2down\nprint(len(dets))\nidx={d:i for i,d in enumerate(dets)}\n# one-body: crystal field in real d basis; use complex basis: Oh potential Dq*(...) \n# V_oh matrix elements: 21Dq/... use: <m|V|m'>: diag: m=±2:Dq, ±1:-4Dq, 0:6Dq; off <2|V|-2>=5Dq\nh=np.zeros((5,5))\nfor m,vv in zip(ms,[1,-4,6,-4,1]): h[m+2,m+2]=vv\nh[0,4]=h[4,0]=5\ndef build(Dq,B,Cc):\n    F4=B*0  # Racah: B=F2-5F4, C=... use F2=49F4+... \n    # F2=7(... ) : A=F0-49F4, B=F2/49-5F4/441, C=35F4/441\n    F4=Cc*441/35*0+0\n    f4=Cc*441/35/1.0  # wrong placeholder\n    return None\ndef Fs(B,Cc):\n    # C=35F4/441 (F in Condon-Shortley F^k units -> use F4 = 441C/35? ) with B=(F2-5F4)/49\n    F4=441*Cc/35; F2=49*B+5*F4\n    return [0,F2,F4]\n# check: with F^k=Racah F^k convention c^k as above? use F_k Slater: E uses F^k directly with c^k c^k\ndef H(Dq,B,Cc):\n    F=Fs(B,Cc); v=V(F)\n    Hm=np.zeros((len(dets),len(dets)))\n    for I,d in enumerate(dets):\n        # one body\n        for p in d:\n            for q in range(10):\n                if so[q][1]!=so[p][1]: continue\n                hv=Dq*h[so[q][0],so[p][0]]\n                if hv==0: continue\n                if q!=p and q in d: continue\n                nd=[x for x in d if x!=p]+[q] if q!=p else list(d)\n                # sign\n                sign=1\n                l=list(d); pos=l.index(p); l[pos]=q\n                # sort with parity\n                perm=sorted(range(5),key=lambda i:l[i]); \n                par=np.linalg.det(np.eye(5)[perm]); nd=tuple(sorted(l))\n                Hm[idx[nd],I]+=hv*par\n        # two-body: 1/2 sum <pq|rs> a+p a+q a_s a_r\n        for r in d:\n          for s in d:\n            if r==s: continue\n            for p in range(10):\n              for q in range(10):\n                if p==q: continue\n                if so[p][1]!=so[r][1] or so[q][1]!=so[s][1]: continue\n                val=v[so[p][0],so[q][0],so[r][0],so[s][0]]\n                if val==0: continue\n                l=list(d)\n                # apply a_s a_r: remove r then s with signs\n                def rem(l,x):\n                    i=l.index(x); return (-1)**i, l[:i]+l[i+1:]\n                def add(l,x):\n                    if x in l: return 0,l\n                    l2=[x]+l; return 1,l2\n                s1,l1=rem(l,r); s2,l2=rem(l1,s)\n                # a_s a_r |d> : first r then s\n                a1,l3=add(l2,q); \n                if a1==0: continue\n                a2,l4=add(l3,p)\n                if a2==0: continue\n                # sort sign: list l4 order -> sorted\n                perm=sorted(range(5),key=lambda i:l4[i]); par=np.linalg.det(np.eye(5)[perm])\n                Hm[idx[tuple(sorted(l4))],I]+=0.5*val*s1*s2*par\n    return Hm\ndef lev(Dq,B,Cc):\n    e=np.linalg.eigvalsh(H(Dq,B,Cc)); e=np.round(e-e[0],3); return e\nif __name__==\"__main__\":\n    print(np.unique(np.round(lev(800,860,3850),0)))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 0
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 100: /tmp/a.py: Read-only file system\npython3: can't open file '/tmp/a.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "a.py",
+     "line": 17,
+     "method": "matrix",
+     "text": "v=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "a.py",
+     "line": 32,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5))"
+    },
+    {
+     "script": "a.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "h[0,4]=h[4,0]=5"
+    },
+    {
+     "script": "a.py",
+     "line": 93,
+     "method": "eigen_solver",
+     "text": "e=np.linalg.eigvalsh(H(Dq,B,Cc)); e=np.round(e-e[0],3); return e"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "\nmkdir -p ~/w 2>/dev/null; cd ~/w 2>/dev/null || cd $TMPDIR; pwd\ncat > a.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nCk={(k,a,b):c(k,a,b) for k in (2,4) for a in ms for b in ms}\nso=[(i,s) for i in range(5) for s in (0,1)]\ndets=[d for d in itertools.combinations(range(10),5) if sum(so[x][1] for x in d)==2]\nidx={d:i for i,d in enumerate(dets)}\nh=np.zeros((5,5))\nfor m,vv in zip(ms,[1,-4,6,-4,1]): h[m+2,m+2]=vv\nh[0,4]=h[4,0]=5\ndef sortsign(l):\n    l=list(l);s=1\n    for i in range(len(l)):\n        for j in range(len(l)-1-i):\n            if l[j]>l[j+1]: l[j],l[j+1]=l[j+1],l[j]; s=-s\n    return s,tuple(l)\ndef rem(l,x):\n    i=l.index(x); return (-1)**i,l[:i]+l[i+1:]\ndef add(l,x):\n    if x in l: return 0,l\n    return 1,[x]+l\n# precompute with unit params\ndef two(F2,F4):\n    v=np.zeros((5,5,5,5))\n    for i,a in enumerate(ms):\n     for j,b in enumerate(ms):\n      for k,cc in enumerate(ms):\n       for l,d in enumerate(ms):\n        if a+b==cc+d:\n          v[i,j,k,l]=F2*Ck[(2,a,cc)]*Ck[(2,d,b)]+F4*Ck[(4,a,cc)]*Ck[(4,d,b)]\n    return v\ndef mats():\n    n=len(dets);H1=np.zeros((n,n));parts={}\n    for I,d in enumerate(dets):\n        for p in d:\n            for q in range(10):\n                if so[q][1]!=so[p][1]: continue\n                hv=h[so[q][0],so[p][0]]\n                if hv==0 or (q!=p and q in d): continue\n                l=list(d);l[l.index(p)]=q\n                s,nd=sortsign(l);H1[idx[nd],I]+=hv*s\n    return H1\nH1=mats()\ndef twobody(v):\n    n=len(dets);H2=np.zeros((n,n))\n    for I,d in enumerate(dets):\n      for r in d:\n        for s in d:\n          if r==s: continue\n          for p in range(10):\n            for q in range(10):\n              if p==q or so[p][1]!=so[r][1] or so[q][1]!=so[s][1]: continue\n              val=v[so[p][0],so[q][0],so[r][0],so[s][0]]\n              if val==0: continue\n              s1,l1=rem(list(d),r);s2,l2=rem(l1,s)\n              a1,l3=add(l2,q)\n              if a1==0: continue\n              a2,l4=add(l3,p)\n              if a2==0: continue\n              s3,nd=sortsign(l4)\n              H2[idx[nd],I]+=0.5*val*s1*s2*s3\n    return H2\nHB=twobody(two(49,0)) ; \nHC=twobody(two(7,441/35.))\nHB=twobody(two(49,0))  # B coeff\ndef lev(Dq,B,C):\n    Hm=Dq*H1+B*HB+C*HC\n    e=np.linalg.eigvalsh(Hm);return e-e[0]\nif __name__==\"__main__\":\n    e=np.unique(np.round(lev(800,860,3850),0));print(e[:30])\n    print(10*860+5*3850)\nE\npython3 a.py",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "4f3f8fa8ed07a6018994e0e747f7622530989d67b68ccbae44fdd419511cb1e0",
+     "lines": 74,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef c(k,m1,m2):\n    return float((-1)**m1*5*wigner_3j(2,k,2,-m1,m1-m2,m2)*wigner_3j(2,k,2,0,0,0))\nCk={(k,a,b):c(k,a,b) for k in (2,4) for a in ms for b in ms}\nso=[(i,s) for i in range(5) for s in (0,1)]\ndets=[d for d in itertools.combinations(range(10),5) if sum(so[x][1] for x in d)==2]\nidx={d:i for i,d in enumerate(dets)}\nh=np.zeros((5,5))\nfor m,vv in zip(ms,[1,-4,6,-4,1]): h[m+2,m+2]=vv\nh[0,4]=h[4,0]=5\ndef sortsign(l):\n    l=list(l);s=1\n    for i in range(len(l)):\n        for j in range(len(l)-1-i):\n            if l[j]>l[j+1]: l[j],l[j+1]=l[j+1],l[j]; s=-s\n    return s,tuple(l)\ndef rem(l,x):\n    i=l.index(x); return (-1)**i,l[:i]+l[i+1:]\ndef add(l,x):\n    if x in l: return 0,l\n    return 1,[x]+l\n# precompute with unit params\ndef two(F2,F4):\n    v=np.zeros((5,5,5,5))\n    for i,a in enumerate(ms):\n     for j,b in enumerate(ms):\n      for k,cc in enumerate(ms):\n       for l,d in enumerate(ms):\n        if a+b==cc+d:\n          v[i,j,k,l]=F2*Ck[(2,a,cc)]*Ck[(2,d,b)]+F4*Ck[(4,a,cc)]*Ck[(4,d,b)]\n    return v\ndef mats():\n    n=len(dets);H1=np.zeros((n,n));parts={}\n    for I,d in enumerate(dets):\n        for p in d:\n            for q in range(10):\n                if so[q][1]!=so[p][1]: continue\n                hv=h[so[q][0],so[p][0]]\n                if hv==0 or (q!=p and q in d): continue\n                l=list(d);l[l.index(p)]=q\n                s,nd=sortsign(l);H1[idx[nd],I]+=hv*s\n    return H1\nH1=mats()\ndef twobody(v):\n    n=len(dets);H2=np.zeros((n,n))\n    for I,d in enumerate(dets):\n      for r in d:\n        for s in d:\n          if r==s: continue\n          for p in range(10):\n            for q in range(10):\n              if p==q or so[p][1]!=so[r][1] or so[q][1]!=so[s][1]: continue\n              val=v[so[p][0],so[q][0],so[r][0],so[s][0]]\n              if val==0: continue\n              s1,l1=rem(list(d),r);s2,l2=rem(l1,s)\n              a1,l3=add(l2,q)\n              if a1==0: continue\n              a2,l4=add(l3,p)\n              if a2==0: continue\n              s3,nd=sortsign(l4)\n              H2[idx[nd],I]+=0.5*val*s1*s2*s3\n    return H2\nHB=twobody(two(49,0)) ; \nHC=twobody(two(7,441/35.))\nHB=twobody(two(49,0))  # B coeff\ndef lev(Dq,B,C):\n    Hm=Dq*H1+B*HB+C*HC\n    e=np.linalg.eigvalsh(Hm);return e-e[0]\nif __name__==\"__main__\":\n    e=np.unique(np.round(lev(800,860,3850),0));print(e[:30])\n    print(10*860+5*3850)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "<SANDBOX_TMP>\n[    0. 22441. 26041. 27850. 30706. 32069. 33870. 35536. 35761. 36913.\n 37534. 38276. 40133. 42523. 43094. 43591. 45870. 46269. 46715. 48189.\n 48465. 48970. 49359. 49481. 50356. 50503. 53721. 53933. 54214. 55244.]\n27850\nShell cwd was reset to /tmp/tsbench-run-ilz2q9rt",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "a.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5))"
+    },
+    {
+     "script": "a.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "h[0,4]=h[4,0]=5"
+    },
+    {
+     "script": "a.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "v=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "a.py",
+     "line": 36,
+     "method": "matrix",
+     "text": "n=len(dets);H1=np.zeros((n,n));parts={}"
+    },
+    {
+     "script": "a.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "n=len(dets);H2=np.zeros((n,n))"
+    },
+    {
+     "script": "a.py",
+     "line": 71,
+     "method": "eigen_solver",
+     "text": "e=np.linalg.eigvalsh(Hm);return e-e[0]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd <SANDBOX_TMP>; cat > b.py <<'E'\nfrom a import *\nt=[19240,21890,23000]\ndef f(x):\n    e=np.unique(np.round(lev(*x),2)); e=e[e>100]\n    return e[:3]-t\nfor x0 in [(700,700,3000),(800,800,3500),(600,600,3400)]:\n    r=least_squares(f,x0,x_scale=[100,100,100]);print(r.x,r.fun)\nE\npython3 b.py",
+   "scripts": [
+    {
+     "name": "b.py",
+     "sha256": "81d6981afb4fdcaeb9af08556a89e0ecb622c2c0e8f482afb5a5470aeac32ce2",
+     "lines": 7,
+     "code": "from a import *\nt=[19240,21890,23000]\ndef f(x):\n    e=np.unique(np.round(lev(*x),2)); e=e[e>100]\n    return e[:3]-t\nfor x0 in [(700,700,3000),(800,800,3500),(600,600,3400)]:\n    r=least_squares(f,x0,x_scale=[100,100,100]);print(r.x,r.fun)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "b.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[ 700.  700. 3000.] [-2180.73 -1647.15 -1000.  ]\n[ 800.  800. 3500.] [ 662.51 1618.65 2500.  ]\n[ 600.  600. 3400.] [  47.79 -219.08    0.  ]\nShell cwd was reset to /tmp/tsbench-run-ilz2q9rt",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "b.py",
+     "line": 7,
+     "method": "least_squares",
+     "text": "r=least_squares(f,x0,x_scale=[100,100,100]);print(r.x,r.fun)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd <SANDBOX_TMP>; cat > b.py <<'E'\nfrom a import *\nt=np.array([19240,21890,23000])\ndef f(x):\n    e=lev(*x); e=e[e>100]\n    g=[e[0]]\n    for v in e[1:]:\n        if v-g[-1]>1: g.append(v)\n        if len(g)==3:break\n    return np.array(g)-t\nfor x0 in [(700,700,3000),(800,800,3500),(600,600,3400),(900,600,3000)]:\n    r=least_squares(f,x0,diff_step=1e-3);print(r.x,r.fun)\nE\npython3 b.py",
+   "scripts": [
+    {
+     "name": "b.py",
+     "sha256": "d5396b6cf9246ed5040b25b4120164632344aff21ced450882e0f90274794754",
+     "lines": 11,
+     "code": "from a import *\nt=np.array([19240,21890,23000])\ndef f(x):\n    e=lev(*x); e=e[e>100]\n    g=[e[0]]\n    for v in e[1:]:\n        if v-g[-1]>1: g.append(v)\n        if len(g)==3:break\n    return np.array(g)-t\nfor x0 in [(700,700,3000),(800,800,3500),(600,600,3400),(900,600,3000)]:\n    r=least_squares(f,x0,diff_step=1e-3);print(r.x,r.fun)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "b.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[ 579.68981592  722.32611525 3155.34776949] [-1.45519152e-11 -1.23691279e-10 -2.18278728e-11]\n[ 579.68981592  722.32611525 3155.34776949] [ 8.73114914e-11 -1.45519152e-11  1.09139364e-10]\n[ 579.68981592  722.32611524 3155.34776951] [-4.76575224e-09 -2.18788045e-08 -6.54836185e-11]\n[1994.34509315  399.61444151 6024.06650353] [3.49245965e-10 2.76486389e-10 2.03726813e-10]\nShell cwd was reset to /tmp/tsbench-run-ilz2q9rt",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "b.py",
+     "line": 11,
+     "method": "least_squares",
+     "text": "r=least_squares(f,x0,diff_step=1e-3);print(r.x,r.fun)"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B",
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 580.0,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  },
+  {
+   "path": "B",
+   "value": 722.0,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  },
+  {
+   "path": "C",
+   "value": 3155.0,
+   "weak": false,
+   "steps": [
+    3
+   ],
+   "typed_in_steps": [],
+   "source_step": 3
+  }
+ ],
+ "summary": {
+  "n_steps": 4,
+  "n_scripts": 4,
+  "n_failed_steps": 1,
+  "n_values": 3,
+  "n_linked": 3,
+  "n_weak": 0,
+  "source_steps": [
+   3
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

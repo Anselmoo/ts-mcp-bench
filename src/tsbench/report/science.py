@@ -10,7 +10,7 @@ import ast
 import pathlib
 
 from tsbench.report import dashboard
-from tsbench.report.base import as_number, is_true
+from tsbench.report.base import as_number, model_key
 from tsbench.stats.analysis import mcnemar_exact
 
 __all__ = ["CONDS", "LITERATURE", "TOOL_COL", "tolerance_text"]
@@ -19,11 +19,6 @@ CONDS = ("A", "B", "C")
 LITERATURE = ("experimental", "literature_all", "literature_new")
 TOOL_COL = {"B": "n_bash_calls", "C": "n_mcp_calls"}
 _FIT = ("Dq", "B", "C")
-
-
-def _solved(rs: list[dict]) -> bool:
-    """A task counts as solved under a condition when more than half of its evaluable runs are correct."""
-    return bool(rs) and sum(is_true(r.get("correct")) for r in rs) * 2 > len(rs)
 
 
 def tolerance_text(tasks: list[dict]) -> str:
@@ -65,7 +60,7 @@ class _Runs:
     def __init__(self, data: dict):
         self.all = [r for r in data["rows"] if r.get("_cond") in CONDS and r.get("_task")]
         self.rows = dashboard._evaluable(self.all)
-        self.models = sorted({r.get("model", "") for r in self.rows})
+        self.models = sorted({r.get("model", "") for r in self.rows}, key=model_key)
         self.cells: dict[tuple[str, str], list[dict]] = {}
         for r in self.rows:
             self.cells.setdefault((r.get("model", ""), r["_cond"]), []).append(r)

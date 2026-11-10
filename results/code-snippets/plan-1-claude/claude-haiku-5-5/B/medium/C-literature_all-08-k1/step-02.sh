@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null || cd /dev/shm; pwd; python3 -c "import numpy, scipy, sympy; print('ok')"

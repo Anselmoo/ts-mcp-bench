@@ -1,0 +1,1 @@
+mkdir -p ~/w && cd ~/w && echo ok && pwd

@@ -1,0 +1,1 @@
+cd $TMPDIR; sed -i 's/apply(det,\[p2,p1\],\[q1,q2\])/apply(det,[p1,p2],[q1,q2])/' d7.py; python3 d7.py

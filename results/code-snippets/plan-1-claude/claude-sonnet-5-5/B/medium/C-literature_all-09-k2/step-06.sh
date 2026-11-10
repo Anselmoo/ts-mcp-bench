@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>; for v in "C3[(k,a[0],cc[0])]*C3[(k,d[0],b[0])]" "(-1)**q*C3[(k,a[0],cc[0])]*C3[(k,b[0],d[0])]" "C3[(k,a[0],cc[0])]*C3[(k,b[0],d[0])]"; do sed "s/(-1)\*\*q\*C3\[(k,a\[0\],cc\[0\])\]\*C3\[(k,d\[0\],b\[0\])\]/$v/" a.py | sed 's/\*\*q\*C3\[(k,a\[0\],cc\[0\])\]\*C3/&/' > b.py; python3 b.py | head -3; echo; done

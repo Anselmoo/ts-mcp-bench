@@ -1,0 +1,1 @@
+touch <SANDBOX_TMP>/x && echo ok1; touch /dev/shm/x && echo ok2

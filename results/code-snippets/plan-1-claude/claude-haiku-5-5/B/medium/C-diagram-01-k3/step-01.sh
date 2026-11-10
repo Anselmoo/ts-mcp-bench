@@ -1,0 +1,1 @@
+pip list 2>/dev/null | grep -i -E "numpy|scipy|matplotlib" ; python3 --version

@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-l39pr0fd; touch x && echo writable; ls

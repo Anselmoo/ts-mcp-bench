@@ -1,0 +1,1 @@
+W=<SANDBOX_TMP>; sed -i 's/1e-7/1e-4/g; s/w\[j\]-w\[i\]<1e-6\*B/w[j]-w[i]<1e-3/' $W/oh.py && python3 $W/oh.py

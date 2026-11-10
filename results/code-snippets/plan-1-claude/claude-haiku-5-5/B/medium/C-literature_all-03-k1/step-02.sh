@@ -1,0 +1,1 @@
+which python3; python3 -c "import numpy, scipy, sympy; print('ok')" 2>&1; pip install numpy scipy sympy -q 2>&1 | tail -2; python3 -c "import numpy, scipy, sympy; print('ok2')"

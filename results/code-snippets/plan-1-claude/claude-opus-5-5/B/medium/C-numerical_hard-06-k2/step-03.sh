@@ -1,0 +1,1 @@
+cat > /dev/shm/d6.py 2>/dev/null && echo ok || echo no; ls -ld /dev/shm $TMPDIR 2>&1

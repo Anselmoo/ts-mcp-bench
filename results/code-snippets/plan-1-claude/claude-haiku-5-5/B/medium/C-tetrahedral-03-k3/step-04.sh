@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch ~/x_test 2>&1 && echo writable_home; echo $TMPDIR; df -h /tmp | tail -1

@@ -1,0 +1,1 @@
+echo 'Solving ligand-field parameters for octahedral d⁷ CoSiF6·6H2O using absorption bands: 8480, 16305, 20360, 21001 cm⁻¹ (assigned ⁴T₂, ⁴A₂, ⁴T₁(2), ²T₁(2))'

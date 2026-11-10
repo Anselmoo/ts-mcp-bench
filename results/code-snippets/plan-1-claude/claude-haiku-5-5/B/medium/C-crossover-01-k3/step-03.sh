@@ -1,0 +1,1 @@
+pwd; ls -ld . $HOME 2>&1; df -h . 2>&1 | tail -1

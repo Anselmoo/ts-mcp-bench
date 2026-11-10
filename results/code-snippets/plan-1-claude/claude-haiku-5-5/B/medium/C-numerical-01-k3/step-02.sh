@@ -1,0 +1,1 @@
+pip install -q sympy numpy scipy 2>&1 | tail -2; python3 -c "import sympy,numpy,scipy;print('ok')"

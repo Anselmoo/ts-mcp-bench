@@ -1,0 +1,2 @@
+
+cd /tmp/tsbench-run-711ytt10/w && sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y/; s/Yk = sph_harm(qi, k, PH, TH)/Yk = sph_harm_y(k, qi, TH, PH)/' d7.py && time python3 run.py | head -60

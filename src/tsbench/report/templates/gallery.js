@@ -1,7 +1,7 @@
 (function(){
 var $=function(s,r){return (r||document).querySelector(s)},$$=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
 document.documentElement.classList.add('js');
-$$('.clone').forEach(function(c){(c.dataset.from||'').split(' ').forEach(function(id){var n=id&&document.getElementById(id);if(n){var k=n.cloneNode(true);k.removeAttribute('id');c.appendChild(k)}})});
+$$('.clone').forEach(function(c){(c.dataset.from||'').split(' ').forEach(function(id){var n=id&&document.getElementById(id);if(n){var k=n.cloneNode(true);k.removeAttribute('id');c.appendChild(k)}});c.classList.add('filled')});
 $$('.copy').forEach(function(b){b.addEventListener('click',function(){
  var t=$('pre',b.closest('.repro')).textContent,done=function(){var o=b.textContent;b.textContent='Copied';setTimeout(function(){b.textContent=o},1500)};
  var fb=function(){var a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';document.body.appendChild(a);a.select();try{document.execCommand('copy');done()}catch(e){}document.body.removeChild(a)};
@@ -39,7 +39,7 @@ function chart(){
   c[1]++;n++;if(ok==='correct')c[0]++;
  });
  var sig=JSON.stringify(data);if(sig===last)return;last=sig;
- var models=Object.keys(data).sort();box.textContent='';
+ var models=$$('option',f.model).map(function(o){return o.value}).filter(function(m){return data[m]});box.textContent='';
  if(!models.length){box.textContent='No evaluable runs in the selection.';return}
  if(!(window.JFS&&window.d3)){box.textContent='Chart not available (JFS missing).';return}
  try{

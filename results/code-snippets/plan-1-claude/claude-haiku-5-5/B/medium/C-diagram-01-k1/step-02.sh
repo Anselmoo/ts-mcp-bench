@@ -1,0 +1,1 @@
+pwd; mkdir -p ~/ts && cd ~/ts && echo ok

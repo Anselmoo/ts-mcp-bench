@@ -1,0 +1,1 @@
+echo 'Calculating ligand-field terms for octahedral d5 with B=800 cm⁻¹, C=3473 cm⁻¹ at Dq/B = 1.45, 2.55, 3.25...'

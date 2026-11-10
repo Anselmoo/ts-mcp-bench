@@ -1,0 +1,1 @@
+cd /dev/shm; ls; PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/dev/shm python3 b.py

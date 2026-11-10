@@ -1,0 +1,1 @@
+python3 -c "import sympy,scipy;print(1)"

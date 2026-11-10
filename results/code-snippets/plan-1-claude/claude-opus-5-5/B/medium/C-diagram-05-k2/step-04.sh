@@ -1,0 +1,1 @@
+pwd; ls -la; echo $TMPDIR; touch x && echo writable && rm x

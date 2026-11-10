@@ -1,0 +1,1 @@
+sed -i 's/    g=L\[0\]\[0\]/    g=min(x[0] for x in L)/' fit.py && timeout 550 python3 fit.py

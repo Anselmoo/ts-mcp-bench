@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-whse8y_l 2>/dev/null && pwd; touch testfile && echo writable_cwd; ls -la; mount | grep -E " / | /tmp" | head

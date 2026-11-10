@@ -1,0 +1,2 @@
+
+cd /tmp/tsbench-run-uqj8uf3b && sed -i 's/for trial in range(60):/for trial in range(12):/' fit3.py && (OMP_NUM_THREADS=1 timeout 500 python3 fit3.py > out3.txt 2>&1 &) ; sleep 100; cat out3.txt | head -50

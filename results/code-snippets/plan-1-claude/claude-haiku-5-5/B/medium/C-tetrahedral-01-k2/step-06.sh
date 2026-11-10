@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>/w && sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y/; s/def Y(l,m): return sph_harm(m, l, PH, TH)/def Y(l,m): return sph_harm_y(l, m, TH, PH)/' d7.py && time python3 d7.py

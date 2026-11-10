@@ -1,0 +1,1 @@
+history | tail -1 >/dev/null; fc -ln -1 2>/dev/null | head -1; echo

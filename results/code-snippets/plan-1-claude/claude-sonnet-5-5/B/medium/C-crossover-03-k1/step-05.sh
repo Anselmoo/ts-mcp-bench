@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> && sed -i 's/\*5\*gaunt/*np.sqrt(4*np.pi\/(2*k+1))*gaunt/' a.py && python3 a.py

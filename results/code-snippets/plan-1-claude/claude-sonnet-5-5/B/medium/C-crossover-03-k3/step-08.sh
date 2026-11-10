@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>; sed -i 's/^Fk=.*/Fk={2:49*B+7*C,4:63*C\/5}/' a.py; python3 b.py | head -8; python3 a.py

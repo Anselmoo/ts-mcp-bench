@@ -1,0 +1,1 @@
+for p in /usr/bin/python3 <B_VENV>/bin/python3; do echo $p; $p -c "import numpy, scipy, sympy; print('ok', numpy.__version__)" 2>&1 | tail -1; $p -c "import matplotlib; print('mpl ok')" 2>&1 | tail -1; done

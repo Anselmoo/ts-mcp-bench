@@ -29,6 +29,7 @@ import urllib.parse
 from tsbench import plan as plan_mod
 from tsbench.core.prereg import is_doi
 from tsbench.report import page
+from tsbench.report.base import run_split
 from tsbench.report.page import href
 from tsbench.score.extract import final_answer, read_transcript
 from tsbench.score.run_sets import RunSet, run_sets_in
@@ -131,19 +132,6 @@ def system_prompt_from_argv(meta: dict, runs: pathlib.Path | None = None) -> str
         except (IndexError, OSError):
             return None
     return None
-
-
-def run_split(runs: pathlib.Path, default: str) -> str:
-    """confirmatory if the plan, a sealed header or the manifest says so, else `default`."""
-    for name in (plan_mod.PLAN_NAME, plan_mod.SEALED_NAME):
-        try:
-            return json.loads((runs / name).read_text(encoding="utf-8").splitlines()[0])["spec"]["split"]
-        except (OSError, ValueError, IndexError, KeyError, TypeError):
-            continue
-    try:
-        return json.loads((runs / "MANIFEST.json").read_text(encoding="utf-8"))["split"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return default
 
 
 # ------------------------------------------------------------------ one view

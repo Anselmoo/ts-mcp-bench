@@ -1,0 +1,1 @@
+W=<SANDBOX_TMP>; sed -i 's/\*5\*gaunt/*gaunt/' $W/ts.py && python3 $W/ts.py && python3 $W/an.py

@@ -1,0 +1,1 @@
+mkdir -p ~/lf && cd ~/lf && pwd && touch x && echo ok

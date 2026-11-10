@@ -1,0 +1,314 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-crossover-03-k3.jsonl",
+ "transcript_sha256": "fadcf04e29da82400994b16302ed264153a12d4161fedb00b9b54d7a949b2589",
+ "answer": {
+  "Dq": 1318.0,
+  "B": null,
+  "C": null,
+  "out_of_scope": false,
+  "reason": "Exact d6 octahedral diagonalization with B=803 and C=3078 cm-1 gives the quintet-singlet ground-state crossover at Dq ≈ 1318 cm-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy and scipy availability",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy|sympy\" ; python3 -c \"import numpy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Write d6 Slater-determinant Hamiltonian script draft",
+   "command": "cat << 'EOF' > /tmp/d6.py\nimport numpy as np, itertools\nfrom scipy.optimize import brentq\n# angular quadrature on sphere\nxg, wg = np.polynomial.legendre.leggauss(12)\nphis = np.linspace(0, 2*np.pi, 24, endpoint=False)\npts=[]; ws=[]\nfor ct, w in zip(xg, wg):\n    st = np.sqrt(1-ct*ct)\n    for ph in phis:\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); ws.append(w*2*np.pi/len(phis))\nP=np.array(pts); W=np.array(ws)\nx,y,z=P.T\nfuncs=[x*y, y*z, x*z, 2*z*z-x*x-y*y, x*x-y*y]  # t2g: 0,1,2 ; eg: 3,4\n# normalize\nfor i in range(5):\n    n=np.sum(W*funcs[i]**2); funcs[i]=funcs[i]/np.sqrt(n)\nF=np.array(funcs)  # 5 x npts\n# Legendre P_k of cos gamma\ndef Pk(k, c):\n    return np.polynomial.legendre.Legendre.basis(k)(c)\ng = P@P.T  # cos between points\nIk={}\nfor k in [0,2,4]:\n    Pm = Pk(k, np.clip(g,-1,1))\n    # I_k[a,c,b,d] = sum_1,2 f_a(1) f_c(1) P_k f_b(2) f_d(2) W1 W2\n    A = F*W  # weighted\n    Ik[k]=np.einsum('ap,bq,pq,cp,dq->abcd', A, A, Pm, F, F, optimize=True)\n    # note: uses f_a(1)W1 f_c(1) etc. ordering handled below\n# spin-orbitals: index = 2*m + s  (m in 0..4, s 0/1)\nnorb=10\ndef sp(i): return i//2, i%2\n# Coulomb V[i,j,k,l] = <ij|1/r|kl> = sum_k F^k Ik[mi,mk,mj,ml] * delta(si,sk)*delta(sj,sl)\n# with Ik[a,c,b,d] = int f_a(1) f_c(1) P_k f_b(2) f_d(2): electron1 goes a->c? we define <i j| k l> = int phi_i*(1) phi_k(1) phi_j*(2) phi_l(2)\ndef V(i,j,k,l):\n    mi,si=sp(i); mj,sj=sp(j); mk,sk=sp(k); ml,sl=sp(l)\n    if si!=sk or sj!=sl: return 0.0\n    return sum(Fk[kk]*Ik[kk][mi,mk,mj,ml] for kk in [0,2,4])\n# Slater integrals: F4/F2 = 0.625; B=(9F2-5F4)/441, C=35F4/441\ndef slater(B,C):\n    F4=441*C/35.0\n    F2=(441*B+5*F4)/9.0\n    return {0:1.0,2:F2,4:F4}  # F0 arbitrary\nimport sys\nBv=803.0; Cv=3078.0\nFk=slater(Bv,Cv)\n# basis: 6 electrons among 10 spin-orbitals\nstates=[]\nfor occ in itertools.combinations(range(10),6):\n    states.append(sum(1<<o for o in occ))\nidx={s:i for i,s in enumerate(states)}\nD=len(states)\ndef apply_cdag_c(p,q,s):\n    # a_p^dag a_q on bitstring s; returns (sign,newstate) or None\n    if not (s>>q)&1: return None\n    sign=(-1)**bin(s & ((1<<q)-1)).count('1')\n    s2=s & ~(1<<q)\n    if (s2>>p)&1 and p!=q: return None\n    sign2=(-1)**bin(s2 & ((1<<p)-1)).count('1')\n    s3=s2 | (1<<p)\n    if p==q: return (1,s)\n    return (sign*sign2, s3)\n# one-electron: diagonal ligand field, orbital energies\ndef build(Dq):\n    h=np.zeros(5); h[0:3]=-4*Dq; h[3:5]=6*Dq\n    H=np.zeros((D,D))\n    # Coulomb: 1/2 sum V_ijkl a+_i a+_j a_l a_k\n    for s in states:\n        j0=idx[s]\n        occ=[o for o in range(10) if (s>>o)&1]\n        # diagonal one-body\n        H[j0,j0]+=sum(h[o//2] for o in occ)\n        # two-body: sum over i,j,k,l\n        for k_ in occ:\n            for l_ in occ:\n                if l_==k_: continue\n                # a_k a... careful: apply a_l then a_k to s, then a+_j, a+_i\n                # operator a+_i a+_j a_l a_k with ordering\n                pass\n    return H\nEOF\necho written",
+   "scripts": [
+    {
+     "name": "d6.py",
+     "sha256": "a3bf4a234c037e35defbb1b304984adced917fc54c2ff9fff24e5c02fd0fb75d",
+     "lines": 79,
+     "code": "import numpy as np, itertools\nfrom scipy.optimize import brentq\n# angular quadrature on sphere\nxg, wg = np.polynomial.legendre.leggauss(12)\nphis = np.linspace(0, 2*np.pi, 24, endpoint=False)\npts=[]; ws=[]\nfor ct, w in zip(xg, wg):\n    st = np.sqrt(1-ct*ct)\n    for ph in phis:\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); ws.append(w*2*np.pi/len(phis))\nP=np.array(pts); W=np.array(ws)\nx,y,z=P.T\nfuncs=[x*y, y*z, x*z, 2*z*z-x*x-y*y, x*x-y*y]  # t2g: 0,1,2 ; eg: 3,4\n# normalize\nfor i in range(5):\n    n=np.sum(W*funcs[i]**2); funcs[i]=funcs[i]/np.sqrt(n)\nF=np.array(funcs)  # 5 x npts\n# Legendre P_k of cos gamma\ndef Pk(k, c):\n    return np.polynomial.legendre.Legendre.basis(k)(c)\ng = P@P.T  # cos between points\nIk={}\nfor k in [0,2,4]:\n    Pm = Pk(k, np.clip(g,-1,1))\n    # I_k[a,c,b,d] = sum_1,2 f_a(1) f_c(1) P_k f_b(2) f_d(2) W1 W2\n    A = F*W  # weighted\n    Ik[k]=np.einsum('ap,bq,pq,cp,dq->abcd', A, A, Pm, F, F, optimize=True)\n    # note: uses f_a(1)W1 f_c(1) etc. ordering handled below\n# spin-orbitals: index = 2*m + s  (m in 0..4, s 0/1)\nnorb=10\ndef sp(i): return i//2, i%2\n# Coulomb V[i,j,k,l] = <ij|1/r|kl> = sum_k F^k Ik[mi,mk,mj,ml] * delta(si,sk)*delta(sj,sl)\n# with Ik[a,c,b,d] = int f_a(1) f_c(1) P_k f_b(2) f_d(2): electron1 goes a->c? we define <i j| k l> = int phi_i*(1) phi_k(1) phi_j*(2) phi_l(2)\ndef V(i,j,k,l):\n    mi,si=sp(i); mj,sj=sp(j); mk,sk=sp(k); ml,sl=sp(l)\n    if si!=sk or sj!=sl: return 0.0\n    return sum(Fk[kk]*Ik[kk][mi,mk,mj,ml] for kk in [0,2,4])\n# Slater integrals: F4/F2 = 0.625; B=(9F2-5F4)/441, C=35F4/441\ndef slater(B,C):\n    F4=441*C/35.0\n    F2=(441*B+5*F4)/9.0\n    return {0:1.0,2:F2,4:F4}  # F0 arbitrary\nimport sys\nBv=803.0; Cv=3078.0\nFk=slater(Bv,Cv)\n# basis: 6 electrons among 10 spin-orbitals\nstates=[]\nfor occ in itertools.combinations(range(10),6):\n    states.append(sum(1<<o for o in occ))\nidx={s:i for i,s in enumerate(states)}\nD=len(states)\ndef apply_cdag_c(p,q,s):\n    # a_p^dag a_q on bitstring s; returns (sign,newstate) or None\n    if not (s>>q)&1: return None\n    sign=(-1)**bin(s & ((1<<q)-1)).count('1')\n    s2=s & ~(1<<q)\n    if (s2>>p)&1 and p!=q: return None\n    sign2=(-1)**bin(s2 & ((1<<p)-1)).count('1')\n    s3=s2 | (1<<p)\n    if p==q: return (1,s)\n    return (sign*sign2, s3)\n# one-electron: diagonal ligand field, orbital energies\ndef build(Dq):\n    h=np.zeros(5); h[0:3]=-4*Dq; h[3:5]=6*Dq\n    H=np.zeros((D,D))\n    # Coulomb: 1/2 sum V_ijkl a+_i a+_j a_l a_k\n    for s in states:\n        j0=idx[s]\n        occ=[o for o in range(10) if (s>>o)&1]\n        # diagonal one-body\n        H[j0,j0]+=sum(h[o//2] for o in occ)\n        # two-body: sum over i,j,k,l\n        for k_ in occ:\n            for l_ in occ:\n                if l_==k_: continue\n                # a_k a... careful: apply a_l then a_k to s, then a+_j, a+_i\n                # operator a+_i a+_j a_l a_k with ordering\n                pass\n    return H\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 82: /tmp/d6.py: Read-only file system\nwritten",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "d6.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "H=np.zeros((D,D))"
+    },
+    {
+     "script": "d6.py",
+     "line": 71,
+     "method": "matrix",
+     "text": "H[j0,j0]+=sum(h[o//2] for o in occ)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Set up angular integrals in home directory",
+   "command": "cd ~ 2>/dev/null && pwd; mkdir -p ~/d6 && cd ~/d6 && cat << 'EOF' > d6.py\nimport numpy as np, itertools\nfrom scipy.optimize import brentq\n\nxg, wg = np.polynomial.legendre.leggauss(14)\nnphi=28\npts=[]; ws=[]\nfor ct, w in zip(xg, wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in np.linspace(0,2*np.pi,nphi,endpoint=False):\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); ws.append(w*2*np.pi/nphi)\nP=np.array(pts); W=np.array(ws)\nx,y,z=P.T\nfuncs=[x*y, y*z, x*z, 2*z*z-x*x-y*y, x*x-y*y]\nF=[]\nfor f in funcs:\n    n=np.sum(W*f*f); F.append(f/np.sqrt(n))\nF=np.array(F)\ng=np.clip(P@P.T,-1,1)\ndef legP(k,c): return np.polynomial.legendre.Legendre.basis(k)(c)\nA=F*W\n# Ik[k][a,c,b,d] = sum_{p,q} f_a(p) f_c(p) W_p * P_k(p.q) * f_b(q) f_d(q) W_q  (electron1: a,c ; electron2: b,d)\nIk={}\nfor k in [0,2,4]:\n    M=legP(k,g)\n    Ik[k]=np.einsum('ap,cp,pq,bq,dq->acbd', A, F, M, A, F, optimize=True)\n    # sanity: here A has W, second F... fix below\nEOF\npython3 d6.py && echo ok",
+   "scripts": [
+    {
+     "name": "d6.py",
+     "sha256": "2aa8c75a0fd6245ccd44b4839f954cc78b051d1697101b4e917a58f1201a29e8",
+     "lines": 26,
+     "code": "import numpy as np, itertools\nfrom scipy.optimize import brentq\n\nxg, wg = np.polynomial.legendre.leggauss(14)\nnphi=28\npts=[]; ws=[]\nfor ct, w in zip(xg, wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in np.linspace(0,2*np.pi,nphi,endpoint=False):\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); ws.append(w*2*np.pi/nphi)\nP=np.array(pts); W=np.array(ws)\nx,y,z=P.T\nfuncs=[x*y, y*z, x*z, 2*z*z-x*x-y*y, x*x-y*y]\nF=[]\nfor f in funcs:\n    n=np.sum(W*f*f); F.append(f/np.sqrt(n))\nF=np.array(F)\ng=np.clip(P@P.T,-1,1)\ndef legP(k,c): return np.polynomial.legendre.Legendre.basis(k)(c)\nA=F*W\n# Ik[k][a,c,b,d] = sum_{p,q} f_a(p) f_c(p) W_p * P_k(p.q) * f_b(q) f_d(q) W_q  (electron1: a,c ; electron2: b,d)\nIk={}\nfor k in [0,2,4]:\n    M=legP(k,g)\n    Ik[k]=np.einsum('ap,cp,pq,bq,dq->acbd', A, F, M, A, F, optimize=True)\n    # sanity: here A has W, second F... fix below\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d6.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/tmp/tsbench-home-xehwqch9\nmkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/d6’: Read-only file system\npython3: can't open file '/tmp/tsbench-home-xehwqch9/d6.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Compute d6 Tanabe-Sugano energies numerically and scan Dq",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom scipy.optimize import brentq\n\nxg, wg = np.polynomial.legendre.leggauss(14)\nnphi=28\npts=[]; ws=[]\nfor ct, w in zip(xg, wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in np.linspace(0,2*np.pi,nphi,endpoint=False):\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); ws.append(w*2*np.pi/nphi)\nP=np.array(pts); W=np.array(ws)\nx,y,z=P.T\nfuncs=[x*y, y*z, x*z, 2*z*z-x*x-y*y, x*x-y*y]\nF=np.array([f/np.sqrt(np.sum(W*f*f)) for f in funcs])\ng=np.clip(P@P.T,-1,1)\nA=F*W\nIk={}\nfor k in [0,2,4]:\n    M=np.polynomial.legendre.Legendre.basis(k)(g)\n    Ik[k]=np.einsum('ap,cp,pq,bq,dq->acbd', A, F, M, A, F, optimize=True)\n# check orthonormality\nprint(np.round(np.einsum('ap,bp,p->ab',F,F,W),6).diagonal())\n\ndef slater(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\nBv,Cv=803.0,3078.0\nFk=slater(Bv,Cv)\n# Note F0 omitted (constant shift for d6 since all configs have same number of pairs)\n# spin-orbital index: 2*m+s\ndef V(i,j,k,l):\n    mi,si=divmod(i,2); mj,sj=divmod(j,2); mk,sk=divmod(k,2); ml,sl=divmod(l,2)\n    if si!=sk or sj!=sl: return 0.0\n    return sum(Fk[kk]*Ik[kk][mi,mk,mj,ml] for kk in [0,2,4])\n# <ij|1/r|kl>: electron1 (i,k), electron2 (j,l); Ik index a,c,b,d -> f_a(1)f_c(1)  f_b(2)f_d(2) so a=mi, c=mk, b=mj, d=ml\nstates=[sum(1<<o for o in occ) for occ in itertools.combinations(range(10),6)]\nidx={s:n for n,s in enumerate(states)}\nD=len(states)\ndef op(s, ops):\n    # ops: list of (type,index) applied right-to-left: ops[-1] acts first; type 'c' creation, 'a' annihilation\n    sign=1\n    for typ,o in reversed(ops):\n        n=bin(s & ((1<<o)-1)).count('1')\n        if typ=='a':\n            if not (s>>o)&1: return None,0\n            s&=~(1<<o)\n        else:\n            if (s>>o)&1: return None,0\n            s|=(1<<o)\n        if n%2: sign=-sign\n    return s,sign\ndef hamiltonian(Dq):\n    h=np.zeros(10)\n    for m in range(5):\n        e = -4*Dq if m<3 else 6*Dq\n        h[2*m]=h[2*m+1]=e\n    H=np.zeros((D,D))\n    for s in states:\n        c=idx[s]\n        # one-body\n        H[c,c]+=sum(h[o] for o in range(10) if (s>>o)&1)\n        # two-body: 1/2 sum V(i,j,k,l) a+_i a+_j a_l a_k\n        for i,j,k,l in itertools.product(range(10),repeat=4):\n            v=V(i,j,k,l)\n            if abs(v)<1e-12: continue\n            if i==j or k==l: continue\n            s1,s1s=op(s,[('a',k)])\n            if s1 is None: continue\n            s2,s2s=op(s1,[('a',l)])\n            if s2 is None: continue\n            s3,s3s=op(s2,[('c',j)])\n            if s3 is None: continue\n            s4,s4s=op(s3,[('c',i)])\n            if s4 is None: continue\n            H[idx[s4],c]+=0.5*v*s1s*s2s*s3s*s4s\n    return H\n# S^2 operator\ndef S2(): \n    Sp=np.zeros((D,D)); Sz=np.zeros((D,D))\n    for s in states:\n        c=idx[s]\n        for m in range(5):\n            # S+ = sum a+_{m up} a_{m dn}\n            t,sg=op(s,[('c',2*m),('a',2*m+1)])\n            if t is not None: Sp[idx[t],c]+=sg\n        Sz[c,c]=0.5*sum((1 if (s>>(2*m))&1 else 0)-(1 if (s>>(2*m+1))&1 else 0) for m in range(5))\n    Sm=Sp.T\n    return Sm@Sp+Sz@Sz+Sz\nS2m=S2()\ndef levels(Dq):\n    H=hamiltonian(Dq)\n    w,v=np.linalg.eigh(H)\n    s2=np.einsum('ia,ij,ja->a',v,S2m,v)\n    return w,s2\nw,s2=levels(0.0)\nprint(\"check Dq=0 lowest:\", w[:5], s2[:5])\ndef lowest(Dq,S):\n    w,s2=levels(Dq)\n    sel=[e for e,s in zip(w,s2) if abs(s-S*(S+1))<0.1]\n    return min(sel)\ndef diff(Dq):\n    return lowest(Dq,2)-lowest(Dq,0)\nfor d in [0,500,1000,1500,2000,2500,3000,3500]:\n    print(d, lowest(d,2), lowest(d,1), lowest(d,0))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "5216d4bc376df2f47595e63ca15f80c4cebf6d8a789e957cd974c14ff3b34f05",
+     "lines": 104,
+     "code": "import numpy as np, itertools\nfrom scipy.optimize import brentq\n\nxg, wg = np.polynomial.legendre.leggauss(14)\nnphi=28\npts=[]; ws=[]\nfor ct, w in zip(xg, wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in np.linspace(0,2*np.pi,nphi,endpoint=False):\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); ws.append(w*2*np.pi/nphi)\nP=np.array(pts); W=np.array(ws)\nx,y,z=P.T\nfuncs=[x*y, y*z, x*z, 2*z*z-x*x-y*y, x*x-y*y]\nF=np.array([f/np.sqrt(np.sum(W*f*f)) for f in funcs])\ng=np.clip(P@P.T,-1,1)\nA=F*W\nIk={}\nfor k in [0,2,4]:\n    M=np.polynomial.legendre.Legendre.basis(k)(g)\n    Ik[k]=np.einsum('ap,cp,pq,bq,dq->acbd', A, F, M, A, F, optimize=True)\n# check orthonormality\nprint(np.round(np.einsum('ap,bp,p->ab',F,F,W),6).diagonal())\n\ndef slater(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\nBv,Cv=803.0,3078.0\nFk=slater(Bv,Cv)\n# Note F0 omitted (constant shift for d6 since all configs have same number of pairs)\n# spin-orbital index: 2*m+s\ndef V(i,j,k,l):\n    mi,si=divmod(i,2); mj,sj=divmod(j,2); mk,sk=divmod(k,2); ml,sl=divmod(l,2)\n    if si!=sk or sj!=sl: return 0.0\n    return sum(Fk[kk]*Ik[kk][mi,mk,mj,ml] for kk in [0,2,4])\n# <ij|1/r|kl>: electron1 (i,k), electron2 (j,l); Ik index a,c,b,d -> f_a(1)f_c(1)  f_b(2)f_d(2) so a=mi, c=mk, b=mj, d=ml\nstates=[sum(1<<o for o in occ) for occ in itertools.combinations(range(10),6)]\nidx={s:n for n,s in enumerate(states)}\nD=len(states)\ndef op(s, ops):\n    # ops: list of (type,index) applied right-to-left: ops[-1] acts first; type 'c' creation, 'a' annihilation\n    sign=1\n    for typ,o in reversed(ops):\n        n=bin(s & ((1<<o)-1)).count('1')\n        if typ=='a':\n            if not (s>>o)&1: return None,0\n            s&=~(1<<o)\n        else:\n            if (s>>o)&1: return None,0\n            s|=(1<<o)\n        if n%2: sign=-sign\n    return s,sign\ndef hamiltonian(Dq):\n    h=np.zeros(10)\n    for m in range(5):\n        e = -4*Dq if m<3 else 6*Dq\n        h[2*m]=h[2*m+1]=e\n    H=np.zeros((D,D))\n    for s in states:\n        c=idx[s]\n        # one-body\n        H[c,c]+=sum(h[o] for o in range(10) if (s>>o)&1)\n        # two-body: 1/2 sum V(i,j,k,l) a+_i a+_j a_l a_k\n        for i,j,k,l in itertools.product(range(10),repeat=4):\n            v=V(i,j,k,l)\n            if abs(v)<1e-12: continue\n            if i==j or k==l: continue\n            s1,s1s=op(s,[('a',k)])\n            if s1 is None: continue\n            s2,s2s=op(s1,[('a',l)])\n            if s2 is None: continue\n            s3,s3s=op(s2,[('c',j)])\n            if s3 is None: continue\n            s4,s4s=op(s3,[('c',i)])\n            if s4 is None: continue\n            H[idx[s4],c]+=0.5*v*s1s*s2s*s3s*s4s\n    return H\n# S^2 operator\ndef S2(): \n    Sp=np.zeros((D,D)); Sz=np.zeros((D,D))\n    for s in states:\n        c=idx[s]\n        for m in range(5):\n            # S+ = sum a+_{m up} a_{m dn}\n            t,sg=op(s,[('c',2*m),('a',2*m+1)])\n            if t is not None: Sp[idx[t],c]+=sg\n        Sz[c,c]=0.5*sum((1 if (s>>(2*m))&1 else 0)-(1 if (s>>(2*m+1))&1 else 0) for m in range(5))\n    Sm=Sp.T\n    return Sm@Sp+Sz@Sz+Sz\nS2m=S2()\ndef levels(Dq):\n    H=hamiltonian(Dq)\n    w,v=np.linalg.eigh(H)\n    s2=np.einsum('ia,ij,ja->a',v,S2m,v)\n    return w,s2\nw,s2=levels(0.0)\nprint(\"check Dq=0 lowest:\", w[:5], s2[:5])\ndef lowest(Dq,S):\n    w,s2=levels(Dq)\n    sel=[e for e,s in zip(w,s2) if abs(s-S*(S+1))<0.1]\n    return min(sel)\ndef diff(Dq):\n    return lowest(Dq,2)-lowest(Dq,0)\nfor d in [0,500,1000,1500,2000,2500,3000,3500]:\n    print(d, lowest(d,2), lowest(d,1), lowest(d,0))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[1. 1. 1. 1. 1.]\ncheck Dq=0 lowest: [-71197. -71197. -71197. -71197. -71197.] [6. 6. 6. 6. 6.]\n0 -71197.00000000009 -55673.00000000005 -47911.000000000015\n500 -73197.0000000001 -60989.600743800074 -57770.75770161384\n1000 -75197.00000000004 -67523.75612743733 -69119.42450206682\n1500 -77197.00000000006 -74235.41686139615 -80714.18567160051\n2000 -79197.00000000006 -81031.70325859338 -92427.5006454483\n2500 -81197.00000000006 -87878.91936261595 -104211.15429468614\n3000 -83197.00000000004 -94759.80671993653 -116041.07211001315\n3500 -85197.00000000009 -101664.25830563965 -127903.42134074956\nShell cwd was reset to /tmp/tsbench-run-tup38g_g",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 57,
+     "method": "matrix",
+     "text": "H=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 61,
+     "method": "matrix",
+     "text": "H[c,c]+=sum(h[o] for o in range(10) if (s>>o)&1)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 79,
+     "method": "matrix",
+     "text": "Sp=np.zeros((D,D)); Sz=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 86,
+     "method": "matrix",
+     "text": "Sz[c,c]=0.5*sum((1 if (s>>(2*m))&1 else 0)-(1 if (s>>(2*m+1))&1 else 0) for m in range(5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 92,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Placeholder step (no-op)",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nexec(open('/dev/stdin').read()) if False else None\nEOF\ncd /tmp && cat > /dev/null << 'EOF'\nEOF\necho \"rerun needed\"",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "af964f42eebc51b4aae0e75d38b1a85df122d2d34297674871e378650a45bba8",
+     "lines": 2,
+     "code": "import numpy as np, itertools\nexec(open('/dev/stdin').read()) if False else None\n"
+    },
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "rerun needed\nShell cwd was reset to /tmp/tsbench-run-tup38g_g",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Find Dq where quintet and lowest singlet energies cross",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom scipy.optimize import brentq\nxg, wg = np.polynomial.legendre.leggauss(14)\nnphi=28\npts=[]; ws=[]\nfor ct, w in zip(xg, wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in np.linspace(0,2*np.pi,nphi,endpoint=False):\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); ws.append(w*2*np.pi/nphi)\nP=np.array(pts); W=np.array(ws)\nx,y,z=P.T\nfuncs=[x*y, y*z, x*z, 2*z*z-x*x-y*y, x*x-y*y]\nF=np.array([f/np.sqrt(np.sum(W*f*f)) for f in funcs])\ng=np.clip(P@P.T,-1,1)\nA=F*W\nIk={}\nfor k in [0,2,4]:\n    M=np.polynomial.legendre.Legendre.basis(k)(g)\n    Ik[k]=np.einsum('ap,cp,pq,bq,dq->acbd', A, F, M, A, F, optimize=True)\ndef slater(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\nFk=slater(803.0,3078.0)\ndef V(i,j,k,l):\n    mi,si=divmod(i,2); mj,sj=divmod(j,2); mk,sk=divmod(k,2); ml,sl=divmod(l,2)\n    if si!=sk or sj!=sl: return 0.0\n    return sum(Fk[kk]*Ik[kk][mi,mk,mj,ml] for kk in [0,2,4])\nstates=[sum(1<<o for o in occ) for occ in itertools.combinations(range(10),6)]\nidx={s:n for n,s in enumerate(states)}\nD=len(states)\ndef op(s, ops):\n    sign=1\n    for typ,o in reversed(ops):\n        n=bin(s & ((1<<o)-1)).count('1')\n        if typ=='a':\n            if not (s>>o)&1: return None,0\n            s&=~(1<<o)\n        else:\n            if (s>>o)&1: return None,0\n            s|=(1<<o)\n        if n%2: sign=-sign\n    return s,sign\nquads=[(i,j,k,l,V(i,j,k,l)) for i,j,k,l in itertools.product(range(10),repeat=4) if i!=j and k!=l and abs(V(i,j,k,l))>1e-12]\ndef hamiltonian(Dq):\n    h=np.zeros(10)\n    for m in range(5):\n        e=-4*Dq if m<3 else 6*Dq\n        h[2*m]=h[2*m+1]=e\n    H=np.zeros((D,D))\n    for s in states:\n        c=idx[s]\n        H[c,c]+=sum(h[o] for o in range(10) if (s>>o)&1)\n        for i,j,k,l,v in quads:\n            s1,s1s=op(s,[('a',k)])\n            if s1 is None: continue\n            s2,s2s=op(s1,[('a',l)])\n            if s2 is None: continue\n            s3,s3s=op(s2,[('c',j)])\n            if s3 is None: continue\n            s4,s4s=op(s3,[('c',i)])\n            if s4 is None: continue\n            H[idx[s4],c]+=0.5*v*s1s*s2s*s3s*s4s\n    return H\nSp=np.zeros((D,D)); Sz=np.zeros((D,D))\nfor s in states:\n    c=idx[s]\n    for m in range(5):\n        t,sg=op(s,[('c',2*m),('a',2*m+1)])\n        if t is not None: Sp[idx[t],c]+=sg\n    Sz[c,c]=0.5*sum((s>>(2*m)&1)-(s>>(2*m+1)&1) for m in range(5))\nS2m=Sp.T@Sp+Sz@Sz+Sz\ndef lowest(Dq,S):\n    H=hamiltonian(Dq); w,v=np.linalg.eigh(H)\n    s2=np.einsum('ia,ij,ja->a',v,S2m,v)\n    return min(e for e,s in zip(w,s2) if abs(s-S*(S+1))<0.1)\nf=lambda d: lowest(d,2)-lowest(d,0)\nfor d in np.arange(1000,1600,100): print(d, round(f(d),1))\nr=brentq(f,1000,1600,xtol=1e-6)\nprint(\"Dq crossover (quintet vs singlet ground) =\", r, \" Dq/B=\", r/803)\nprint(\"Quintet-singlet at r:\", lowest(r,2), lowest(r,0))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "92ae6925a68d8b1b888586a170ffd4f2e0d31892423cd2a1b1854675095d1196",
+     "lines": 80,
+     "code": "import numpy as np, itertools\nfrom scipy.optimize import brentq\nxg, wg = np.polynomial.legendre.leggauss(14)\nnphi=28\npts=[]; ws=[]\nfor ct, w in zip(xg, wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in np.linspace(0,2*np.pi,nphi,endpoint=False):\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); ws.append(w*2*np.pi/nphi)\nP=np.array(pts); W=np.array(ws)\nx,y,z=P.T\nfuncs=[x*y, y*z, x*z, 2*z*z-x*x-y*y, x*x-y*y]\nF=np.array([f/np.sqrt(np.sum(W*f*f)) for f in funcs])\ng=np.clip(P@P.T,-1,1)\nA=F*W\nIk={}\nfor k in [0,2,4]:\n    M=np.polynomial.legendre.Legendre.basis(k)(g)\n    Ik[k]=np.einsum('ap,cp,pq,bq,dq->acbd', A, F, M, A, F, optimize=True)\ndef slater(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return {0:0.0,2:F2,4:F4}\nFk=slater(803.0,3078.0)\ndef V(i,j,k,l):\n    mi,si=divmod(i,2); mj,sj=divmod(j,2); mk,sk=divmod(k,2); ml,sl=divmod(l,2)\n    if si!=sk or sj!=sl: return 0.0\n    return sum(Fk[kk]*Ik[kk][mi,mk,mj,ml] for kk in [0,2,4])\nstates=[sum(1<<o for o in occ) for occ in itertools.combinations(range(10),6)]\nidx={s:n for n,s in enumerate(states)}\nD=len(states)\ndef op(s, ops):\n    sign=1\n    for typ,o in reversed(ops):\n        n=bin(s & ((1<<o)-1)).count('1')\n        if typ=='a':\n            if not (s>>o)&1: return None,0\n            s&=~(1<<o)\n        else:\n            if (s>>o)&1: return None,0\n            s|=(1<<o)\n        if n%2: sign=-sign\n    return s,sign\nquads=[(i,j,k,l,V(i,j,k,l)) for i,j,k,l in itertools.product(range(10),repeat=4) if i!=j and k!=l and abs(V(i,j,k,l))>1e-12]\ndef hamiltonian(Dq):\n    h=np.zeros(10)\n    for m in range(5):\n        e=-4*Dq if m<3 else 6*Dq\n        h[2*m]=h[2*m+1]=e\n    H=np.zeros((D,D))\n    for s in states:\n        c=idx[s]\n        H[c,c]+=sum(h[o] for o in range(10) if (s>>o)&1)\n        for i,j,k,l,v in quads:\n            s1,s1s=op(s,[('a',k)])\n            if s1 is None: continue\n            s2,s2s=op(s1,[('a',l)])\n            if s2 is None: continue\n            s3,s3s=op(s2,[('c',j)])\n            if s3 is None: continue\n            s4,s4s=op(s3,[('c',i)])\n            if s4 is None: continue\n            H[idx[s4],c]+=0.5*v*s1s*s2s*s3s*s4s\n    return H\nSp=np.zeros((D,D)); Sz=np.zeros((D,D))\nfor s in states:\n    c=idx[s]\n    for m in range(5):\n        t,sg=op(s,[('c',2*m),('a',2*m+1)])\n        if t is not None: Sp[idx[t],c]+=sg\n    Sz[c,c]=0.5*sum((s>>(2*m)&1)-(s>>(2*m+1)&1) for m in range(5))\nS2m=Sp.T@Sp+Sz@Sz+Sz\ndef lowest(Dq,S):\n    H=hamiltonian(Dq); w,v=np.linalg.eigh(H)\n    s2=np.einsum('ia,ij,ja->a',v,S2m,v)\n    return min(e for e,s in zip(w,s2) if abs(s-S*(S+1))<0.1)\nf=lambda d: lowest(d,2)-lowest(d,0)\nfor d in np.arange(1000,1600,100): print(d, round(f(d),1))\nr=brentq(f,1000,1600,xtol=1e-6)\nprint(\"Dq crossover (quintet vs singlet ground) =\", r, \" Dq/B=\", r/803)\nprint(\"Quintet-singlet at r:\", lowest(r,2), lowest(r,0))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1000 -6077.6\n1100 -4172.1\n1200 -2258.9\n1300 -339.1\n1400 1586.5\n1500 3517.2\nDq crossover (quintet vs singlet ground) = 1317.6328806611948  Dq/B= 1.6408877716826835\nQuintet-singlet at r: -76467.5315226448 -76467.53152286579\nShell cwd was reset to /tmp/tsbench-run-tup38g_g",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 49,
+     "method": "matrix",
+     "text": "H=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "H[c,c]+=sum(h[o] for o in range(10) if (s>>o)&1)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "matrix",
+     "text": "Sp=np.zeros((D,D)); Sz=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 70,
+     "method": "matrix",
+     "text": "Sz[c,c]=0.5*sum((s>>(2*m)&1)-(s>>(2*m+1)&1) for m in range(5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 73,
+     "method": "eigen_solver",
+     "text": "H=hamiltonian(Dq); w,v=np.linalg.eigh(H)"
+    }
+   ],
+   "produces": [
+    "Dq"
+   ]
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Validate Racah B,C mapping using d2 free-ion splitting",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nxg, wg = np.polynomial.legendre.leggauss(14)\nnphi=28\npts=[]; ws=[]\nfor ct, w in zip(xg, wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in np.linspace(0,2*np.pi,nphi,endpoint=False):\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); ws.append(w*2*np.pi/nphi)\nP=np.array(pts); W=np.array(ws); x,y,z=P.T\nfuncs=[x*y, y*z, x*z, 2*z*z-x*x-y*y, x*x-y*y]\nF=np.array([f/np.sqrt(np.sum(W*f*f)) for f in funcs])\ng=np.clip(P@P.T,-1,1); A=F*W\nIk={k:np.einsum('ap,cp,pq,bq,dq->acbd',A,F,np.polynomial.legendre.Legendre.basis(k)(g),A,F,optimize=True) for k in [0,2,4]}\nB=1.0; C=4.0\nF4=441*C/35; F2=(441*B+5*F4)/9; Fk={0:0,2:F2,4:F4}\ndef V(i,j,k,l):\n    mi,si=divmod(i,2); mj,sj=divmod(j,2); mk,sk=divmod(k,2); ml,sl=divmod(l,2)\n    if si!=sk or sj!=sl: return 0.0\n    return sum(Fk[kk]*Ik[kk][mi,mk,mj,ml] for kk in [0,2,4])\ndef op(s, ops):\n    sign=1\n    for typ,o in reversed(ops):\n        n=bin(s & ((1<<o)-1)).count('1')\n        if typ=='a':\n            if not (s>>o)&1: return None,0\n            s&=~(1<<o)\n        else:\n            if (s>>o)&1: return None,0\n            s|=(1<<o)\n        if n%2: sign=-sign\n    return s,sign\nstates=[sum(1<<o for o in occ) for occ in itertools.combinations(range(10),2)]\nidx={s:n for n,s in enumerate(states)}; D=len(states)\nquads=[(i,j,k,l,V(i,j,k,l)) for i,j,k,l in itertools.product(range(10),repeat=4) if i!=j and k!=l and abs(V(i,j,k,l))>1e-12]\nH=np.zeros((D,D))\nfor s in states:\n    c=idx[s]\n    for i,j,k,l,v in quads:\n        s1,a1=op(s,[('a',k)]); \n        if s1 is None: continue\n        s2,a2=op(s1,[('a',l)]);\n        if s2 is None: continue\n        s3,a3=op(s2,[('c',j)])\n        if s3 is None: continue\n        s4,a4=op(s3,[('c',i)])\n        if s4 is None: continue\n        H[idx[s4],c]+=0.5*v*a1*a2*a3*a4\nSp=np.zeros((D,D)); Sz=np.zeros((D,D))\nfor s in states:\n    c=idx[s]\n    for m in range(5):\n        t,sg=op(s,[('c',2*m),('a',2*m+1)])\n        if t is not None: Sp[idx[t],c]+=sg\n    Sz[c,c]=0.5*sum((s>>(2*m)&1)-(s>>(2*m+1)&1) for m in range(5))\nS2=Sp.T@Sp+Sz@Sz+Sz\nw,v=np.linalg.eigh(H); s2=np.einsum('ia,ij,ja->a',v,S2,v)\nfor e,s in zip(w,s2):\n    print(round(e,4), round(s,3))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "548810f934878bd4523f9374e7d905b463c36058a16f7913e0cf4b074f3f8a0a",
+     "lines": 58,
+     "code": "import numpy as np, itertools\nxg, wg = np.polynomial.legendre.leggauss(14)\nnphi=28\npts=[]; ws=[]\nfor ct, w in zip(xg, wg):\n    st=np.sqrt(1-ct*ct)\n    for ph in np.linspace(0,2*np.pi,nphi,endpoint=False):\n        pts.append([st*np.cos(ph), st*np.sin(ph), ct]); ws.append(w*2*np.pi/nphi)\nP=np.array(pts); W=np.array(ws); x,y,z=P.T\nfuncs=[x*y, y*z, x*z, 2*z*z-x*x-y*y, x*x-y*y]\nF=np.array([f/np.sqrt(np.sum(W*f*f)) for f in funcs])\ng=np.clip(P@P.T,-1,1); A=F*W\nIk={k:np.einsum('ap,cp,pq,bq,dq->acbd',A,F,np.polynomial.legendre.Legendre.basis(k)(g),A,F,optimize=True) for k in [0,2,4]}\nB=1.0; C=4.0\nF4=441*C/35; F2=(441*B+5*F4)/9; Fk={0:0,2:F2,4:F4}\ndef V(i,j,k,l):\n    mi,si=divmod(i,2); mj,sj=divmod(j,2); mk,sk=divmod(k,2); ml,sl=divmod(l,2)\n    if si!=sk or sj!=sl: return 0.0\n    return sum(Fk[kk]*Ik[kk][mi,mk,mj,ml] for kk in [0,2,4])\ndef op(s, ops):\n    sign=1\n    for typ,o in reversed(ops):\n        n=bin(s & ((1<<o)-1)).count('1')\n        if typ=='a':\n            if not (s>>o)&1: return None,0\n            s&=~(1<<o)\n        else:\n            if (s>>o)&1: return None,0\n            s|=(1<<o)\n        if n%2: sign=-sign\n    return s,sign\nstates=[sum(1<<o for o in occ) for occ in itertools.combinations(range(10),2)]\nidx={s:n for n,s in enumerate(states)}; D=len(states)\nquads=[(i,j,k,l,V(i,j,k,l)) for i,j,k,l in itertools.product(range(10),repeat=4) if i!=j and k!=l and abs(V(i,j,k,l))>1e-12]\nH=np.zeros((D,D))\nfor s in states:\n    c=idx[s]\n    for i,j,k,l,v in quads:\n        s1,a1=op(s,[('a',k)]); \n        if s1 is None: continue\n        s2,a2=op(s1,[('a',l)]);\n        if s2 is None: continue\n        s3,a3=op(s2,[('c',j)])\n        if s3 is None: continue\n        s4,a4=op(s3,[('c',i)])\n        if s4 is None: continue\n        H[idx[s4],c]+=0.5*v*a1*a2*a3*a4\nSp=np.zeros((D,D)); Sz=np.zeros((D,D))\nfor s in states:\n    c=idx[s]\n    for m in range(5):\n        t,sg=op(s,[('c',2*m),('a',2*m+1)])\n        if t is not None: Sp[idx[t],c]+=sg\n    Sz[c,c]=0.5*sum((s>>(2*m)&1)-(s>>(2*m+1)&1) for m in range(5))\nS2=Sp.T@Sp+Sz@Sz+Sz\nw,v=np.linalg.eigh(H); s2=np.einsum('ia,ij,ja->a',v,S2,v)\nfor e,s in zip(w,s2):\n    print(round(e,4), round(s,3))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-13.6 2.0\n-0.6 0.0\n-0.6 -0.0\n-0.6 0.0\n-0.6 -0.0\n-0.6 -0.0\n1.4 2.0\n1.4 2.0\n1.4 2.0\n1.4 2.0\n1.4 2.0\n1.4 2.0\n1.4 2.0\n1.4 2.0\n1.4 2.0\n6.4 -0.0\n6.4 -0.0\n6.4 0.0\n6.4 -0.0\n6.4 -0.0\n6.4 0.0\n6.4 0.0\n6.4 0.0\n6.4 0.0\n36.4 0.0\nShell cwd was reset to /tmp/tsbench-run-tup38g_g",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 35,
+     "method": "matrix",
+     "text": "H=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "Sp=np.zeros((D,D)); Sz=np.zeros((D,D))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 54,
+     "method": "matrix",
+     "text": "Sz[c,c]=0.5*sum((s>>(2*m)&1)-(s>>(2*m+1)&1) for m in range(5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 56,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H); s2=np.einsum('ia,ij,ja->a',v,S2,v)"
+    }
+   ],
+   "produces": []
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1318.0,
+   "weak": false,
+   "steps": [
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  }
+ ],
+ "summary": {
+  "n_steps": 7,
+  "n_scripts": 7,
+  "n_failed_steps": 1,
+  "n_values": 1,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   5
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

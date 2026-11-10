@@ -1,0 +1,313 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-opus-5-5/B/medium/C-literature_all-15-k2.jsonl",
+ "transcript_sha256": "a23a7a04308a5026ef0a323b5ef3bb6c42beb9965492bc79bdf5a406c3830406",
+ "answer": {
+  "Dq": 890.0,
+  "B": 915.0,
+  "C": 3794.0,
+  "out_of_scope": false,
+  "reason": "Least-squares fit of the full d7 octahedral matrix to all four bands; the 4T2 and 4A2 bands are mutually inconsistent, so Dq and B are only approximate."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d7.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    # c^k(l m1, l m2) = sqrt(4pi/(2k+1)) * int Y*_{2m1} Y_{k,m1-m2} Y_{2m2}\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    # int Y*_{l m1} Y_{kq} Y_{l m2} = (-1)^m1 gaunt(2,k,2,-m1,q,m2)\n    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))\nC={(k,a,b):ck(k,a,b) for k in (2,4) for a in ms for b in ms}\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),7))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef g(i,j,k,l,F):  # <ij|kl>\n    (mi,si),(mj,sj),(mk,sk),(ml,sl)=so[i],so[j],so[k],so[l]\n    if si!=sk or sj!=sl or mi+mj!=mk+ml: return 0\n    return sum(F[kk]*C[(kk,mi,mk)]*C[(kk,ml,mj)] for kk in (2,4))\ndef V1(i,j):\n    (mi,si),(mj,sj)=so[i],so[j]\n    if si!=sj: return 0\n    if mi==mj: return {0:6,1:-4,-1:-4,2:1,-2:1}[mi]\n    if abs(mi-mj)==4: return 5\n    return 0\ndef build(F,Dq):\n    H=np.zeros((N,N))\n    # second quantization: apply a+_i a+_j a_l a_k\n    def apply(ops,det):\n        st=list(det); sign=1\n        for typ,o in reversed(ops):\n            if typ=='a':\n                if o not in st: return None,0\n                p=st.index(o); sign*=(-1)**p; st.pop(p)\n            else:\n                if o in st: return None,0\n                st.insert(0,o)\n                # sort\n        # sort with sign\n        arr=st[:]; s=1\n        for a in range(len(arr)):\n            for b in range(len(arr)-1-a):\n                if arr[b]>arr[b+1]: arr[b],arr[b+1]=arr[b+1],arr[b]; s=-s\n        return tuple(arr),sign*s\n    for d in dets:\n        c=idx[d]\n        for i in range(10):\n            for j in range(10):\n                v=V1(i,j)*Dq\n                if v:\n                    r,s=apply([('c',i),('a',j)],d)\n                    if r: H[idx[r],c]+=v*s\n        for k in d:\n            for l in d:\n                if k==l: continue\n                for i in range(10):\n                    for j in range(10):\n                        v=g(i,j,k,l,F)\n                        if abs(v)>1e-12:\n                            r,s=apply([('c',i),('c',j),('a',l),('a',k)],d)\n                            if r: H[idx[r],c]+=0.5*v*s\n    return H\n# precompute pieces linear in params\nH2=build({2:1,4:0},0);H4=build({2:0,4:1},0);HD=build({2:0,4:0},1)\n# Ms and C4\nMs=np.array([sum(0.5 if so[o][1]==0 else -0.5 for o in d) for d in dets])\nc4=np.array([1j**(sum(so[o][0] for o in d)%4) for d in dets])\nnp.save('/tmp/H.npy',np.array([H2,H4,HD]))\ndef levels(Dq,B,Cc):\n    F2=49*B+7*Cc; F4=12.6*Cc\n    H=F2*H2+F4*H4+Dq*HD\n    # restrict Ms=1/2 block: quartets & doublets each appear\n    sel=np.where(abs(Ms-0.5)<1e-9)[0]\n    h=H[np.ix_(sel,sel)]\n    w,v=np.linalg.eigh(h)\n    # group\n    out=[];i=0\n    Ms32=np.where(abs(Ms-1.5)<1e-9)[0]\n    w32=np.linalg.eigvalsh(H[np.ix_(Ms32,Ms32)])\n    while i<len(w):\n        j=i\n        while j<len(w) and w[j]-w[i]<1e-3: j+=1\n        tr=np.real(np.sum(np.conj(v[:,i:j])*(c4[sel][:,None]*v[:,i:j])))\n        quart=np.any(abs(w32-w[i])<1e-3)\n        out.append((w[i],j-i,round(tr),'4' if quart else '2'))\n        i=j\n    e0=out[0][0]\n    return [(e-e0,d,t,s) for e,d,t,s in out]\nimport pickle\npickle.dump(None,open('/tmp/x','wb'))\ndef label(L):\n    names=[]\n    cnt={}\n    for e,d,t,s in L:\n        if d==3: n='T1' if t==1 else 'T2'\n        elif d==1: n='A1' if t==1 else 'A2'\n        elif d==2: n='E'\n        else: n='?%d'%d\n        key=s+n; cnt[key]=cnt.get(key,0)+1\n        names.append((key+'(%d)'%cnt[key],e))\n    return names\nobs={'4T2(1)':8480,'4A2(1)':16305,'4T1(2)':20360,'2T1(2)':21001}\ndef res(p):\n    nm=dict(label(levels(*p)))\n    return [nm[k]-v for k,v in obs.items()]\nr=least_squares(res,[800,800,3500])\nprint(r.x,res(r.x))\nfor n,e in label(levels(*r.x))[:15]: print(n,round(e))\nEOF\npython3 /tmp/d7.py\n",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "0c59c823753b55d27ffe745326e690ff871ac92b02bf56f967383d18f344fc74",
+     "lines": 108,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    # c^k(l m1, l m2) = sqrt(4pi/(2k+1)) * int Y*_{2m1} Y_{k,m1-m2} Y_{2m2}\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    # int Y*_{l m1} Y_{kq} Y_{l m2} = (-1)^m1 gaunt(2,k,2,-m1,q,m2)\n    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))\nC={(k,a,b):ck(k,a,b) for k in (2,4) for a in ms for b in ms}\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),7))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef g(i,j,k,l,F):  # <ij|kl>\n    (mi,si),(mj,sj),(mk,sk),(ml,sl)=so[i],so[j],so[k],so[l]\n    if si!=sk or sj!=sl or mi+mj!=mk+ml: return 0\n    return sum(F[kk]*C[(kk,mi,mk)]*C[(kk,ml,mj)] for kk in (2,4))\ndef V1(i,j):\n    (mi,si),(mj,sj)=so[i],so[j]\n    if si!=sj: return 0\n    if mi==mj: return {0:6,1:-4,-1:-4,2:1,-2:1}[mi]\n    if abs(mi-mj)==4: return 5\n    return 0\ndef build(F,Dq):\n    H=np.zeros((N,N))\n    # second quantization: apply a+_i a+_j a_l a_k\n    def apply(ops,det):\n        st=list(det); sign=1\n        for typ,o in reversed(ops):\n            if typ=='a':\n                if o not in st: return None,0\n                p=st.index(o); sign*=(-1)**p; st.pop(p)\n            else:\n                if o in st: return None,0\n                st.insert(0,o)\n                # sort\n        # sort with sign\n        arr=st[:]; s=1\n        for a in range(len(arr)):\n            for b in range(len(arr)-1-a):\n                if arr[b]>arr[b+1]: arr[b],arr[b+1]=arr[b+1],arr[b]; s=-s\n        return tuple(arr),sign*s\n    for d in dets:\n        c=idx[d]\n        for i in range(10):\n            for j in range(10):\n                v=V1(i,j)*Dq\n                if v:\n                    r,s=apply([('c',i),('a',j)],d)\n                    if r: H[idx[r],c]+=v*s\n        for k in d:\n            for l in d:\n                if k==l: continue\n                for i in range(10):\n                    for j in range(10):\n                        v=g(i,j,k,l,F)\n                        if abs(v)>1e-12:\n                            r,s=apply([('c',i),('c',j),('a',l),('a',k)],d)\n                            if r: H[idx[r],c]+=0.5*v*s\n    return H\n# precompute pieces linear in params\nH2=build({2:1,4:0},0);H4=build({2:0,4:1},0);HD=build({2:0,4:0},1)\n# Ms and C4\nMs=np.array([sum(0.5 if so[o][1]==0 else -0.5 for o in d) for d in dets])\nc4=np.array([1j**(sum(so[o][0] for o in d)%4) for d in dets])\nnp.save('/tmp/H.npy',np.array([H2,H4,HD]))\ndef levels(Dq,B,Cc):\n    F2=49*B+7*Cc; F4=12.6*Cc\n    H=F2*H2+F4*H4+Dq*HD\n    # restrict Ms=1/2 block: quartets & doublets each appear\n    sel=np.where(abs(Ms-0.5)<1e-9)[0]\n    h=H[np.ix_(sel,sel)]\n    w,v=np.linalg.eigh(h)\n    # group\n    out=[];i=0\n    Ms32=np.where(abs(Ms-1.5)<1e-9)[0]\n    w32=np.linalg.eigvalsh(H[np.ix_(Ms32,Ms32)])\n    while i<len(w):\n        j=i\n        while j<len(w) and w[j]-w[i]<1e-3: j+=1\n        tr=np.real(np.sum(np.conj(v[:,i:j])*(c4[sel][:,None]*v[:,i:j])))\n        quart=np.any(abs(w32-w[i])<1e-3)\n        out.append((w[i],j-i,round(tr),'4' if quart else '2'))\n        i=j\n    e0=out[0][0]\n    return [(e-e0,d,t,s) for e,d,t,s in out]\nimport pickle\npickle.dump(None,open('/tmp/x','wb'))\ndef label(L):\n    names=[]\n    cnt={}\n    for e,d,t,s in L:\n        if d==3: n='T1' if t==1 else 'T2'\n        elif d==1: n='A1' if t==1 else 'A2'\n        elif d==2: n='E'\n        else: n='?%d'%d\n        key=s+n; cnt[key]=cnt.get(key,0)+1\n        names.append((key+'(%d)'%cnt[key],e))\n    return names\nobs={'4T2(1)':8480,'4A2(1)':16305,'4T1(2)':20360,'2T1(2)':21001}\ndef res(p):\n    nm=dict(label(levels(*p)))\n    return [nm[k]-v for k,v in obs.items()]\nr=least_squares(res,[800,800,3500])\nprint(r.x,res(r.x))\nfor n,e in label(levels(*r.x))[:15]: print(n,round(e))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d7.py",
+     "written_in_step": 0
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 114: /tmp/d7.py: Read-only file system\npython3: can't open file '/tmp/d7.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d7.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "d7.py",
+     "line": 75,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(h)"
+    },
+    {
+     "script": "d7.py",
+     "line": 79,
+     "method": "eigen_solver",
+     "text": "w32=np.linalg.eigvalsh(H[np.ix_(Ms32,Ms32)])"
+    },
+    {
+     "script": "d7.py",
+     "line": 106,
+     "method": "least_squares",
+     "text": "r=least_squares(res,[800,800,3500])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ 2>/dev/null; touch x.py && echo ok || (mkdir -p /dev/shm/w && echo shm); pwd",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "touch: cannot touch 'x.py': Read-only file system\nshm\n/tmp/tsbench-home-xehwqch9\nShell cwd was reset to /tmp/tsbench-run-y5y6ia4q",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm/w && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))\nC={(k,a,b):ck(k,a,b) for k in (2,4) for a in ms for b in ms}\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),7))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef g(i,j,k,l,F):\n    (mi,si),(mj,sj),(mk,sk),(ml,sl)=so[i],so[j],so[k],so[l]\n    if si!=sk or sj!=sl or mi+mj!=mk+ml: return 0\n    return sum(F[kk]*C[(kk,mi,mk)]*C[(kk,ml,mj)] for kk in (2,4))\ndef V1(i,j):\n    (mi,si),(mj,sj)=so[i],so[j]\n    if si!=sj: return 0\n    if mi==mj: return {0:6,1:-4,-1:-4,2:1,-2:1}[mi]\n    if abs(mi-mj)==4: return 5\n    return 0\ndef apply(ops,det):\n    st=list(det); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return None,0\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return None,0\n            st.insert(0,o)\n    arr=st[:]; s=1\n    for a in range(len(arr)):\n        for b in range(len(arr)-1-a):\n            if arr[b]>arr[b+1]: arr[b],arr[b+1]=arr[b+1],arr[b]; s=-s\n    return tuple(arr),sign*s\ndef build(F,Dq):\n    H=np.zeros((N,N))\n    for d in dets:\n        c=idx[d]\n        for i in range(10):\n            for j in range(10):\n                v=V1(i,j)*Dq\n                if v:\n                    r,s=apply([('c',i),('a',j)],d)\n                    if r: H[idx[r],c]+=v*s\n        for k in d:\n            for l in d:\n                if k==l: continue\n                for i in range(10):\n                    for j in range(10):\n                        v=g(i,j,k,l,F)\n                        if abs(v)>1e-12:\n                            r,s=apply([('c',i),('c',j),('a',l),('a',k)],d)\n                            if r: H[idx[r],c]+=0.5*v*s\n    return H\nH2=build({2:1,4:0},0);H4=build({2:0,4:1},0);HD=build({2:0,4:0},1)\nprint(np.abs(H2-H2.T).max())\nMs=np.array([sum(0.5 if so[o][1]==0 else -0.5 for o in d) for d in dets])\nc4=np.array([1j**(sum(so[o][0] for o in d)%4) for d in dets])\nsel=np.where(abs(Ms-0.5)<1e-9)[0]; s32=np.where(abs(Ms-1.5)<1e-9)[0]\ndef levels(Dq,B,Cc):\n    F2=49*B+7*Cc; F4=12.6*Cc\n    H=F2*H2+F4*H4+Dq*HD\n    w,v=np.linalg.eigh(H[np.ix_(sel,sel)])\n    w32=np.linalg.eigvalsh(H[np.ix_(s32,s32)])\n    out=[];i=0\n    while i<len(w):\n        j=i\n        while j<len(w) and w[j]-w[i]<1e-3: j+=1\n        tr=np.real(np.sum(np.conj(v[:,i:j])*(c4[sel][:,None]*v[:,i:j])))\n        quart=np.any(abs(w32-w[i])<1e-3)\n        out.append((w[i],j-i,round(tr),'4' if quart else '2'))\n        i=j\n    e0=out[0][0]\n    return [(e-e0,d,t,s) for e,d,t,s in out]\ndef label(L):\n    names=[];cnt={}\n    for e,d,t,s in L:\n        if d==3: n='T1' if t==1 else 'T2'\n        elif d==1: n='A1' if t==1 else 'A2'\n        elif d==2: n='E'\n        else: n='?%d'%d\n        key=s+n; cnt[key]=cnt.get(key,0)+1\n        names.append((key+'(%d)'%cnt[key],e))\n    return names\nobs={'4T2(1)':8480,'4A2(1)':16305,'4T1(2)':20360,'2T1(2)':21001}\ndef res(p):\n    nm=dict(label(levels(*p)))\n    return [nm[k]-v for k,v in obs.items()]\nr=least_squares(res,[800,850,3800])\nprint(r.x,res(r.x))\nfor n,e in label(levels(*r.x))[:16]: print(n,round(e))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "b1698109f76a1d48a1e19749ead6c53c5fbcfa12c4d72975831d236a73ac8445",
+     "lines": 94,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))\nC={(k,a,b):ck(k,a,b) for k in (2,4) for a in ms for b in ms}\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),7))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef g(i,j,k,l,F):\n    (mi,si),(mj,sj),(mk,sk),(ml,sl)=so[i],so[j],so[k],so[l]\n    if si!=sk or sj!=sl or mi+mj!=mk+ml: return 0\n    return sum(F[kk]*C[(kk,mi,mk)]*C[(kk,ml,mj)] for kk in (2,4))\ndef V1(i,j):\n    (mi,si),(mj,sj)=so[i],so[j]\n    if si!=sj: return 0\n    if mi==mj: return {0:6,1:-4,-1:-4,2:1,-2:1}[mi]\n    if abs(mi-mj)==4: return 5\n    return 0\ndef apply(ops,det):\n    st=list(det); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return None,0\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return None,0\n            st.insert(0,o)\n    arr=st[:]; s=1\n    for a in range(len(arr)):\n        for b in range(len(arr)-1-a):\n            if arr[b]>arr[b+1]: arr[b],arr[b+1]=arr[b+1],arr[b]; s=-s\n    return tuple(arr),sign*s\ndef build(F,Dq):\n    H=np.zeros((N,N))\n    for d in dets:\n        c=idx[d]\n        for i in range(10):\n            for j in range(10):\n                v=V1(i,j)*Dq\n                if v:\n                    r,s=apply([('c',i),('a',j)],d)\n                    if r: H[idx[r],c]+=v*s\n        for k in d:\n            for l in d:\n                if k==l: continue\n                for i in range(10):\n                    for j in range(10):\n                        v=g(i,j,k,l,F)\n                        if abs(v)>1e-12:\n                            r,s=apply([('c',i),('c',j),('a',l),('a',k)],d)\n                            if r: H[idx[r],c]+=0.5*v*s\n    return H\nH2=build({2:1,4:0},0);H4=build({2:0,4:1},0);HD=build({2:0,4:0},1)\nprint(np.abs(H2-H2.T).max())\nMs=np.array([sum(0.5 if so[o][1]==0 else -0.5 for o in d) for d in dets])\nc4=np.array([1j**(sum(so[o][0] for o in d)%4) for d in dets])\nsel=np.where(abs(Ms-0.5)<1e-9)[0]; s32=np.where(abs(Ms-1.5)<1e-9)[0]\ndef levels(Dq,B,Cc):\n    F2=49*B+7*Cc; F4=12.6*Cc\n    H=F2*H2+F4*H4+Dq*HD\n    w,v=np.linalg.eigh(H[np.ix_(sel,sel)])\n    w32=np.linalg.eigvalsh(H[np.ix_(s32,s32)])\n    out=[];i=0\n    while i<len(w):\n        j=i\n        while j<len(w) and w[j]-w[i]<1e-3: j+=1\n        tr=np.real(np.sum(np.conj(v[:,i:j])*(c4[sel][:,None]*v[:,i:j])))\n        quart=np.any(abs(w32-w[i])<1e-3)\n        out.append((w[i],j-i,round(tr),'4' if quart else '2'))\n        i=j\n    e0=out[0][0]\n    return [(e-e0,d,t,s) for e,d,t,s in out]\ndef label(L):\n    names=[];cnt={}\n    for e,d,t,s in L:\n        if d==3: n='T1' if t==1 else 'T2'\n        elif d==1: n='A1' if t==1 else 'A2'\n        elif d==2: n='E'\n        else: n='?%d'%d\n        key=s+n; cnt[key]=cnt.get(key,0)+1\n        names.append((key+'(%d)'%cnt[key],e))\n    return names\nobs={'4T2(1)':8480,'4A2(1)':16305,'4T1(2)':20360,'2T1(2)':21001}\ndef res(p):\n    nm=dict(label(levels(*p)))\n    return [nm[k]-v for k,v in obs.items()]\nr=least_squares(res,[800,850,3800])\nprint(r.x,res(r.x))\nfor n,e in label(levels(*r.x))[:16]: print(n,round(e))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 96: cd: /dev/shm/w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 39,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 66,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H[np.ix_(sel,sel)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 67,
+     "method": "eigen_solver",
+     "text": "w32=np.linalg.eigvalsh(H[np.ix_(s32,s32)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 92,
+     "method": "least_squares",
+     "text": "r=least_squares(res,[800,850,3800])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "python3 -c \"import sympy,scipy;print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))\nC={(k,a,b):ck(k,a,b) for k in (2,4) for a in ms for b in ms}\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),7))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef g(i,j,k,l,F):\n    (mi,si),(mj,sj),(mk,sk),(ml,sl)=so[i],so[j],so[k],so[l]\n    if si!=sk or sj!=sl or mi+mj!=mk+ml: return 0\n    return sum(F[kk]*C[(kk,mi,mk)]*C[(kk,ml,mj)] for kk in (2,4))\ndef V1(i,j):\n    (mi,si),(mj,sj)=so[i],so[j]\n    if si!=sj: return 0\n    if mi==mj: return {0:6,1:-4,-1:-4,2:1,-2:1}[mi]\n    if abs(mi-mj)==4: return 5\n    return 0\ndef apply(ops,det):\n    st=list(det); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return None,0\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return None,0\n            st.insert(0,o)\n    arr=st[:]; s=1\n    for a in range(len(arr)):\n        for b in range(len(arr)-1-a):\n            if arr[b]>arr[b+1]: arr[b],arr[b+1]=arr[b+1],arr[b]; s=-s\n    return tuple(arr),sign*s\ndef build(F,Dq):\n    H=np.zeros((N,N))\n    for d in dets:\n        c=idx[d]\n        for i in range(10):\n            for j in range(10):\n                v=V1(i,j)*Dq\n                if v:\n                    r,s=apply([('c',i),('a',j)],d)\n                    if r: H[idx[r],c]+=v*s\n        for k in d:\n            for l in d:\n                if k==l: continue\n                for i in range(10):\n                    for j in range(10):\n                        v=g(i,j,k,l,F)\n                        if abs(v)>1e-12:\n                            r,s=apply([('c',i),('c',j),('a',l),('a',k)],d)\n                            if r: H[idx[r],c]+=0.5*v*s\n    return H\nH2=build({2:1,4:0},0);H4=build({2:0,4:1},0);HD=build({2:0,4:0},1)\nprint(np.abs(H2-H2.T).max())\nMs=np.array([sum(0.5 if so[o][1]==0 else -0.5 for o in d) for d in dets])\nc4=np.array([1j**(sum(so[o][0] for o in d)%4) for d in dets])\nsel=np.where(abs(Ms-0.5)<1e-9)[0]; s32=np.where(abs(Ms-1.5)<1e-9)[0]\ndef levels(Dq,B,Cc):\n    F2=49*B+7*Cc; F4=12.6*Cc\n    H=F2*H2+F4*H4+Dq*HD\n    w,v=np.linalg.eigh(H[np.ix_(sel,sel)])\n    w32=np.linalg.eigvalsh(H[np.ix_(s32,s32)])\n    out=[];i=0\n    while i<len(w):\n        j=i\n        while j<len(w) and w[j]-w[i]<1e-3: j+=1\n        tr=np.real(np.sum(np.conj(v[:,i:j])*(c4[sel][:,None]*v[:,i:j])))\n        quart=np.any(abs(w32-w[i])<1e-3)\n        out.append((w[i],j-i,round(tr),'4' if quart else '2'))\n        i=j\n    e0=out[0][0]\n    return [(e-e0,d,t,s) for e,d,t,s in out]\ndef label(L):\n    names=[];cnt={}\n    for e,d,t,s in L:\n        if d==3: n='T1' if t==1 else 'T2'\n        elif d==1: n='A1' if t==1 else 'A2'\n        elif d==2: n='E'\n        else: n='?%d'%d\n        key=s+n; cnt[key]=cnt.get(key,0)+1\n        names.append((key+'(%d)'%cnt[key],e))\n    return names\nprint(label(levels(0,1000,4000))[:8])\nobs={'4T2(1)':8480,'4A2(1)':16305,'4T1(2)':20360,'2T1(2)':21001}\ndef res(p):\n    nm=dict(label(levels(*p)))\n    return [nm[k]-v for k,v in obs.items()]\nr=least_squares(res,[800,850,3800])\nprint(r.x,res(r.x))\nfor n,e in label(levels(*r.x))[:16]: print(n,round(e))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "b2fadb034a51b9818483607adf8a3a77a39ac7b1cf1c4fb7078c9d6ef1e3d866",
+     "lines": 95,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))\nC={(k,a,b):ck(k,a,b) for k in (2,4) for a in ms for b in ms}\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),7))\nidx={d:i for i,d in enumerate(dets)}\nN=len(dets)\ndef g(i,j,k,l,F):\n    (mi,si),(mj,sj),(mk,sk),(ml,sl)=so[i],so[j],so[k],so[l]\n    if si!=sk or sj!=sl or mi+mj!=mk+ml: return 0\n    return sum(F[kk]*C[(kk,mi,mk)]*C[(kk,ml,mj)] for kk in (2,4))\ndef V1(i,j):\n    (mi,si),(mj,sj)=so[i],so[j]\n    if si!=sj: return 0\n    if mi==mj: return {0:6,1:-4,-1:-4,2:1,-2:1}[mi]\n    if abs(mi-mj)==4: return 5\n    return 0\ndef apply(ops,det):\n    st=list(det); sign=1\n    for typ,o in reversed(ops):\n        if typ=='a':\n            if o not in st: return None,0\n            p=st.index(o); sign*=(-1)**p; st.pop(p)\n        else:\n            if o in st: return None,0\n            st.insert(0,o)\n    arr=st[:]; s=1\n    for a in range(len(arr)):\n        for b in range(len(arr)-1-a):\n            if arr[b]>arr[b+1]: arr[b],arr[b+1]=arr[b+1],arr[b]; s=-s\n    return tuple(arr),sign*s\ndef build(F,Dq):\n    H=np.zeros((N,N))\n    for d in dets:\n        c=idx[d]\n        for i in range(10):\n            for j in range(10):\n                v=V1(i,j)*Dq\n                if v:\n                    r,s=apply([('c',i),('a',j)],d)\n                    if r: H[idx[r],c]+=v*s\n        for k in d:\n            for l in d:\n                if k==l: continue\n                for i in range(10):\n                    for j in range(10):\n                        v=g(i,j,k,l,F)\n                        if abs(v)>1e-12:\n                            r,s=apply([('c',i),('c',j),('a',l),('a',k)],d)\n                            if r: H[idx[r],c]+=0.5*v*s\n    return H\nH2=build({2:1,4:0},0);H4=build({2:0,4:1},0);HD=build({2:0,4:0},1)\nprint(np.abs(H2-H2.T).max())\nMs=np.array([sum(0.5 if so[o][1]==0 else -0.5 for o in d) for d in dets])\nc4=np.array([1j**(sum(so[o][0] for o in d)%4) for d in dets])\nsel=np.where(abs(Ms-0.5)<1e-9)[0]; s32=np.where(abs(Ms-1.5)<1e-9)[0]\ndef levels(Dq,B,Cc):\n    F2=49*B+7*Cc; F4=12.6*Cc\n    H=F2*H2+F4*H4+Dq*HD\n    w,v=np.linalg.eigh(H[np.ix_(sel,sel)])\n    w32=np.linalg.eigvalsh(H[np.ix_(s32,s32)])\n    out=[];i=0\n    while i<len(w):\n        j=i\n        while j<len(w) and w[j]-w[i]<1e-3: j+=1\n        tr=np.real(np.sum(np.conj(v[:,i:j])*(c4[sel][:,None]*v[:,i:j])))\n        quart=np.any(abs(w32-w[i])<1e-3)\n        out.append((w[i],j-i,round(tr),'4' if quart else '2'))\n        i=j\n    e0=out[0][0]\n    return [(e-e0,d,t,s) for e,d,t,s in out]\ndef label(L):\n    names=[];cnt={}\n    for e,d,t,s in L:\n        if d==3: n='T1' if t==1 else 'T2'\n        elif d==1: n='A1' if t==1 else 'A2'\n        elif d==2: n='E'\n        else: n='?%d'%d\n        key=s+n; cnt[key]=cnt.get(key,0)+1\n        names.append((key+'(%d)'%cnt[key],e))\n    return names\nprint(label(levels(0,1000,4000))[:8])\nobs={'4T2(1)':8480,'4A2(1)':16305,'4T1(2)':20360,'2T1(2)':21001}\ndef res(p):\n    nm=dict(label(levels(*p)))\n    return [nm[k]-v for k,v in obs.items()]\nr=least_squares(res,[800,850,3800])\nprint(r.x,res(r.x))\nfor n,e in label(levels(*r.x))[:16]: print(n,round(e))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0.0\n[('4?7(1)', np.float64(0.0)), ('4T1(1)', np.float64(15000.000000000073)), ('2?9(1)', np.float64(16000.000000000087)), ('2?14(1)', np.float64(21000.000000000073)), ('2?5(1)', np.float64(23000.00000000006)), ('2?7(1)', np.float64(36000.00000000003)), ('2?5(2)', np.float64(57000.00000000011))]\n[ 889.62286088  914.97037326 3793.86750076] [np.float64(-720.3926744640921), np.float64(350.835934302173), np.float64(-12.458358802381554), np.float64(0.000503044982906431)]\n4T1(1) 0\n4T2(1) 7760\n2E(1) 9117\n2T1(1) 16219\n2T2(1) 16568\n4A2(1) 16656\n4T1(2) 20348\n2T1(2) 21001\n2A1(1) 22801\n2T2(2) 25098\n2T1(3) 26311\n2E(2) 28235\n2T2(3) 31249\n2T1(4) 32462\n2E(3) 33576\n2T2(4) 38322",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 39,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 66,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H[np.ix_(sel,sel)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 67,
+     "method": "eigen_solver",
+     "text": "w32=np.linalg.eigvalsh(H[np.ix_(s32,s32)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 93,
+     "method": "least_squares",
+     "text": "r=least_squares(res,[800,850,3800])"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B"
+   ]
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "python3 - << 'EOF' 2>&1 | tail -5\nimport numpy as np\n# quartet analytic d7: energies rel 4T1F\ndef q(Dq,B):\n    S=np.sqrt(225*B**2+100*Dq**2+180*Dq*B)\n    return 5*Dq-7.5*B+0.5*S, 15*Dq-7.5*B+0.5*S, S\nfrom scipy.optimize import fsolve\nfor pair in [(0,2),(1,2)]:\n    obs=np.array([8480,16305,20360])\n    f=lambda p: [q(*p)[i]-obs[i] for i in pair]\n    s=fsolve(f,[850,900]); print(pair,s,q(*s))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "312630db9baf16302a99a38e3d97ee482af323baa87e20844e9692f4dd197a1f",
+     "lines": 10,
+     "code": "import numpy as np\n# quartet analytic d7: energies rel 4T1F\ndef q(Dq,B):\n    S=np.sqrt(225*B**2+100*Dq**2+180*Dq*B)\n    return 5*Dq-7.5*B+0.5*S, 15*Dq-7.5*B+0.5*S, S\nfrom scipy.optimize import fsolve\nfor pair in [(0,2),(1,2)]:\n    obs=np.array([8480,16305,20360])\n    f=lambda p: [q(*p)[i]-obs[i] for i in pair]\n    s=fsolve(f,[850,900]); print(pair,s,q(*s))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(0, 2) [964.98017604 869.98678403] (np.float64(8480.0), np.float64(18129.801760383307), np.float64(20360.0))\n(1, 2) [871.62994265 926.59321863] (np.float64(7588.700573495953), np.float64(16305.0), np.float64(20360.0))",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 6,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "least_squares",
+     "text": "s=fsolve(f,[850,900]); print(pair,s,q(*s))"
+    }
+   ],
+   "produces": []
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 890.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "B",
+   "value": 915.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "C",
+   "value": 3794.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [
+    4
+   ],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 6,
+  "n_scripts": 4,
+  "n_failed_steps": 2,
+  "n_values": 3,
+  "n_linked": 2,
+  "n_weak": 0,
+  "source_steps": [
+   4
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

@@ -1,0 +1,1 @@
+echo 'Solving ligand-field parameters for octahedral d² system using absorption band energies: 17500, 25000, 9748 cm⁻¹.'

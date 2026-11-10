@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>/tmp.LtwqOKhLVU; sed -i 's/    if m1+m2+m3!=0: return 0.0/    if m1+m2+m3!=0 or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0.0/' d3.py; python3 d3.py 0 1000 4000; python3 d3.py 2155 657.4 3696

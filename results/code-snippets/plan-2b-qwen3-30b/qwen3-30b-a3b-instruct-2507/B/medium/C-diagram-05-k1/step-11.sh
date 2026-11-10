@@ -1,0 +1,1 @@
+<HOME>/.cache/tsbench/python/cpython-3.14.9-linux-x86_64-gnu/bin/pip install --user -q matplotlib numpy scipy

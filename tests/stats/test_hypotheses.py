@@ -972,3 +972,29 @@ def test_main_rates_with_default_models_on_other_data_names_models_option(tmp_pa
     assert main(["--rates", str(p), "--out", str(out)]) == 1                # no traceback
     err = capsys.readouterr().err
     assert "--models" in err and "primary family incomplete" in err and not out.exists()
+
+
+def test_the_open_weight_family_is_holm_over_its_h2_tests_only():
+    """Preregistration, plans 2a-2c: Holm over the 3 H2 tests, no H3 (the models are not sizes of one family)."""
+    res = primary(synth(), h3=False)
+    assert [r["name"] for r in res] == [f"H2_{m}" for m in (H, S, OPUS)]
+    p = sorted(r["p"] for r in res)
+    holm3 = sorted(r["p_holm"] for r in res)
+    assert holm3[0] == pytest.approx(min(1.0, 3 * p[0]))
+    assert all(r["family"] == "secondary_h2" for r in res)
+
+
+def test_cli_family_secondary_drops_h3_from_holm(tmp_path):
+    rows = score_rows(layers={"A": 3, "B": 3, "C": 3})
+    p = tmp_path / "scores.csv"
+    lines = ["model,condition,effort,task_id,k_index,correct,evaluable"]
+    lines += [f"{r['model']},{r['condition']},{r['effort']},{r['task_id']},{r['k']},{r['correct']},{r['evaluable']}"
+              for r in rows]
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out = tmp_path / "h.json"
+    main(["--scores", str(p), "--expect-tasks", "12", "--family", "secondary", "--out", str(out)])
+    res = json.loads(out.read_text(encoding="utf-8"))
+    assert [r["name"] for r in res["primary"]] == [f"H2_{m}" for m in (H, S, OPUS)]
+    assert res["family"] == "secondary"
+    main(["--scores", str(p), "--expect-tasks", "12", "--out", str(out)])
+    assert json.loads(out.read_text(encoding="utf-8"))["family"] == "primary"

@@ -1,0 +1,2 @@
+
+cd /tmp/tsbench-run-la9r0a6w && python3 -c "import scipy.special as s; print(hasattr(s,'sph_harm_y'))" && sed -i 's/from scipy.special import sph_harm, eval_legendre/from scipy.special import sph_harm_y, eval_legendre/; s/Ys = np.array(\[sph_harm(m, 2, ph, np.arccos(ct)) for m in range(-2,3)\])/Ys = np.array([sph_harm_y(2, m, np.arccos(ct), ph) for m in range(-2,3)])/' d3.py && python3 run.py

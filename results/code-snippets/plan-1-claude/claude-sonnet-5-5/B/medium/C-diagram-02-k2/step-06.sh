@@ -1,0 +1,1 @@
+sed -i 's/ops=\[(2\*dd+s2,0),(2\*cc+s1,0)/ops=[(2*cc+s1,0),(2*dd+s2,0)/' ts.py && python3 ts.py 2>&1 | grep -v matplotlib | sed 's/np.float64//g'

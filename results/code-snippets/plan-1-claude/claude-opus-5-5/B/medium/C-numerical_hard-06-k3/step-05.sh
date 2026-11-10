@@ -1,0 +1,1 @@
+cd / ; ls -ld /dev/shm /var/tmp 2>&1; touch /dev/shm/x 2>&1

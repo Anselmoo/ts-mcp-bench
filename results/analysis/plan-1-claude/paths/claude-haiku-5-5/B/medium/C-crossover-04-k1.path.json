@@ -1,0 +1,324 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-crossover-04-k1.jsonl",
+ "transcript_sha256": "7bd6a639cbce1fbe7d0eeec23c6683bba75331a1aca3f31977adf95692a3a7e7",
+ "answer": {
+  "Dq": 1958.0,
+  "B": 922.0,
+  "C": 4156.0,
+  "out_of_scope": false,
+  "reason": "Crossover from ⁴T₁g to ²Eg found by diagonalizing the full d⁷ octahedral Hamiltonian with B = 922 and C = 4156 cm⁻¹."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy and sympy availability",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|sympy|scipy\" ; python3 -c \"import numpy, sympy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d7 Hamiltonian and test energies",
+   "command": "cat << 'EOF' > /tmp/d7.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB=922.0; C=4156.0\nF4=441*C/35; F2=441*B+5*F4\nF={2:F2,4:F4}\nms=[-2,-1,0,1,2]\n# spin orbitals: (m,s), s=+1/2 ->0, -1/2 ->1\nso=[(m,s) for s in (0,1) for m in ms]\nn=len(so)\ndef ang(ma,k,q,mc):\n    # integral Y_{2,ma}^* Y_{k,q} Y_{2,mc}\n    if ma-(-q)*0 is None: pass\n    return complex(gaunt(2,k,2,-ma,q,mc))  # Y_{2,-ma}... handled below\ndef Yint(ma,k,q,mc):\n    # int Y*_{2 ma} Y_{k q} Y_{2 mc}; use conj(Y_{2ma}) = (-1)^ma Y_{2,-ma}\n    if q!=ma-mc and True:\n        pass\n    val=(-1)**ma*gaunt(2,k,2,-ma,q,mc)\n    return float(val)\n# Coulomb two-body matrix element <ab|V|cd> for spin orbitals\ndef V2(a,b,c,d):\n    ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n    if sa!=sc or sb!=sd: return 0.0\n    tot=0.0\n    for k in (2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            # electron1: a* Y_kq c ; electron2: b* Y_{k,-q} d\n            if abs(q)>0 and False: pass\n            if (mc+q)!=ma or (md-q)!=mb: continue\n            s+=(-1)**q*Yint(ma,k,q,mc)*Yint(mb,k,-q,md)\n        tot+=F[k]*4*np.pi/(2*k+1)*s\n    return tot\n# one-electron cubic field in m basis\nct=[]\n# eg: z2, x2-y2 ; t2g: xy,xz,yz as combos of |m>\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\norbs=[(6,vec({0:1})),(6,vec({2:1/r2,-2:1/r2})),\n      (-4,vec({2:1/(1j*r2),-2:-1/(1j*r2)})),\n      (-4,vec({1:-1/r2,-1:1/r2})),\n      (-4,vec({1:1j/r2,-1:1j/r2}))]\n# check orthonormality\nM=np.array([o[1] for o in orbs])\nassert np.allclose(M.conj()@M.T,np.eye(5)), M.conj()@M.T\ndef hmat(Dq):\n    h=np.zeros((5,5),complex)\n    for e,v in orbs:\n        h+= Dq*e*np.outer(v,v.conj())\n    return h\n# build determinant basis\ndef dets(nup,ndn):\n    up=[i for i in range(5)]; dn=[i+5 for i in range(5)]\n    out=[]\n    for A in itertools.combinations(up,nup):\n        for Bb in itertools.combinations(dn,ndn):\n            out.append(tuple(sorted(A+Bb)))\n    return out\ndef build(Dq,occ):\n    h=hmat(Dq)\n    # full h in spin-orbital index\n    H1=np.zeros((n,n),complex)\n    for s in (0,1):\n        for i in range(5):\n            for j in range(5):\n                H1[i+5*s,j+5*s]=h[i,j]\n    # two-body\n    V=np.zeros((n,n,n,n))\n    for a,b,c,d in itertools.product(range(n),repeat=4):\n        V[a,b,c,d]=V2(a,b,c,d)\n    idx={d:i for i,d in enumerate(occ)}\n    N=len(occ); Hm=np.zeros((N,N),complex)\n    for I,dI in enumerate(occ):\n        for J,dJ in enumerate(occ):\n            # general Slater-Condon via second quantization\n            Hm[I,J]=opmat(dI,dJ,H1,V)\n    return Hm\ndef apply(state,ops):\n    # state: sorted tuple; ops: list of (type,index) applied right to left\n    pass\ndef opmat(bra,ket,H1,V):\n    # <bra| H |ket> where H = sum H1_ij a+_i a_j + 1/2 sum V_abcd a+_a a+_b a_d a_c\n    tot=0j\n    ket_l=list(ket)\n    # one-body\n    for i in range(n):\n        for j in range(n):\n            if H1[i,j]==0: continue\n            r=annih(ket_l,j)\n            if r is None: continue\n            s1,st=r\n            r2_=create(st,i)\n            if r2_ is None: continue\n            s2,st2=r2_\n            if tuple(st2)==bra: tot+=H1[i,j]*s1*s2\n    for a,b,c,d in itertools.product(range(n),repeat=4):\n        if V[a,b,c,d]==0: continue\n        r=annih(ket_l,c)\n        if r is None: continue\n        s1,st=r\n        r=annih(st,d)\n        if r is None: continue\n        s2,st=r\n        r=create(st,b)\n        if r is None: continue\n        s3,st=r\n        r=create(st,a)\n        if r is None: continue\n        s4,st=r\n        if tuple(st)==bra: tot+=0.5*V[a,b,c,d]*s1*s2*s3*s4\n    return tot\ndef annih(st,j):\n    if j not in st: return None\n    p=st.index(j)\n    return ((-1)**p, [x for x in st if x!=j])\ndef create(st,j):\n    if j in st: return None\n    p=sum(1 for x in st if x<j)\n    new=sorted(st+[j])\n    return ((-1)**p,new)\ndef energies(Dq,nup,ndn):\n    occ=dets(nup,ndn)\n    Hm=build(Dq,occ)\n    return np.sort(np.linalg.eigvalsh((Hm+Hm.conj().T)/2))\nif __name__==\"__main__\":\n    import sys\n    for Dq in [0.0,1000.0]:\n        q=energies(Dq,5,2); d=energies(Dq,4,3)\n        print(Dq, q[:4], d[:6])\nEOF\ncd /tmp && time python3 d7.py",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "dd35a27aa152afc3282256997ffb27ebc34f5cc6aea09a02229426607be418c0",
+     "lines": 133,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB=922.0; C=4156.0\nF4=441*C/35; F2=441*B+5*F4\nF={2:F2,4:F4}\nms=[-2,-1,0,1,2]\n# spin orbitals: (m,s), s=+1/2 ->0, -1/2 ->1\nso=[(m,s) for s in (0,1) for m in ms]\nn=len(so)\ndef ang(ma,k,q,mc):\n    # integral Y_{2,ma}^* Y_{k,q} Y_{2,mc}\n    if ma-(-q)*0 is None: pass\n    return complex(gaunt(2,k,2,-ma,q,mc))  # Y_{2,-ma}... handled below\ndef Yint(ma,k,q,mc):\n    # int Y*_{2 ma} Y_{k q} Y_{2 mc}; use conj(Y_{2ma}) = (-1)^ma Y_{2,-ma}\n    if q!=ma-mc and True:\n        pass\n    val=(-1)**ma*gaunt(2,k,2,-ma,q,mc)\n    return float(val)\n# Coulomb two-body matrix element <ab|V|cd> for spin orbitals\ndef V2(a,b,c,d):\n    ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n    if sa!=sc or sb!=sd: return 0.0\n    tot=0.0\n    for k in (2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            # electron1: a* Y_kq c ; electron2: b* Y_{k,-q} d\n            if abs(q)>0 and False: pass\n            if (mc+q)!=ma or (md-q)!=mb: continue\n            s+=(-1)**q*Yint(ma,k,q,mc)*Yint(mb,k,-q,md)\n        tot+=F[k]*4*np.pi/(2*k+1)*s\n    return tot\n# one-electron cubic field in m basis\nct=[]\n# eg: z2, x2-y2 ; t2g: xy,xz,yz as combos of |m>\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\norbs=[(6,vec({0:1})),(6,vec({2:1/r2,-2:1/r2})),\n      (-4,vec({2:1/(1j*r2),-2:-1/(1j*r2)})),\n      (-4,vec({1:-1/r2,-1:1/r2})),\n      (-4,vec({1:1j/r2,-1:1j/r2}))]\n# check orthonormality\nM=np.array([o[1] for o in orbs])\nassert np.allclose(M.conj()@M.T,np.eye(5)), M.conj()@M.T\ndef hmat(Dq):\n    h=np.zeros((5,5),complex)\n    for e,v in orbs:\n        h+= Dq*e*np.outer(v,v.conj())\n    return h\n# build determinant basis\ndef dets(nup,ndn):\n    up=[i for i in range(5)]; dn=[i+5 for i in range(5)]\n    out=[]\n    for A in itertools.combinations(up,nup):\n        for Bb in itertools.combinations(dn,ndn):\n            out.append(tuple(sorted(A+Bb)))\n    return out\ndef build(Dq,occ):\n    h=hmat(Dq)\n    # full h in spin-orbital index\n    H1=np.zeros((n,n),complex)\n    for s in (0,1):\n        for i in range(5):\n            for j in range(5):\n                H1[i+5*s,j+5*s]=h[i,j]\n    # two-body\n    V=np.zeros((n,n,n,n))\n    for a,b,c,d in itertools.product(range(n),repeat=4):\n        V[a,b,c,d]=V2(a,b,c,d)\n    idx={d:i for i,d in enumerate(occ)}\n    N=len(occ); Hm=np.zeros((N,N),complex)\n    for I,dI in enumerate(occ):\n        for J,dJ in enumerate(occ):\n            # general Slater-Condon via second quantization\n            Hm[I,J]=opmat(dI,dJ,H1,V)\n    return Hm\ndef apply(state,ops):\n    # state: sorted tuple; ops: list of (type,index) applied right to left\n    pass\ndef opmat(bra,ket,H1,V):\n    # <bra| H |ket> where H = sum H1_ij a+_i a_j + 1/2 sum V_abcd a+_a a+_b a_d a_c\n    tot=0j\n    ket_l=list(ket)\n    # one-body\n    for i in range(n):\n        for j in range(n):\n            if H1[i,j]==0: continue\n            r=annih(ket_l,j)\n            if r is None: continue\n            s1,st=r\n            r2_=create(st,i)\n            if r2_ is None: continue\n            s2,st2=r2_\n            if tuple(st2)==bra: tot+=H1[i,j]*s1*s2\n    for a,b,c,d in itertools.product(range(n),repeat=4):\n        if V[a,b,c,d]==0: continue\n        r=annih(ket_l,c)\n        if r is None: continue\n        s1,st=r\n        r=annih(st,d)\n        if r is None: continue\n        s2,st=r\n        r=create(st,b)\n        if r is None: continue\n        s3,st=r\n        r=create(st,a)\n        if r is None: continue\n        s4,st=r\n        if tuple(st)==bra: tot+=0.5*V[a,b,c,d]*s1*s2*s3*s4\n    return tot\ndef annih(st,j):\n    if j not in st: return None\n    p=st.index(j)\n    return ((-1)**p, [x for x in st if x!=j])\ndef create(st,j):\n    if j in st: return None\n    p=sum(1 for x in st if x<j)\n    new=sorted(st+[j])\n    return ((-1)**p,new)\ndef energies(Dq,nup,ndn):\n    occ=dets(nup,ndn)\n    Hm=build(Dq,occ)\n    return np.sort(np.linalg.eigvalsh((Hm+Hm.conj().T)/2))\nif __name__==\"__main__\":\n    import sys\n    for Dq in [0.0,1000.0]:\n        q=energies(Dq,5,2); d=energies(Dq,4,3)\n        print(Dq, q[:4], d[:6])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d7.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 136: /tmp/d7.py: Read-only file system\npython3: can't open file '/tmp/d7.py': [Errno 2] No such file or directory\n\nreal\t0m0,018s\nuser\t0m0,014s\nsys\t0m0,004s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 51,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d7.py",
+     "line": 66,
+     "method": "matrix",
+     "text": "H1=np.zeros((n,n),complex)"
+    },
+    {
+     "script": "d7.py",
+     "line": 72,
+     "method": "matrix",
+     "text": "V=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "d7.py",
+     "line": 76,
+     "method": "matrix",
+     "text": "N=len(occ); Hm=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "d7.py",
+     "line": 80,
+     "method": "matrix",
+     "text": "Hm[I,J]=opmat(dI,dJ,H1,V)"
+    },
+    {
+     "script": "d7.py",
+     "line": 128,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh((Hm+Hm.conj().T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Find a writable working directory",
+   "command": "mkdir -p ~/w && cd ~/w && pwd && ls -ld /tmp ~ ",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/w’: Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Check whether scripts can run from stdin",
+   "command": "cd /; python3 -c \"import os;print(os.getcwd(), os.access('/tmp',os.W_OK))\"; echo test | python3 -c \"import sys;print(sys.stdin.read())\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/ False\ntest\nShell cwd was reset to /tmp/tsbench-run-b24f1e_n",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Build d7 Coulomb Hamiltonian and check free-ion levels",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB=922.0; C=4156.0\nF4=441*C/35; F2=441*B+5*F4\nF={2:F2,4:F4}\nms=[-2,-1,0,1,2]\nso=[(m,s) for s in (0,1) for m in ms]\nn=10\ndef Yint(ma,k,q,mc):\n    return float((-1)**ma*gaunt(2,k,2,-ma,q,mc))\n# precompute angular\nG={}\nfor ma in ms:\n  for mc in ms:\n    for k in (2,4):\n      for q in range(-k,k+1):\n        if abs(q)<=k:\n          G[(ma,k,q,mc)]=Yint(ma,k,q,mc)\ndef V2(a,b,c,d):\n    ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n    if sa!=sc or sb!=sd: return 0.0\n    tot=0.0\n    for k in (2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            if (mc+q)!=ma or (md-q)!=mb: continue\n            s+=(-1)**q*G[(ma,k,q,mc)]*G[(mb,k,-q,md)]\n        tot+=F[k]*4*np.pi/(2*k+1)*s\n    return tot\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\norbs=[(6,vec({0:1})),(6,vec({2:1/r2,-2:1/r2})),\n      (-4,vec({2:1/(1j*r2),-2:-1/(1j*r2)})),\n      (-4,vec({1:-1/r2,-1:1/r2})),\n      (-4,vec({1:1j/r2,-1:1j/r2}))]\nM=np.array([o[1] for o in orbs])\nassert np.allclose(M.conj()@M.T,np.eye(5))\ndef hmat(Dq):\n    h=np.zeros((5,5),complex)\n    for e,v in orbs: h+=Dq*e*np.outer(v,v.conj())\n    return h\ndef dets(nup,ndn):\n    out=[]\n    for A in itertools.combinations(range(5),nup):\n        for Bb in itertools.combinations(range(5,10),ndn):\n            out.append(tuple(sorted(A+Bb)))\n    return out\ndef annih(st,j):\n    if j not in st: return None\n    p=st.index(j)\n    return ((-1)**p,[x for x in st if x!=j])\ndef create(st,j):\n    if j in st: return None\n    p=sum(1 for x in st if x<j)\n    return ((-1)**p,sorted(st+[j]))\nVt={}\nfor a,b,c,d in itertools.product(range(n),repeat=4):\n    v=V2(a,b,c,d)\n    if abs(v)>1e-12: Vt[(a,b,c,d)]=v\ndef opmat(bra,ket,H1):\n    tot=0j\n    kl=list(ket)\n    for i in range(n):\n        for j in range(n):\n            if abs(H1[i,j])<1e-14: continue\n            r=annih(kl,j)\n            if r is None: continue\n            s1,st=r\n            r=create(st,i)\n            if r is None: continue\n            s2,st2=r\n            if tuple(st2)==bra: tot+=H1[i,j]*s1*s2\n    for (a,b,c,d),v in Vt.items():\n        r=annih(kl,c)\n        if r is None: continue\n        s1,st=r\n        r=annih(st,d)\n        if r is None: continue\n        s2,st=r\n        r=create(st,b)\n        if r is None: continue\n        s3,st=r\n        r=create(st,a)\n        if r is None: continue\n        s4,st=r\n        if tuple(st)==bra: tot+=0.5*v*s1*s2*s3*s4\n    return tot\ndef energies(Dq,nup,ndn):\n    occ=dets(nup,ndn)\n    h=hmat(Dq)\n    H1=np.zeros((n,n),complex)\n    for s in (0,1):\n        for i in range(5):\n            for j in range(5):\n                H1[i+5*s,j+5*s]=h[i,j]\n    N=len(occ)\n    Hm=np.array([[opmat(occ[I],occ[J],H1) for J in range(N)] for I in range(N)])\n    Hm=(Hm+Hm.conj().T)/2\n    return np.sort(np.linalg.eigvalsh(Hm))\n# checks: free ion d7 ground energy and quartet multiplicities\ne0=energies(0.0,5,2); print(\"quartet free:\",np.round(e0[:10]-e0[0],1))\nd0=energies(0.0,4,3); print(\"M=1/2 free:\",np.round(d0[:12]-e0[0],1))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "16d2b4e607bfce6b36313c0ea59158211c10ca7e06caf3290db455cda8f28e79",
+     "lines": 106,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB=922.0; C=4156.0\nF4=441*C/35; F2=441*B+5*F4\nF={2:F2,4:F4}\nms=[-2,-1,0,1,2]\nso=[(m,s) for s in (0,1) for m in ms]\nn=10\ndef Yint(ma,k,q,mc):\n    return float((-1)**ma*gaunt(2,k,2,-ma,q,mc))\n# precompute angular\nG={}\nfor ma in ms:\n  for mc in ms:\n    for k in (2,4):\n      for q in range(-k,k+1):\n        if abs(q)<=k:\n          G[(ma,k,q,mc)]=Yint(ma,k,q,mc)\ndef V2(a,b,c,d):\n    ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n    if sa!=sc or sb!=sd: return 0.0\n    tot=0.0\n    for k in (2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            if (mc+q)!=ma or (md-q)!=mb: continue\n            s+=(-1)**q*G[(ma,k,q,mc)]*G[(mb,k,-q,md)]\n        tot+=F[k]*4*np.pi/(2*k+1)*s\n    return tot\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\norbs=[(6,vec({0:1})),(6,vec({2:1/r2,-2:1/r2})),\n      (-4,vec({2:1/(1j*r2),-2:-1/(1j*r2)})),\n      (-4,vec({1:-1/r2,-1:1/r2})),\n      (-4,vec({1:1j/r2,-1:1j/r2}))]\nM=np.array([o[1] for o in orbs])\nassert np.allclose(M.conj()@M.T,np.eye(5))\ndef hmat(Dq):\n    h=np.zeros((5,5),complex)\n    for e,v in orbs: h+=Dq*e*np.outer(v,v.conj())\n    return h\ndef dets(nup,ndn):\n    out=[]\n    for A in itertools.combinations(range(5),nup):\n        for Bb in itertools.combinations(range(5,10),ndn):\n            out.append(tuple(sorted(A+Bb)))\n    return out\ndef annih(st,j):\n    if j not in st: return None\n    p=st.index(j)\n    return ((-1)**p,[x for x in st if x!=j])\ndef create(st,j):\n    if j in st: return None\n    p=sum(1 for x in st if x<j)\n    return ((-1)**p,sorted(st+[j]))\nVt={}\nfor a,b,c,d in itertools.product(range(n),repeat=4):\n    v=V2(a,b,c,d)\n    if abs(v)>1e-12: Vt[(a,b,c,d)]=v\ndef opmat(bra,ket,H1):\n    tot=0j\n    kl=list(ket)\n    for i in range(n):\n        for j in range(n):\n            if abs(H1[i,j])<1e-14: continue\n            r=annih(kl,j)\n            if r is None: continue\n            s1,st=r\n            r=create(st,i)\n            if r is None: continue\n            s2,st2=r\n            if tuple(st2)==bra: tot+=H1[i,j]*s1*s2\n    for (a,b,c,d),v in Vt.items():\n        r=annih(kl,c)\n        if r is None: continue\n        s1,st=r\n        r=annih(st,d)\n        if r is None: continue\n        s2,st=r\n        r=create(st,b)\n        if r is None: continue\n        s3,st=r\n        r=create(st,a)\n        if r is None: continue\n        s4,st=r\n        if tuple(st)==bra: tot+=0.5*v*s1*s2*s3*s4\n    return tot\ndef energies(Dq,nup,ndn):\n    occ=dets(nup,ndn)\n    h=hmat(Dq)\n    H1=np.zeros((n,n),complex)\n    for s in (0,1):\n        for i in range(5):\n            for j in range(5):\n                H1[i+5*s,j+5*s]=h[i,j]\n    N=len(occ)\n    Hm=np.array([[opmat(occ[I],occ[J],H1) for J in range(N)] for I in range(N)])\n    Hm=(Hm+Hm.conj().T)/2\n    return np.sort(np.linalg.eigvalsh(Hm))\n# checks: free ion d7 ground energy and quartet multiplicities\ne0=energies(0.0,5,2); print(\"quartet free:\",np.round(e0[:10]-e0[0],1))\nd0=energies(0.0,4,3); print(\"M=1/2 free:\",np.round(d0[:12]-e0[0],1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "quartet free: [     0.       0.       0.       0.       0.       0.       0.  195715.7\n 195715.7 195715.7]\nM=1/2 free: [   -0.     -0.     -0.      0.      0.      0.      0.  64658.9 64658.9\n 64658.9 64658.9 64658.9]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 95,
+     "method": "matrix",
+     "text": "H1=np.zeros((n,n),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 101,
+     "method": "matrix",
+     "text": "Hm=np.array([[opmat(occ[I],occ[J],H1) for J in range(N)] for I in range(N)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 103,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh(Hm))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Fix Slater integral relation and verify free-ion levels",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB=922.0; C=4156.0\nF4=441*C/35; F2=49*B+7*C\nprint(\"F2,F4\",F2,F4)\nF={2:F2,4:F4}\nms=[-2,-1,0,1,2]\nso=[(m,s) for s in (0,1) for m in ms]\nn=10\nG={}\nfor ma in ms:\n  for mc in ms:\n    for k in (2,4):\n      for q in range(-k,k+1):\n        G[(ma,k,q,mc)]=float((-1)**ma*gaunt(2,k,2,-ma,q,mc))\ndef V2(a,b,c,d):\n    ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n    if sa!=sc or sb!=sd: return 0.0\n    tot=0.0\n    for k in (2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            if (mc+q)!=ma or (md-q)!=mb: continue\n            s+=(-1)**q*G[(ma,k,q,mc)]*G[(mb,k,-q,md)]\n        tot+=F[k]*4*np.pi/(2*k+1)*s\n    return tot\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\norbs=[(6,vec({0:1})),(6,vec({2:1/r2,-2:1/r2})),\n      (-4,vec({2:1/(1j*r2),-2:-1/(1j*r2)})),\n      (-4,vec({1:-1/r2,-1:1/r2})),\n      (-4,vec({1:1j/r2,-1:1j/r2}))]\nM=np.array([o[1] for o in orbs])\nassert np.allclose(M.conj()@M.T,np.eye(5))\ndef hmat(Dq):\n    h=np.zeros((5,5),complex)\n    for e,v in orbs: h+=Dq*e*np.outer(v,v.conj())\n    return h\ndef dets(nup,ndn):\n    out=[]\n    for A in itertools.combinations(range(5),nup):\n        for Bb in itertools.combinations(range(5,10),ndn):\n            out.append(tuple(sorted(A+Bb)))\n    return out\ndef annih(st,j):\n    if j not in st: return None\n    p=st.index(j)\n    return ((-1)**p,[x for x in st if x!=j])\ndef create(st,j):\n    if j in st: return None\n    p=sum(1 for x in st if x<j)\n    return ((-1)**p,sorted(st+[j]))\nVt={}\nfor a,b,c,d in itertools.product(range(n),repeat=4):\n    v=V2(a,b,c,d)\n    if abs(v)>1e-12: Vt[(a,b,c,d)]=v\ndef opmat(bra,ket,H1):\n    tot=0j\n    kl=list(ket)\n    for i in range(n):\n        for j in range(n):\n            if abs(H1[i,j])<1e-14: continue\n            r=annih(kl,j)\n            if r is None: continue\n            s1,st=r\n            r=create(st,i)\n            if r is None: continue\n            s2,st2=r\n            if tuple(st2)==bra: tot+=H1[i,j]*s1*s2\n    for (a,b,c,d),v in Vt.items():\n        r=annih(kl,c)\n        if r is None: continue\n        s1,st=r\n        r=annih(st,d)\n        if r is None: continue\n        s2,st=r\n        r=create(st,b)\n        if r is None: continue\n        s3,st=r\n        r=create(st,a)\n        if r is None: continue\n        s4,st=r\n        if tuple(st)==bra: tot+=0.5*v*s1*s2*s3*s4\n    return tot\ndef energies(Dq,nup,ndn):\n    occ=dets(nup,ndn)\n    h=hmat(Dq)\n    H1=np.zeros((n,n),complex)\n    for s in (0,1):\n        for i in range(5):\n            for j in range(5):\n                H1[i+5*s,j+5*s]=h[i,j]\n    N=len(occ)\n    Hm=np.array([[opmat(occ[I],occ[J],H1) for J in range(N)] for I in range(N)])\n    Hm=(Hm+Hm.conj().T)/2\n    return np.sort(np.linalg.eigvalsh(Hm))\ne0=energies(0.0,5,2); print(\"quartet free:\",np.round(e0-e0[0],1))\nd0=energies(0.0,4,3); print(\"M=1/2 free:\",np.round(d0-e0[0],1))\ndef gap(Dq):\n    q=energies(Dq,5,2)[0]; d=energies(Dq,4,3)\n    # lowest doublet: remove quartet eigenvalues (those in M_S=3/2 spectrum)\n    qall=energies(Dq,5,2)\n    return None\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "76ae2fb25ea9f85df0592419a98d359b85e60ca2ec381608a3aa2b94d7b44595",
+     "lines": 107,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB=922.0; C=4156.0\nF4=441*C/35; F2=49*B+7*C\nprint(\"F2,F4\",F2,F4)\nF={2:F2,4:F4}\nms=[-2,-1,0,1,2]\nso=[(m,s) for s in (0,1) for m in ms]\nn=10\nG={}\nfor ma in ms:\n  for mc in ms:\n    for k in (2,4):\n      for q in range(-k,k+1):\n        G[(ma,k,q,mc)]=float((-1)**ma*gaunt(2,k,2,-ma,q,mc))\ndef V2(a,b,c,d):\n    ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n    if sa!=sc or sb!=sd: return 0.0\n    tot=0.0\n    for k in (2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            if (mc+q)!=ma or (md-q)!=mb: continue\n            s+=(-1)**q*G[(ma,k,q,mc)]*G[(mb,k,-q,md)]\n        tot+=F[k]*4*np.pi/(2*k+1)*s\n    return tot\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\norbs=[(6,vec({0:1})),(6,vec({2:1/r2,-2:1/r2})),\n      (-4,vec({2:1/(1j*r2),-2:-1/(1j*r2)})),\n      (-4,vec({1:-1/r2,-1:1/r2})),\n      (-4,vec({1:1j/r2,-1:1j/r2}))]\nM=np.array([o[1] for o in orbs])\nassert np.allclose(M.conj()@M.T,np.eye(5))\ndef hmat(Dq):\n    h=np.zeros((5,5),complex)\n    for e,v in orbs: h+=Dq*e*np.outer(v,v.conj())\n    return h\ndef dets(nup,ndn):\n    out=[]\n    for A in itertools.combinations(range(5),nup):\n        for Bb in itertools.combinations(range(5,10),ndn):\n            out.append(tuple(sorted(A+Bb)))\n    return out\ndef annih(st,j):\n    if j not in st: return None\n    p=st.index(j)\n    return ((-1)**p,[x for x in st if x!=j])\ndef create(st,j):\n    if j in st: return None\n    p=sum(1 for x in st if x<j)\n    return ((-1)**p,sorted(st+[j]))\nVt={}\nfor a,b,c,d in itertools.product(range(n),repeat=4):\n    v=V2(a,b,c,d)\n    if abs(v)>1e-12: Vt[(a,b,c,d)]=v\ndef opmat(bra,ket,H1):\n    tot=0j\n    kl=list(ket)\n    for i in range(n):\n        for j in range(n):\n            if abs(H1[i,j])<1e-14: continue\n            r=annih(kl,j)\n            if r is None: continue\n            s1,st=r\n            r=create(st,i)\n            if r is None: continue\n            s2,st2=r\n            if tuple(st2)==bra: tot+=H1[i,j]*s1*s2\n    for (a,b,c,d),v in Vt.items():\n        r=annih(kl,c)\n        if r is None: continue\n        s1,st=r\n        r=annih(st,d)\n        if r is None: continue\n        s2,st=r\n        r=create(st,b)\n        if r is None: continue\n        s3,st=r\n        r=create(st,a)\n        if r is None: continue\n        s4,st=r\n        if tuple(st)==bra: tot+=0.5*v*s1*s2*s3*s4\n    return tot\ndef energies(Dq,nup,ndn):\n    occ=dets(nup,ndn)\n    h=hmat(Dq)\n    H1=np.zeros((n,n),complex)\n    for s in (0,1):\n        for i in range(5):\n            for j in range(5):\n                H1[i+5*s,j+5*s]=h[i,j]\n    N=len(occ)\n    Hm=np.array([[opmat(occ[I],occ[J],H1) for J in range(N)] for I in range(N)])\n    Hm=(Hm+Hm.conj().T)/2\n    return np.sort(np.linalg.eigvalsh(Hm))\ne0=energies(0.0,5,2); print(\"quartet free:\",np.round(e0-e0[0],1))\nd0=energies(0.0,4,3); print(\"M=1/2 free:\",np.round(d0-e0[0],1))\ndef gap(Dq):\n    q=energies(Dq,5,2)[0]; d=energies(Dq,4,3)\n    # lowest doublet: remove quartet eigenvalues (those in M_S=3/2 spectrum)\n    qall=energies(Dq,5,2)\n    return None\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "F2,F4 74270.0 52365.6\nquartet free: [    0.     0.     0.     0.     0.     0.     0. 13830. 13830. 13830.]\nM=1/2 free: [   -0.     -0.     -0.      0.      0.      0.      0.  13830.  13830.\n 13830.  16156.  16156.  16156.  16156.  16156.  16156.  16156.  16156.\n 16156.  20766.  20766.  20766.  20766.  20766.  20766.  20766.  20766.\n 20766.  20766.  20766.  20766.  20766.  20766.  22977.8 22977.8 22977.8\n 22977.8 22977.8 34596.  34596.  34596.  34596.  34596.  34596.  34596.\n 55462.2 55462.2 55462.2 55462.2 55462.2]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 40,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 92,
+     "method": "matrix",
+     "text": "H1=np.zeros((n,n),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 98,
+     "method": "matrix",
+     "text": "Hm=np.array([[opmat(occ[I],occ[J],H1) for J in range(N)] for I in range(N)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 100,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh(Hm))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Scan Dq and locate high-spin/low-spin crossover",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB=922.0; C=4156.0\nF4=441*C/35; F2=49*B+7*C\nF={2:F2,4:F4}\nms=[-2,-1,0,1,2]\nso=[(m,s) for s in (0,1) for m in ms]\nn=10\nG={}\nfor ma in ms:\n  for mc in ms:\n    for k in (2,4):\n      for q in range(-k,k+1):\n        G[(ma,k,q,mc)]=float((-1)**ma*gaunt(2,k,2,-ma,q,mc))\ndef V2(a,b,c,d):\n    ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n    if sa!=sc or sb!=sd: return 0.0\n    tot=0.0\n    for k in (2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            if (mc+q)!=ma or (md-q)!=mb: continue\n            s+=(-1)**q*G[(ma,k,q,mc)]*G[(mb,k,-q,md)]\n        tot+=F[k]*4*np.pi/(2*k+1)*s\n    return tot\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\norbs=[(6,vec({0:1})),(6,vec({2:1/r2,-2:1/r2})),\n      (-4,vec({2:1/(1j*r2),-2:-1/(1j*r2)})),\n      (-4,vec({1:-1/r2,-1:1/r2})),\n      (-4,vec({1:1j/r2,-1:1j/r2}))]\ndef hmat(Dq):\n    h=np.zeros((5,5),complex)\n    for e,v in orbs: h+=Dq*e*np.outer(v,v.conj())\n    return h\ndef dets(nup,ndn):\n    out=[]\n    for A in itertools.combinations(range(5),nup):\n        for Bb in itertools.combinations(range(5,10),ndn):\n            out.append(tuple(sorted(A+Bb)))\n    return out\ndef annih(st,j):\n    if j not in st: return None\n    p=st.index(j)\n    return ((-1)**p,[x for x in st if x!=j])\ndef create(st,j):\n    if j in st: return None\n    p=sum(1 for x in st if x<j)\n    return ((-1)**p,sorted(st+[j]))\nVt={}\nfor a,b,c,d in itertools.product(range(n),repeat=4):\n    v=V2(a,b,c,d)\n    if abs(v)>1e-12: Vt[(a,b,c,d)]=v\ndef opmat(bra,ket,H1):\n    tot=0j; kl=list(ket)\n    for i in range(n):\n        for j in range(n):\n            if abs(H1[i,j])<1e-14: continue\n            r=annih(kl,j)\n            if r is None: continue\n            s1,st=r; r=create(st,i)\n            if r is None: continue\n            s2,st2=r\n            if tuple(st2)==bra: tot+=H1[i,j]*s1*s2\n    for (a,b,c,d),v in Vt.items():\n        r=annih(kl,c)\n        if r is None: continue\n        s1,st=r; r=annih(st,d)\n        if r is None: continue\n        s2,st=r; r=create(st,b)\n        if r is None: continue\n        s3,st=r; r=create(st,a)\n        if r is None: continue\n        s4,st=r\n        if tuple(st)==bra: tot+=0.5*v*s1*s2*s3*s4\n    return tot\ndef spec(Dq,nup,ndn):\n    occ=dets(nup,ndn); h=hmat(Dq)\n    H1=np.zeros((n,n),complex)\n    for s in (0,1):\n        for i in range(5):\n            for j in range(5): H1[i+5*s,j+5*s]=h[i,j]\n    N=len(occ)\n    Hm=np.array([[opmat(occ[I],occ[J],H1) for J in range(N)] for I in range(N)])\n    Hm=(Hm+Hm.conj().T)/2\n    return np.sort(np.linalg.eigvalsh(Hm))\ndef levels(Dq):\n    q=spec(Dq,5,2)          # M_S=3/2: quartets only\n    d=spec(Dq,4,3)          # M_S=1/2: quartets + doublets\n    # remove quartet eigenvalues from d\n    dl=list(d)\n    for x in q:\n        i=int(np.argmin([abs(y-x) for y in dl])); assert abs(dl[i]-x)<1e-5; dl.pop(i)\n    return q, np.array(dl)\nfor Dq in [0,500,1000,1500,2000,2500,3000]:\n    q,dd=levels(Dq)\n    print(Dq, \"Q0=\",round(q[0]-q[0],1), \"D0-Q0=\",round(dd[0]-q[0],1))\nf=lambda x: levels(x)[1][0]-levels(x)[0][0]\nx=brentq(f,1000,3000,xtol=1e-3)\nprint(\"crossover Dq =\",x, \" Dq/B=\",x/B, \" C/B=\",C/B)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "ff4a31760c2bb1f398eb673c5cf30401cc87a54aa38c9b6da83f569356deb235",
+     "lines": 104,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nB=922.0; C=4156.0\nF4=441*C/35; F2=49*B+7*C\nF={2:F2,4:F4}\nms=[-2,-1,0,1,2]\nso=[(m,s) for s in (0,1) for m in ms]\nn=10\nG={}\nfor ma in ms:\n  for mc in ms:\n    for k in (2,4):\n      for q in range(-k,k+1):\n        G[(ma,k,q,mc)]=float((-1)**ma*gaunt(2,k,2,-ma,q,mc))\ndef V2(a,b,c,d):\n    ma,sa=so[a]; mb,sb=so[b]; mc,sc=so[c]; md,sd=so[d]\n    if sa!=sc or sb!=sd: return 0.0\n    tot=0.0\n    for k in (2,4):\n        s=0.0\n        for q in range(-k,k+1):\n            if (mc+q)!=ma or (md-q)!=mb: continue\n            s+=(-1)**q*G[(ma,k,q,mc)]*G[(mb,k,-q,md)]\n        tot+=F[k]*4*np.pi/(2*k+1)*s\n    return tot\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\norbs=[(6,vec({0:1})),(6,vec({2:1/r2,-2:1/r2})),\n      (-4,vec({2:1/(1j*r2),-2:-1/(1j*r2)})),\n      (-4,vec({1:-1/r2,-1:1/r2})),\n      (-4,vec({1:1j/r2,-1:1j/r2}))]\ndef hmat(Dq):\n    h=np.zeros((5,5),complex)\n    for e,v in orbs: h+=Dq*e*np.outer(v,v.conj())\n    return h\ndef dets(nup,ndn):\n    out=[]\n    for A in itertools.combinations(range(5),nup):\n        for Bb in itertools.combinations(range(5,10),ndn):\n            out.append(tuple(sorted(A+Bb)))\n    return out\ndef annih(st,j):\n    if j not in st: return None\n    p=st.index(j)\n    return ((-1)**p,[x for x in st if x!=j])\ndef create(st,j):\n    if j in st: return None\n    p=sum(1 for x in st if x<j)\n    return ((-1)**p,sorted(st+[j]))\nVt={}\nfor a,b,c,d in itertools.product(range(n),repeat=4):\n    v=V2(a,b,c,d)\n    if abs(v)>1e-12: Vt[(a,b,c,d)]=v\ndef opmat(bra,ket,H1):\n    tot=0j; kl=list(ket)\n    for i in range(n):\n        for j in range(n):\n            if abs(H1[i,j])<1e-14: continue\n            r=annih(kl,j)\n            if r is None: continue\n            s1,st=r; r=create(st,i)\n            if r is None: continue\n            s2,st2=r\n            if tuple(st2)==bra: tot+=H1[i,j]*s1*s2\n    for (a,b,c,d),v in Vt.items():\n        r=annih(kl,c)\n        if r is None: continue\n        s1,st=r; r=annih(st,d)\n        if r is None: continue\n        s2,st=r; r=create(st,b)\n        if r is None: continue\n        s3,st=r; r=create(st,a)\n        if r is None: continue\n        s4,st=r\n        if tuple(st)==bra: tot+=0.5*v*s1*s2*s3*s4\n    return tot\ndef spec(Dq,nup,ndn):\n    occ=dets(nup,ndn); h=hmat(Dq)\n    H1=np.zeros((n,n),complex)\n    for s in (0,1):\n        for i in range(5):\n            for j in range(5): H1[i+5*s,j+5*s]=h[i,j]\n    N=len(occ)\n    Hm=np.array([[opmat(occ[I],occ[J],H1) for J in range(N)] for I in range(N)])\n    Hm=(Hm+Hm.conj().T)/2\n    return np.sort(np.linalg.eigvalsh(Hm))\ndef levels(Dq):\n    q=spec(Dq,5,2)          # M_S=3/2: quartets only\n    d=spec(Dq,4,3)          # M_S=1/2: quartets + doublets\n    # remove quartet eigenvalues from d\n    dl=list(d)\n    for x in q:\n        i=int(np.argmin([abs(y-x) for y in dl])); assert abs(dl[i]-x)<1e-5; dl.pop(i)\n    return q, np.array(dl)\nfor Dq in [0,500,1000,1500,2000,2500,3000]:\n    q,dd=levels(Dq)\n    print(Dq, \"Q0=\",round(q[0]-q[0],1), \"D0-Q0=\",round(dd[0]-q[0],1))\nf=lambda x: levels(x)[1][0]-levels(x)[0][0]\nx=brentq(f,1000,3000,xtol=1e-3)\nprint(\"crossover Dq =\",x, \" Dq/B=\",x/B, \" C/B=\",C/B)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0 Q0= 0.0 D0-Q0= 16156.0\n500 Q0= 0.0 D0-Q0= 13944.5\n1000 Q0= 0.0 D0-Q0= 9309.4\n1500 Q0= 0.0 D0-Q0= 4477.6\n2000 Q0= 0.0 D0-Q0= -411.7\n2500 Q0= 0.0 D0-Q0= -5329.4\n3000 Q0= 0.0 D0-Q0= -10264.7\ncrossover Dq = 1958.0273504545448  Dq/B= 2.1236739158943  C/B= 4.507592190889371",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 37,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 83,
+     "method": "matrix",
+     "text": "H1=np.zeros((n,n),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 88,
+     "method": "matrix",
+     "text": "Hm=np.array([[opmat(occ[I],occ[J],H1) for J in range(N)] for I in range(N)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 90,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh(Hm))"
+    }
+   ],
+   "produces": [
+    "Dq"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1958.0,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  },
+  {
+   "path": "B",
+   "value": 922.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 4156.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 7,
+  "n_scripts": 4,
+  "n_failed_steps": 2,
+  "n_values": 3,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   6
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

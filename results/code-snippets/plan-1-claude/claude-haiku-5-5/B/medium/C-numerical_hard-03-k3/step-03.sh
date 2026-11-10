@@ -1,0 +1,1 @@
+for d in "$PWD" /var/tmp /dev/shm; do (cd "$d" && touch zz_test && echo "writable: $d" && rm zz_test); done

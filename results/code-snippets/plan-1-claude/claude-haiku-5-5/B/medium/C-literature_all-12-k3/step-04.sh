@@ -1,0 +1,1 @@
+cd ~ && pwd && touch testfile && echo ok; echo $TMPDIR; df -h . | tail -1

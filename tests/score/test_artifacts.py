@@ -42,6 +42,42 @@ def test_split_heredocs_variants():
     assert "print(1)" not in skel and "python a.py" in skel
 
 
+@pytest.mark.parametrize(("line", "name"), [
+    ("cat > a.py <<'EOF'", "a.py"),
+    ("cat <<'EOF' > a.py", "a.py"),
+    ("cd /w && cat > a.py <<'EOF'", "a.py"),
+    ("cd /w; cat <<'EOF' >> a.py", "a.py"),
+    ("(cat > a.py <<'EOF'", "a.py"),
+    ("if true; then cat > a.py <<'EOF'", "a.py"),
+    ("for i in 1; do cat > a.py <<'EOF'", "a.py"),
+    ("tee a.py <<'EOF'", "a.py"),
+    ("tee -a a.py <<'EOF'", "a.py"),
+    ("cat <<'EOF' | tee a.py", "a.py"),
+    ("cat <<'EOF' | tee -a a.py > /dev/null", "a.py"),
+    ("/bin/cat > a.py <<'EOF'", "a.py"),
+    # the redirect belongs to another command of the line
+    ("cat > a.py 2>/dev/null; python3 - <<'EOF'", None),
+    ("cat a.txt > b.txt && python3 - <<'EOF'", None),
+    ("python3 - <<'EOF' | tee out.log", None),
+    ("python3 - <<'EOF' 2>&1 | tee out.log", None),
+    ("cat <<'EOF' | python3 > out.txt", None),
+    ("cat <<'EOF' | python3 - | tee out.txt", None),
+    ("python3 cat.py <<'EOF' > out.txt", None),
+    ("cat <<'EOF' >&2", None),
+    ("cat <<'EOF' && echo done > log", None),
+    ("echo 'a; cat > b.py' <<'EOF'", None),
+    ("echo \"x | y\" | cat <<'EOF'", None),
+])
+def test_the_target_of_a_heredoc_is_a_redirect_of_its_own_command(line, name):
+    (h,), _ = art.split_heredocs(f"{line}\nx = 1\nEOF")
+    assert h["name"] == name
+
+
+def test_a_heredoc_fed_to_python_with_a_redirect_elsewhere_on_the_line_is_python():
+    (h,), _ = art.split_heredocs("cat > a.py 2>/dev/null; python3 - <<'EOF'\nx = 1\nEOF")
+    assert h["python"] is True
+
+
 def test_split_heredoc_unterminated_and_none():
     hs, _ = art.split_heredocs("cat > z.py <<'EOF'\na\nb")
     assert hs[0]["body"] == "a\nb\n"
@@ -234,7 +270,7 @@ def test_split_heredocs_python_flag():
 
     assert py("python - <<EOF") and py("python3 - <<'EOF'") and py("python3.12 - <<EOF")
     assert not py("mypython - <<EOF") and not py("pythonx - <<EOF") and not py("bash <<EOF")
-    assert not py("python - <<EOF | cat > f.py"), "a named heredoc is a file, not inline Python"
+    assert not py("cat > f.py <<EOF; python f.py"), "a named heredoc is a file, not inline Python"
 
 
 def test_safe_name():
@@ -590,3 +626,18 @@ def test_the_transcript_cache_keeps_at_most_its_budget(tmp_path, monkeypatch):
     assert cache._size <= 2 * size
     tiny = art.TranscriptCache(max_bytes=size - 1)  # a file over the budget is never kept
     assert tiny(files[0]) is not tiny(files[0]) and tiny._size == 0
+
+
+@pytest.mark.parametrize("cmd, name, python", [
+    ("cat <<'EOF' | python3 - 2>/dev/null\nprint(1)\nEOF", None, True),
+    ("cat > a.py <<'EOF' 2>/dev/null\nprint(1)\nEOF", "a.py", False),
+    ("cat <<'EOF' > b.py 2>&1\nprint(1)\nEOF", "b.py", False),
+    ("cat <<'EOF' &>/dev/null\nx\nEOF", None, False),
+    ("cat <<'EOF' 1> c.py\nx\nEOF", "c.py", False),
+    ("cat <<'EOF' >&2\nx\nEOF", None, False),
+    ("cat <<'EOF' | tee -a log.txt >&2\nx\nEOF", "log.txt", False),
+])
+def test_split_heredocs_ignores_stream_redirects(cmd, name, python):
+    """A redirect of stderr or of both streams (2>/dev/null, &>/dev/null, 2>&1) never names the heredoc's file."""
+    hs, _ = art.split_heredocs(cmd)
+    assert [(h["name"], h["python"]) for h in hs] == [(name, python)]

@@ -1,0 +1,1 @@
+python3 -c "import numpy as np; import matplotlib.pyplot as plt; from scipy.linalg import eigvals; from scipy.optimize import minimize_scalar; print('All libraries successfully imported')"

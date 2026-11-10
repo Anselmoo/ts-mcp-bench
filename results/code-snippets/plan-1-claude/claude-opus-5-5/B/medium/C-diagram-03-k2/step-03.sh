@@ -1,0 +1,1 @@
+rm x; cd /tmp/tsbench-run-tsr9v_05 && history | tail -0; echo

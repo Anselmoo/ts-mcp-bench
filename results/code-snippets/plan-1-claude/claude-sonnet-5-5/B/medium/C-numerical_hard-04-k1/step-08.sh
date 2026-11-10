@@ -1,0 +1,1 @@
+cd /dev/shm && PYTHONPATH=/dev/shm python3 b.py

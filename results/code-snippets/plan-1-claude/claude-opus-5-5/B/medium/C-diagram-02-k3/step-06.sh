@@ -1,0 +1,1 @@
+P=<HOME>/.cache/tsbench/python/cpython-3.14.9-linux-x86_64-gnu/bin; $P/python3 -c "import numpy" 2>&1; $P/pip3 install --target ./_pylib numpy matplotlib 2>&1 | tail -2

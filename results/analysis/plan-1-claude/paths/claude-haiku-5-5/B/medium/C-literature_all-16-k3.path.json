@@ -1,0 +1,786 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-literature_all-16-k3.jsonl",
+ "transcript_sha256": "771948386ef4818fc61980d5b6e059254c9a03a8cd34f57abde651f900ee4ac1",
+ "answer": {
+  "Dq": 748.0,
+  "B": 934.0,
+  "C": 4157.0,
+  "out_of_scope": false,
+  "reason": "Least-squares fit of the full d8 octahedral ligand-field matrix to the four bands; residuals up to about 80 cm-1 show the data are only approximately consistent with the model."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d8.py\nimport numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.optimize import least_squares\nfrom math import comb\n# --- angular integrals numerically (Gauss-Legendre x uniform phi) ---\nnth, nph = 40, 80\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = range(-2, 3)\nY = {m: sph_harm(m, 2, PH, TH) for m in range(-4, 5) for _ in [0]}\ndef Yk(k,q): return sph_harm(q, k, PH, TH)\norb = [(m,) for m in ms]\n# Gaunt-type angular factors ang[k][a,b,c,d] = P1*P2 summed over q\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    Ylm = {m: sph_harm(m,2,PH,TH) for m in ms}\n    for q in range(-k,k+1):\n        Yq = Yk(k,q)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A\nA = {k: ang_k(k) for k in (0,2,4)}\ndef Vcoul(F0,F2,F4):\n    return A[0]*F0 + A[2]*F2 + A[4]*F4\n# --- Fock space, 10 spin orbitals: index = 2*i + s, s=0 up,1 down\nnso = 10\ndef cop(i):\n    # Jordan-Wigner annihilation on 1024-dim space\n    dim = 2**nso\n    M = np.zeros((dim,dim))\n    for st in range(dim):\n        if (st>>i)&1:\n            sign = (-1)**bin(st & ((1<<i)-1)).count('1')\n            M[st ^ (1<<i), st] = sign\n    return M\nC = [cop(i) for i in range(nso)]\nCd = [c.T for c in C]\ndef build(Dq,B,Cc):\n    F4 = 12.6*Cc; F2 = 49*B + 7*Cc; F0 = 0.0\n    V = Vcoul(F0,F2,F4).real  # real part; check imag small\n    # orbital index i = m+2\n    h = np.zeros((5,5))\n    # cubic: t2g and eg in complex basis\n    s2=np.sqrt(2)\n    t2g = []\n    t2g.append(np.array([0,0,0,0,0],complex))  # placeholder\n    v_xy = np.zeros(5,complex); v_xy[4]=1/(1j*s2); v_xy[0]=-1/(1j*s2)\n    v_xz = np.zeros(5,complex); v_xz[3]=-1/s2; v_xz[1]=1/s2\n    v_yz = np.zeros(5,complex); v_yz[3]=1j/s2; v_yz[1]=1j/s2\n    eg = []\n    v_z2 = np.zeros(5,complex); v_z2[2]=1\n    v_x2 = np.zeros(5,complex); v_x2[4]=1/s2; v_x2[0]=1/s2\n    Pt = sum(np.outer(v,v.conj()) for v in (v_xy,v_xz,v_yz))\n    Pe = sum(np.outer(v,v.conj()) for v in (v_z2,v_x2))\n    hm = -4*Dq*Pt + 6*Dq*Pe\n    # full operators\n    dim = 2**nso\n    H = np.zeros((dim,dim),complex)\n    for a in range(5):\n        for b in range(5):\n            if abs(hm[a,b])>1e-12:\n                for s in (0,1):\n                    H += hm[a,b]*Cd[2*a+s]@C[2*b+s]\n    # two-body: 1/2 sum V_abcd c+_a c+_b c_d c_c, with V=<ab|g|cd>, spin a=c, b=d\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v = V[a,b,c,d]\n        if abs(v)<1e-10: continue\n        for s1 in (0,1):\n         for s2_ in (0,1):\n            H += 0.5*v*(Cd[2*a+s1]@Cd[2*b+s2_]@C[2*d+s2_]@C[2*c+s1])\n    return H\n# restrict to N=8\nNop = sum(Cd[i]@C[i] for i in range(nso))\ndiagN = np.real(np.diag(Nop))\nidx = np.where(np.abs(diagN-8)<1e-9)[0]\nSz = np.array([ (sum(((st>>(2*i))&1) - ((st>>(2*i+1))&1) for i in range(5))) for st in idx])\nprint(\"dim N=8:\", len(idx))\ndef spectrum(Dq,B,Cc):\n    H = build(Dq,B,Cc)\n    Hs = H[np.ix_(idx,idx)].real\n    Ssel = Sz\n    # triplet: Sz=2 (nup-ndn)=2 -> Ms=1 ; sectors\n    t_idx = np.where(Ssel==2)[0]\n    Ht = Hs[np.ix_(t_idx,t_idx)]\n    et = np.sort(np.linalg.eigvalsh(Ht))\n    z_idx = np.where(Ssel==0)[0]\n    Hz = Hs[np.ix_(z_idx,z_idx)]\n    ez = np.sort(np.linalg.eigvalsh(Hz))\n    # remove triplet eigenvalues from Sz=0\n    singlets = list(ez)\n    for t in et:\n        j = int(np.argmin(np.abs(np.array(singlets)-t)))\n        singlets.pop(j)\n    return et, np.array(singlets)\net, es = spectrum(1000.0, 1000.0, 4000.0)\nprint(\"triplet Ms=1 eig:\", np.round(et,3))\nprint(\"singlets:\", np.round(es,3))\nnp.save('/tmp/dummy.npy', np.zeros(1))\nimport pickle\npickle.dump(None, open('/tmp/ok','wb'))\nEOF\npython3 /tmp/d8.py\n",
+   "scripts": [
+    {
+     "name": "d8.py",
+     "sha256": "510a9ccd6945dd05a9913031a4c95243638297dfed4f85ef58cded62e779bc79",
+     "lines": 105,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.optimize import least_squares\nfrom math import comb\n# --- angular integrals numerically (Gauss-Legendre x uniform phi) ---\nnth, nph = 40, 80\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = range(-2, 3)\nY = {m: sph_harm(m, 2, PH, TH) for m in range(-4, 5) for _ in [0]}\ndef Yk(k,q): return sph_harm(q, k, PH, TH)\norb = [(m,) for m in ms]\n# Gaunt-type angular factors ang[k][a,b,c,d] = P1*P2 summed over q\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    Ylm = {m: sph_harm(m,2,PH,TH) for m in ms}\n    for q in range(-k,k+1):\n        Yq = Yk(k,q)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A\nA = {k: ang_k(k) for k in (0,2,4)}\ndef Vcoul(F0,F2,F4):\n    return A[0]*F0 + A[2]*F2 + A[4]*F4\n# --- Fock space, 10 spin orbitals: index = 2*i + s, s=0 up,1 down\nnso = 10\ndef cop(i):\n    # Jordan-Wigner annihilation on 1024-dim space\n    dim = 2**nso\n    M = np.zeros((dim,dim))\n    for st in range(dim):\n        if (st>>i)&1:\n            sign = (-1)**bin(st & ((1<<i)-1)).count('1')\n            M[st ^ (1<<i), st] = sign\n    return M\nC = [cop(i) for i in range(nso)]\nCd = [c.T for c in C]\ndef build(Dq,B,Cc):\n    F4 = 12.6*Cc; F2 = 49*B + 7*Cc; F0 = 0.0\n    V = Vcoul(F0,F2,F4).real  # real part; check imag small\n    # orbital index i = m+2\n    h = np.zeros((5,5))\n    # cubic: t2g and eg in complex basis\n    s2=np.sqrt(2)\n    t2g = []\n    t2g.append(np.array([0,0,0,0,0],complex))  # placeholder\n    v_xy = np.zeros(5,complex); v_xy[4]=1/(1j*s2); v_xy[0]=-1/(1j*s2)\n    v_xz = np.zeros(5,complex); v_xz[3]=-1/s2; v_xz[1]=1/s2\n    v_yz = np.zeros(5,complex); v_yz[3]=1j/s2; v_yz[1]=1j/s2\n    eg = []\n    v_z2 = np.zeros(5,complex); v_z2[2]=1\n    v_x2 = np.zeros(5,complex); v_x2[4]=1/s2; v_x2[0]=1/s2\n    Pt = sum(np.outer(v,v.conj()) for v in (v_xy,v_xz,v_yz))\n    Pe = sum(np.outer(v,v.conj()) for v in (v_z2,v_x2))\n    hm = -4*Dq*Pt + 6*Dq*Pe\n    # full operators\n    dim = 2**nso\n    H = np.zeros((dim,dim),complex)\n    for a in range(5):\n        for b in range(5):\n            if abs(hm[a,b])>1e-12:\n                for s in (0,1):\n                    H += hm[a,b]*Cd[2*a+s]@C[2*b+s]\n    # two-body: 1/2 sum V_abcd c+_a c+_b c_d c_c, with V=<ab|g|cd>, spin a=c, b=d\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v = V[a,b,c,d]\n        if abs(v)<1e-10: continue\n        for s1 in (0,1):\n         for s2_ in (0,1):\n            H += 0.5*v*(Cd[2*a+s1]@Cd[2*b+s2_]@C[2*d+s2_]@C[2*c+s1])\n    return H\n# restrict to N=8\nNop = sum(Cd[i]@C[i] for i in range(nso))\ndiagN = np.real(np.diag(Nop))\nidx = np.where(np.abs(diagN-8)<1e-9)[0]\nSz = np.array([ (sum(((st>>(2*i))&1) - ((st>>(2*i+1))&1) for i in range(5))) for st in idx])\nprint(\"dim N=8:\", len(idx))\ndef spectrum(Dq,B,Cc):\n    H = build(Dq,B,Cc)\n    Hs = H[np.ix_(idx,idx)].real\n    Ssel = Sz\n    # triplet: Sz=2 (nup-ndn)=2 -> Ms=1 ; sectors\n    t_idx = np.where(Ssel==2)[0]\n    Ht = Hs[np.ix_(t_idx,t_idx)]\n    et = np.sort(np.linalg.eigvalsh(Ht))\n    z_idx = np.where(Ssel==0)[0]\n    Hz = Hs[np.ix_(z_idx,z_idx)]\n    ez = np.sort(np.linalg.eigvalsh(Hz))\n    # remove triplet eigenvalues from Sz=0\n    singlets = list(ez)\n    for t in et:\n        j = int(np.argmin(np.abs(np.array(singlets)-t)))\n        singlets.pop(j)\n    return et, np.array(singlets)\net, es = spectrum(1000.0, 1000.0, 4000.0)\nprint(\"triplet Ms=1 eig:\", np.round(et,3))\nprint(\"singlets:\", np.round(es,3))\nnp.save('/tmp/dummy.npy', np.zeros(1))\nimport pickle\npickle.dump(None, open('/tmp/ok','wb'))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d8.py",
+     "written_in_step": 0
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 111: /tmp/d8.py: Read-only file system\npython3: can't open file '/tmp/d8.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d8.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d8.py",
+     "line": 16,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "d8.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])"
+    },
+    {
+     "script": "d8.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])"
+    },
+    {
+     "script": "d8.py",
+     "line": 32,
+     "method": "matrix",
+     "text": "M = np.zeros((dim,dim))"
+    },
+    {
+     "script": "d8.py",
+     "line": 44,
+     "method": "matrix",
+     "text": "h = np.zeros((5,5))"
+    },
+    {
+     "script": "d8.py",
+     "line": 60,
+     "method": "matrix",
+     "text": "H = np.zeros((dim,dim),complex)"
+    },
+    {
+     "script": "d8.py",
+     "line": 90,
+     "method": "eigen_solver",
+     "text": "et = np.sort(np.linalg.eigvalsh(Ht))"
+    },
+    {
+     "script": "d8.py",
+     "line": 93,
+     "method": "eigen_solver",
+     "text": "ez = np.sort(np.linalg.eigvalsh(Hz))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd $HOME 2>/dev/null || cd /var/tmp; pwd; touch t && echo ok\n",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 't': Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "\npython3 -c \"import numpy, scipy; print(numpy.__version__, scipy.__version__)\"; mkdir -p /tmp/x 2>&1; ls -ld /tmp /dev/shm 2>&1\n",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "2.5.4 1.18.1\nmkdir: cannot create directory ‘/tmp/x’: Read-only file system\ndrwxr-xr-x  2 <USER>  <USER>       40 Nov  4 15:11 /dev/shm\ndrwxrwxrwt 32 nobody nogroup 884736 Nov  4 15:10 /tmp",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np\nfrom scipy.special import sph_harm\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: sph_harm(m,2,PH,TH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = sph_harm(q,k,PH,TH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A\nA = {k: ang_k(k) for k in (0,2,4)}\nprint(\"imag max\", max(np.abs(A[k].imag).max() for k in A))\n# check: F0 coefficient diagonal <ab|ab> for a=b should be 1 (F0 coeff for same orbital)\nprint(\"A0[0,0,0,0]\", A[0][0,0,0,0].real, \"A2 diag sample\", A[2][2,2,2,2].real, A[4][2,2,2,2].real)\n# Save angular tensors as python literal into stdout? keep in memory: just recompute in one script\nimport pickle\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "d5d4b0cad837466dd2605bf21989b872b1a543290ada938503635ab21947d9fe",
+     "lines": 22,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: sph_harm(m,2,PH,TH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = sph_harm(q,k,PH,TH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A\nA = {k: ang_k(k) for k in (0,2,4)}\nprint(\"imag max\", max(np.abs(A[k].imag).max() for k in A))\n# check: F0 coefficient diagonal <ab|ab> for a=b should be 1 (F0 coeff for same orbital)\nprint(\"A0[0,0,0,0]\", A[0][0,0,0,0].real, \"A2 diag sample\", A[2][2,2,2,2].real, A[4][2,2,2,2].real)\n# Save angular tensors as python literal into stdout? keep in memory: just recompute in one script\nimport pickle\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\nImportError: cannot import name 'sph_harm' from 'scipy.special' (<B_VENV>/lib/python3.14/site-packages/scipy/special/__init__.py)",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np, scipy.special as sp\nprint([n for n in dir(sp) if 'sph' in n])\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "5a3913aa1ab3d0523345f38fb717d804c015b62f42cfe9e039b44015900b0019",
+     "lines": 2,
+     "code": "import numpy as np, scipy.special as sp\nprint([n for n in dir(sp) if 'sph' in n])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "['_spherical_bessel', 'sph_harm_y', 'sph_harm_y_all', 'sph_legendre_p', 'sph_legendre_p_all', 'spherical_in', 'spherical_jn', 'spherical_kn', 'spherical_yn']",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np\nfrom scipy.special import sph_harm_y as SY\nfrom scipy.optimize import least_squares\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A\nA = {k: ang_k(k) for k in (0,2,4)}\nprint(\"imag max\", max(np.abs(A[k].imag).max() for k in A))\nprint(\"A0 00 00\", A[0][0,0,0,0].real, \"A2 22 22\", A[2][2,2,2,2].real, A[4][2,2,2,2].real)\nnp.savez('/dev/shm/ang.npz', A0=A[0].real, A2=A[2].real, A4=A[4].real)\nEOF\nls -l /dev/shm/ang.npz\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "3f2487556c36d4a4c491dbe5ceea3411fd315c0b7ae3bfcbe918f4e2b31e26d8",
+     "lines": 21,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm_y as SY\nfrom scipy.optimize import least_squares\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A\nA = {k: ang_k(k) for k in (0,2,4)}\nprint(\"imag max\", max(np.abs(A[k].imag).max() for k in A))\nprint(\"A0 00 00\", A[0][0,0,0,0].real, \"A2 22 22\", A[2][2,2,2,2].real, A[4][2,2,2,2].real)\nnp.savez('/dev/shm/ang.npz', A0=A[0].real, A2=A[2].real, A4=A[4].real)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "imag max 3.036283338935682e-17\nA0 00 00 0.9999999999999941 A2 22 22 0.08163265306123117 0.08163265306123126\n-rw-rw-r-- 1 <USER> <USER> 15730 Nov  4 15:12 /dev/shm/ang.npz",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np\nd = np.load('/dev/shm/ang.npz'); A0,A2,A4 = d['A0'],d['A2'],d['A4']\ns2 = np.sqrt(2)\nnso=10; dim=2**nso\n# build annihilation ops only in N=8 sector basis\nstates = [st for st in range(dim) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}\nn=len(states)\ndef apply_c(i, st):   # annihilate orbital i in state st -> (sign, newst) or None\n    if not (st>>i)&1: return None\n    sign = (-1)**bin(st & ((1<<i)-1)).count('1')\n    return sign, st ^ (1<<i)\ndef apply_cd(i, st):\n    if (st>>i)&1: return None\n    sign = (-1)**bin(st & ((1<<i)-1)).count('1')\n    return sign, st | (1<<i)\ndef op2(a,b,c,d_):  # c+_a c+_b c_d c_c acting on states (N preserved)\n    M = np.zeros((n,n))\n    for st in states:\n        r = apply_c(c, st)\n        if r is None: continue\n        s1,st1 = r\n        r = apply_c(d_, st1)\n        if r is None: continue\n        s2,st2 = r\n        r = apply_cd(b, st2)\n        if r is None: continue\n        s3,st3 = r\n        r = apply_cd(a, st3)\n        if r is None: continue\n        s4,st4 = r\n        M[index[st4], index[st]] += s1*s2*s3*s4\n    return M\ndef op1(a,b):\n    M = np.zeros((n,n))\n    for st in states:\n        r = apply_c(b, st)\n        if r is None: continue\n        s1,st1=r\n        r = apply_cd(a, st1)\n        if r is None: continue\n        s2,st2=r\n        M[index[st2], index[st]] += s1*s2\n    return M\n# orbital index m+2 -> o = 0..4 ; spin-orbital = 2*o+s\ndef so(o,s): return 2*o+s\n# one-electron cubic field\ndef cubic(Dq):\n    v_xy = np.zeros(5,complex); v_xy[4]=1/(1j*s2); v_xy[0]=-1/(1j*s2)\n    v_xz = np.zeros(5,complex); v_xz[3]=-1/s2; v_xz[1]=1/s2\n    v_yz = np.zeros(5,complex); v_yz[3]=1j/s2; v_yz[1]=1j/s2\n    v_z2 = np.zeros(5,complex); v_z2[2]=1\n    v_x2 = np.zeros(5,complex); v_x2[4]=1/s2; v_x2[0]=1/s2\n    Pt = sum(np.outer(v,v.conj()) for v in (v_xy,v_xz,v_yz))\n    Pe = sum(np.outer(v,v.conj()) for v in (v_z2,v_x2))\n    return -4*Dq*Pt + 6*Dq*Pe\n# precompute 1-body matrices for each (a,b)\nH1 = {}\nfor a in range(5):\n    for b in range(5):\n        M = np.zeros((n,n))\n        for s in (0,1): M += op1(so(a,s),so(b,s))\n        H1[(a,b)] = M\n# two-body operators: 1/2 sum_{abcd,s,t} V c+_{a s} c+_{b t} c_{d t} c_{c s}\n# V_abcd = <ab|g|cd> with spin a=c, b=d -> need V_{abcd} real\npair = {}\nfor a in range(5):\n for b in range(5):\n  for c in range(5):\n   for d in range(5):\n    pair[(a,b,c,d)] = (A0[a,b,c,d], A2[a,b,c,d], A4[a,b,c,d])\n# precompute the two-body ops per (a,b,c,d,s,t) lazily\ncache = {}\ndef T(a,b,c,d,s,t):\n    key=(a,b,c,d,s,t)\n    if key not in cache: cache[key]=op2(so(a,s),so(b,t),so(d,t),so(c,s))\n    return cache[key]\ndef Hee(F0,F2,F4):\n    H = np.zeros((n,n))\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v = F0*pair[(a,b,c,d)][0]+F2*pair[(a,b,c,d)][1]+F4*pair[(a,b,c,d)][2]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n         for t in (0,1):\n          H += 0.5*v*T(a,b,c,d,s,t)\n    return H\n# Precompute Hee for F-basis: H depends linearly on F0,F2,F4 -> build three matrices\nHk = {}\nHk['F0']=Hee(1,0,0); Hk['F2']=Hee(0,1,0); Hk['F4']=Hee(0,0,1)\nnp.savez('/dev/shm/H.npz', F0=Hk['F0'], F2=Hk['F2'], F4=Hk['F4'], states=np.array(states))\n# one-body for cubic: sum over a,b of hm[a,b]*H1 -> separate t2g/eg basis: just build total as needed\nprint(\"built\")\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "a02292cb4a8b538b4b437330c61462771d71a030da32b509fcc2a53f70a920c4",
+     "lines": 95,
+     "code": "import numpy as np\nd = np.load('/dev/shm/ang.npz'); A0,A2,A4 = d['A0'],d['A2'],d['A4']\ns2 = np.sqrt(2)\nnso=10; dim=2**nso\n# build annihilation ops only in N=8 sector basis\nstates = [st for st in range(dim) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}\nn=len(states)\ndef apply_c(i, st):   # annihilate orbital i in state st -> (sign, newst) or None\n    if not (st>>i)&1: return None\n    sign = (-1)**bin(st & ((1<<i)-1)).count('1')\n    return sign, st ^ (1<<i)\ndef apply_cd(i, st):\n    if (st>>i)&1: return None\n    sign = (-1)**bin(st & ((1<<i)-1)).count('1')\n    return sign, st | (1<<i)\ndef op2(a,b,c,d_):  # c+_a c+_b c_d c_c acting on states (N preserved)\n    M = np.zeros((n,n))\n    for st in states:\n        r = apply_c(c, st)\n        if r is None: continue\n        s1,st1 = r\n        r = apply_c(d_, st1)\n        if r is None: continue\n        s2,st2 = r\n        r = apply_cd(b, st2)\n        if r is None: continue\n        s3,st3 = r\n        r = apply_cd(a, st3)\n        if r is None: continue\n        s4,st4 = r\n        M[index[st4], index[st]] += s1*s2*s3*s4\n    return M\ndef op1(a,b):\n    M = np.zeros((n,n))\n    for st in states:\n        r = apply_c(b, st)\n        if r is None: continue\n        s1,st1=r\n        r = apply_cd(a, st1)\n        if r is None: continue\n        s2,st2=r\n        M[index[st2], index[st]] += s1*s2\n    return M\n# orbital index m+2 -> o = 0..4 ; spin-orbital = 2*o+s\ndef so(o,s): return 2*o+s\n# one-electron cubic field\ndef cubic(Dq):\n    v_xy = np.zeros(5,complex); v_xy[4]=1/(1j*s2); v_xy[0]=-1/(1j*s2)\n    v_xz = np.zeros(5,complex); v_xz[3]=-1/s2; v_xz[1]=1/s2\n    v_yz = np.zeros(5,complex); v_yz[3]=1j/s2; v_yz[1]=1j/s2\n    v_z2 = np.zeros(5,complex); v_z2[2]=1\n    v_x2 = np.zeros(5,complex); v_x2[4]=1/s2; v_x2[0]=1/s2\n    Pt = sum(np.outer(v,v.conj()) for v in (v_xy,v_xz,v_yz))\n    Pe = sum(np.outer(v,v.conj()) for v in (v_z2,v_x2))\n    return -4*Dq*Pt + 6*Dq*Pe\n# precompute 1-body matrices for each (a,b)\nH1 = {}\nfor a in range(5):\n    for b in range(5):\n        M = np.zeros((n,n))\n        for s in (0,1): M += op1(so(a,s),so(b,s))\n        H1[(a,b)] = M\n# two-body operators: 1/2 sum_{abcd,s,t} V c+_{a s} c+_{b t} c_{d t} c_{c s}\n# V_abcd = <ab|g|cd> with spin a=c, b=d -> need V_{abcd} real\npair = {}\nfor a in range(5):\n for b in range(5):\n  for c in range(5):\n   for d in range(5):\n    pair[(a,b,c,d)] = (A0[a,b,c,d], A2[a,b,c,d], A4[a,b,c,d])\n# precompute the two-body ops per (a,b,c,d,s,t) lazily\ncache = {}\ndef T(a,b,c,d,s,t):\n    key=(a,b,c,d,s,t)\n    if key not in cache: cache[key]=op2(so(a,s),so(b,t),so(d,t),so(c,s))\n    return cache[key]\ndef Hee(F0,F2,F4):\n    H = np.zeros((n,n))\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v = F0*pair[(a,b,c,d)][0]+F2*pair[(a,b,c,d)][1]+F4*pair[(a,b,c,d)][2]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n         for t in (0,1):\n          H += 0.5*v*T(a,b,c,d,s,t)\n    return H\n# Precompute Hee for F-basis: H depends linearly on F0,F2,F4 -> build three matrices\nHk = {}\nHk['F0']=Hee(1,0,0); Hk['F2']=Hee(0,1,0); Hk['F4']=Hee(0,0,1)\nnp.savez('/dev/shm/H.npz', F0=Hk['F0'], F2=Hk['F2'], F4=Hk['F4'], states=np.array(states))\n# one-body for cubic: sum over a,b of hm[a,b]*H1 -> separate t2g/eg basis: just build total as needed\nprint(\"built\")\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\n  File \"<B_VENV>/lib/python3.14/site-packages/numpy/lib/_npyio_impl.py\", line 454, in load\n    fid = stack.enter_context(open(os.fspath(file), \"rb\"))\n                              ~~~~^^^^^^^^^^^^^^^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: '/dev/shm/ang.npz'",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "M = np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 35,
+     "method": "matrix",
+     "text": "M = np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 61,
+     "method": "matrix",
+     "text": "M = np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 79,
+     "method": "matrix",
+     "text": "H = np.zeros((n,n))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np\nfrom scipy.special import sph_harm_y as SY\nfrom scipy.optimize import least_squares\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A.real\nA0,A2,A4 = ang_k(0),ang_k(2),ang_k(4)\ns2=np.sqrt(2)\nstates = [st for st in range(1<<10) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}\nn=len(states)\ndef ann(i,st):\n    if not (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st ^ (1<<i)\ndef cre(i,st):\n    if (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st | (1<<i)\ndef op2(a,b,c,d):  # c+_a c+_b c_d c_c\n    M = np.zeros((n,n))\n    for st in states:\n        r=ann(c,st)\n        if r is None: continue\n        s1,t=r; r=ann(d,t)\n        if r is None: continue\n        s2,t=r; r=cre(b,t)\n        if r is None: continue\n        s3,t=r; r=cre(a,t)\n        if r is None: continue\n        s4,t=r\n        M[index[t],index[st]] += s1*s2*s3*s4\n    return M\ndef so(o,s): return 2*o+s\n# two-body: H_ee = 1/2 sum V_abcd sum_{s,t} c+_{a s} c+_{b t} c_{d t} c_{c s}\n# Matrix elements of the operator for each F-type\npairs = [(a,b,c,d) for a in range(5) for b in range(5) for c in range(5) for d in range(5)]\nops = {}\ndef getop(a,b,c,d,s,t):\n    k=(a,b,c,d,s,t)\n    if k not in ops: ops[k]=op2(so(a,s),so(b,t),so(d,t),so(c,s))\n    return ops[k]\nHF = {'F0':np.zeros((n,n)),'F2':np.zeros((n,n)),'F4':np.zeros((n,n))}\nfor (a,b,c,d) in pairs:\n    for key,Amat in (('F0',A0),('F2',A2),('F4',A4)):\n        v=Amat[a,b,c,d]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n            for t in (0,1):\n                HF[key] += 0.5*v*getop(a,b,c,d,s,t)\n# one-body: h_ab c+_a c_b  for orbital matrix hm\ndef one(a,b):\n    M=np.zeros((n,n))\n    for s in (0,1):\n        for st in states:\n            r=ann(so(b,s),st)\n            if r is None: continue\n            s1,t=r; r=cre(so(a,s),t)\n            if r is None: continue\n            s2,t=r\n            M[index[t],index[st]] += s1*s2\n    return M\nONE = {(a,b):one(a,b) for a in range(5) for b in range(5)}\nv_xy = np.zeros(5,complex); v_xy[4]=1/(1j*s2); v_xy[0]=-1/(1j*s2)\nv_xz = np.zeros(5,complex); v_xz[3]=-1/s2; v_xz[1]=1/s2\nv_yz = np.zeros(5,complex); v_yz[3]=1j/s2; v_yz[1]=1j/s2\nv_z2 = np.zeros(5,complex); v_z2[2]=1\nv_x2 = np.zeros(5,complex); v_x2[4]=1/s2; v_x2[0]=1/s2\nPt = sum(np.outer(v,v.conj()) for v in (v_xy,v_xz,v_yz))\nPe = sum(np.outer(v,v.conj()) for v in (v_z2,v_x2))\nprint(\"proj check\", np.allclose(Pt@Pt,Pt), np.allclose(Pe@Pe,Pe), np.allclose(Pt+Pe,np.eye(5)))\ndef Hfull(Dq,B,C):\n    F4=12.6*C; F2=49*B+7*C\n    hm = -4*Dq*Pt + 6*Dq*Pe\n    H = F2*HF['F2']+F4*HF['F4']\n    for a in range(5):\n        for b in range(5):\n            if abs(hm[a,b])>1e-14: H = H + hm[a,b]*ONE[(a,b)]\n    return H\n# Sz sectors\nSz = np.array([sum(((st>>(2*o))&1)-((st>>(2*o+1))&1) for o in range(5)) for st in states])\ndef spec(Dq,B,C):\n    H = Hfull(Dq,B,C)\n    iz = np.where(Sz==2)[0]\n    et = np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))\n    i0 = np.where(Sz==0)[0]\n    ez = list(np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)])))\n    for t in et:\n        j=int(np.argmin(np.abs(np.array(ez)-t))); ez.pop(j)\n    return et, np.array(ez), H\n# free-ion check: Dq=0 -> levels relative to ground\net,ez,H = spec(0,1000,4000)\nprint(\"Hermitian:\", np.allclose(H,H.T))\nprint(\"triplets:\", np.round(et-et[0],1))\nprint(\"singlets:\", np.round(ez-et[0],1))\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "ba187faf5351072695349da10b7543852a9305fb26be0e31a8a1515e6740b2b4",
+     "lines": 104,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm_y as SY\nfrom scipy.optimize import least_squares\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A.real\nA0,A2,A4 = ang_k(0),ang_k(2),ang_k(4)\ns2=np.sqrt(2)\nstates = [st for st in range(1<<10) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}\nn=len(states)\ndef ann(i,st):\n    if not (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st ^ (1<<i)\ndef cre(i,st):\n    if (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st | (1<<i)\ndef op2(a,b,c,d):  # c+_a c+_b c_d c_c\n    M = np.zeros((n,n))\n    for st in states:\n        r=ann(c,st)\n        if r is None: continue\n        s1,t=r; r=ann(d,t)\n        if r is None: continue\n        s2,t=r; r=cre(b,t)\n        if r is None: continue\n        s3,t=r; r=cre(a,t)\n        if r is None: continue\n        s4,t=r\n        M[index[t],index[st]] += s1*s2*s3*s4\n    return M\ndef so(o,s): return 2*o+s\n# two-body: H_ee = 1/2 sum V_abcd sum_{s,t} c+_{a s} c+_{b t} c_{d t} c_{c s}\n# Matrix elements of the operator for each F-type\npairs = [(a,b,c,d) for a in range(5) for b in range(5) for c in range(5) for d in range(5)]\nops = {}\ndef getop(a,b,c,d,s,t):\n    k=(a,b,c,d,s,t)\n    if k not in ops: ops[k]=op2(so(a,s),so(b,t),so(d,t),so(c,s))\n    return ops[k]\nHF = {'F0':np.zeros((n,n)),'F2':np.zeros((n,n)),'F4':np.zeros((n,n))}\nfor (a,b,c,d) in pairs:\n    for key,Amat in (('F0',A0),('F2',A2),('F4',A4)):\n        v=Amat[a,b,c,d]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n            for t in (0,1):\n                HF[key] += 0.5*v*getop(a,b,c,d,s,t)\n# one-body: h_ab c+_a c_b  for orbital matrix hm\ndef one(a,b):\n    M=np.zeros((n,n))\n    for s in (0,1):\n        for st in states:\n            r=ann(so(b,s),st)\n            if r is None: continue\n            s1,t=r; r=cre(so(a,s),t)\n            if r is None: continue\n            s2,t=r\n            M[index[t],index[st]] += s1*s2\n    return M\nONE = {(a,b):one(a,b) for a in range(5) for b in range(5)}\nv_xy = np.zeros(5,complex); v_xy[4]=1/(1j*s2); v_xy[0]=-1/(1j*s2)\nv_xz = np.zeros(5,complex); v_xz[3]=-1/s2; v_xz[1]=1/s2\nv_yz = np.zeros(5,complex); v_yz[3]=1j/s2; v_yz[1]=1j/s2\nv_z2 = np.zeros(5,complex); v_z2[2]=1\nv_x2 = np.zeros(5,complex); v_x2[4]=1/s2; v_x2[0]=1/s2\nPt = sum(np.outer(v,v.conj()) for v in (v_xy,v_xz,v_yz))\nPe = sum(np.outer(v,v.conj()) for v in (v_z2,v_x2))\nprint(\"proj check\", np.allclose(Pt@Pt,Pt), np.allclose(Pe@Pe,Pe), np.allclose(Pt+Pe,np.eye(5)))\ndef Hfull(Dq,B,C):\n    F4=12.6*C; F2=49*B+7*C\n    hm = -4*Dq*Pt + 6*Dq*Pe\n    H = F2*HF['F2']+F4*HF['F4']\n    for a in range(5):\n        for b in range(5):\n            if abs(hm[a,b])>1e-14: H = H + hm[a,b]*ONE[(a,b)]\n    return H\n# Sz sectors\nSz = np.array([sum(((st>>(2*o))&1)-((st>>(2*o+1))&1) for o in range(5)) for st in states])\ndef spec(Dq,B,C):\n    H = Hfull(Dq,B,C)\n    iz = np.where(Sz==2)[0]\n    et = np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))\n    i0 = np.where(Sz==0)[0]\n    ez = list(np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)])))\n    for t in et:\n        j=int(np.argmin(np.abs(np.array(ez)-t))); ez.pop(j)\n    return et, np.array(ez), H\n# free-ion check: Dq=0 -> levels relative to ground\net,ez,H = spec(0,1000,4000)\nprint(\"Hermitian:\", np.allclose(H,H.T))\nprint(\"triplets:\", np.round(et-et[0],1))\nprint(\"singlets:\", np.round(ez-et[0],1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "proj check True True True\nHermitian: True\ntriplets: [    0.     0.     0. 15000. 15000. 15000. 15000. 15000. 15000. 15000.]\nsinglets: [-35000.  -5000.  -5000.  -5000.  -5000.  -5000.  -5000.  -5000.  -5000.\n  -5000.   2000.   2000.   2000.   2000.   2000.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "M = np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "HF = {'F0':np.zeros((n,n)),'F2':np.zeros((n,n)),'F4':np.zeros((n,n))}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 62,
+     "method": "matrix",
+     "text": "M=np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 94,
+     "method": "eigen_solver",
+     "text": "et = np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 96,
+     "method": "eigen_solver",
+     "text": "ez = list(np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)])))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np\nexec(open('/dev/null').read())\nEOF\necho; cat << 'EOF' | python3 -\nimport numpy as np\nfrom math import *\n# Analytic check of free-ion d8 Racah: E(3F)=-7B-? ; relative levels expected: 3P:+15B, 1G:+(... )\n# Using Racah: E(1D)=9B+... we just print raw spectrum from scratch next call\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "169be76f7928fe205e1991730b705ab588cb39677e123d17907d24d3b42841b4",
+     "lines": 2,
+     "code": "import numpy as np\nexec(open('/dev/null').read())\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "11b312ea5053ba9bae0c8e5a9ecd8fa053238d06483926cfc35d1e6080aef603",
+     "lines": 4,
+     "code": "import numpy as np\nfrom math import *\n# Analytic check of free-ion d8 Racah: E(3F)=-7B-? ; relative levels expected: 3P:+15B, 1G:+(... )\n# Using Racah: E(1D)=9B+... we just print raw spectrum from scratch next call\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(Bash completed with no output)",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np\nfrom scipy.special import sph_harm_y as SY\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A.real\nA = {k:ang_k(k) for k in (0,2,4)}\nstates = [st for st in range(1<<10) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}; n=len(states)\ndef ann(i,st):\n    if not (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st ^ (1<<i)\ndef cre(i,st):\n    if (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st | (1<<i)\ndef op2(a,b,c,d):\n    M = np.zeros((n,n))\n    for st in states:\n        r=ann(c,st)\n        if r is None: continue\n        s1,t=r; r=ann(d,t)\n        if r is None: continue\n        s2,t=r; r=cre(b,t)\n        if r is None: continue\n        s3,t=r; r=cre(a,t)\n        if r is None: continue\n        s4,t=r\n        M[index[t],index[st]] += s1*s2*s3*s4\n    return M\nso=lambda o,s: 2*o+s\n# Build H_ee for F2 only and F4 only and F0 \ndef Hee(Am):\n    H=np.zeros((n,n))\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v=Am[a,b,c,d]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n         for t in (0,1):\n          H += 0.5*v*op2(so(a,s),so(b,t),so(d,t),so(c,s))\n    return H\nH0=Hee(A[0]); print(\"F0 eig range\", np.round(np.linalg.eigvalsh(H0)[[0,-1]],6))\nH2=Hee(A[2]); H4=Hee(A[4])\n# spin-free check: total Sz\nSz = np.array([sum(((st>>(2*o))&1)-((st>>(2*o+1))&1) for o in range(5)) for st in states])\nfor name,H in (('F0',H0),('F2',H2),('F4',H4)):\n    iz=np.where(Sz==2)[0]; i0=np.where(Sz==0)[0]\n    print(name, np.round(np.linalg.eigvalsh(H[np.ix_(iz,iz)]),4))\n    print(name, 'Sz0', np.round(np.linalg.eigvalsh(H[np.ix_(i0,i0)]),4))\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "523bedbd0bed501a2f0c6d0331d66c16627a0a07c26508bbdc0bff548ac524dd",
+     "lines": 61,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm_y as SY\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A.real\nA = {k:ang_k(k) for k in (0,2,4)}\nstates = [st for st in range(1<<10) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}; n=len(states)\ndef ann(i,st):\n    if not (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st ^ (1<<i)\ndef cre(i,st):\n    if (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st | (1<<i)\ndef op2(a,b,c,d):\n    M = np.zeros((n,n))\n    for st in states:\n        r=ann(c,st)\n        if r is None: continue\n        s1,t=r; r=ann(d,t)\n        if r is None: continue\n        s2,t=r; r=cre(b,t)\n        if r is None: continue\n        s3,t=r; r=cre(a,t)\n        if r is None: continue\n        s4,t=r\n        M[index[t],index[st]] += s1*s2*s3*s4\n    return M\nso=lambda o,s: 2*o+s\n# Build H_ee for F2 only and F4 only and F0 \ndef Hee(Am):\n    H=np.zeros((n,n))\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v=Am[a,b,c,d]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n         for t in (0,1):\n          H += 0.5*v*op2(so(a,s),so(b,t),so(d,t),so(c,s))\n    return H\nH0=Hee(A[0]); print(\"F0 eig range\", np.round(np.linalg.eigvalsh(H0)[[0,-1]],6))\nH2=Hee(A[2]); H4=Hee(A[4])\n# spin-free check: total Sz\nSz = np.array([sum(((st>>(2*o))&1)-((st>>(2*o+1))&1) for o in range(5)) for st in states])\nfor name,H in (('F0',H0),('F2',H2),('F4',H4)):\n    iz=np.where(Sz==2)[0]; i0=np.where(Sz==0)[0]\n    print(name, np.round(np.linalg.eigvalsh(H[np.ix_(iz,iz)]),4))\n    print(name, 'Sz0', np.round(np.linalg.eigvalsh(H[np.ix_(i0,i0)]),4))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "F0 eig range [-28. -28.]\nF0 [-28. -28. -28. -28. -28. -28. -28. -28. -28. -28.]\nF0 Sz0 [-28. -28. -28. -28. -28. -28. -28. -28. -28. -28. -28. -28. -28. -28.\n -28. -28. -28. -28. -28. -28. -28. -28. -28. -28. -28.]\nF2 [0.7143 0.7143 0.7143 1.0204 1.0204 1.0204 1.0204 1.0204 1.0204 1.0204]\nF2 Sz0 [0.5714 0.7143 0.7143 0.7143 0.7755 0.7755 0.7755 0.7755 0.7755 0.7755\n 0.7755 0.7755 0.7755 0.9184 0.9184 0.9184 0.9184 0.9184 1.0204 1.0204\n 1.0204 1.0204 1.0204 1.0204 1.0204]\nF4 [0.8776 0.8776 0.8776 0.8776 0.8776 0.8776 0.8776 1.0476 1.0476 1.0476]\nF4 Sz0 [0.5714 0.7755 0.7755 0.7755 0.7755 0.7755 0.8549 0.8549 0.8549 0.8549\n 0.8549 0.8549 0.8549 0.8549 0.8549 0.8776 0.8776 0.8776 0.8776 0.8776\n 0.8776 0.8776 1.0476 1.0476 1.0476]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "M = np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H=np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 54,
+     "method": "eigen_solver",
+     "text": "H0=Hee(A[0]); print(\"F0 eig range\", np.round(np.linalg.eigvalsh(H0)[[0,-1]],6))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 60,
+     "method": "eigen_solver",
+     "text": "print(name, np.round(np.linalg.eigvalsh(H[np.ix_(iz,iz)]),4))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 61,
+     "method": "eigen_solver",
+     "text": "print(name, 'Sz0', np.round(np.linalg.eigvalsh(H[np.ix_(i0,i0)]),4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np\nfrom scipy.special import sph_harm_y as SY\nfrom scipy.optimize import least_squares\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A.real\nA = {k:ang_k(k) for k in (0,2,4)}\nstates = [st for st in range(1<<10) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}; n=len(states)\ndef ann(i,st):\n    if not (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st ^ (1<<i)\ndef cre(i,st):\n    if (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st | (1<<i)\ndef op2(a,b,c,d):  # proper c+_a c+_b c_d c_c  (c applied first)\n    M = np.zeros((n,n))\n    for st in states:\n        r=ann(c,st)\n        if r is None: continue\n        s1,t=r; r=ann(d,t)\n        if r is None: continue\n        s2,t=r; r=cre(b,t)\n        if r is None: continue\n        s3,t=r; r=cre(a,t)\n        if r is None: continue\n        s4,t=r\n        M[index[t],index[st]] += s1*s2*s3*s4\n    return M\nso=lambda o,s: 2*o+s\ndef Hee(Am):\n    H=np.zeros((n,n))\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v=Am[a,b,c,d]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n         for t in (0,1):\n          # c+_{a s} c+_{b t} c_{d t} c_{c s}: rightmost c_{c s} first -> pass (c,s) as 'd' slot\n          H += 0.5*v*op2(so(a,s),so(b,t),so(c,s),so(d,t))\n    return H\nH0=Hee(A[0]); print(\"F0 const\", np.round(np.linalg.eigvalsh(H0)[[0,-1]],6))\nH2=Hee(A[2]); H4=Hee(A[4])\nnp.savez\nSz = np.array([sum(((st>>(2*o))&1)-((st>>(2*o+1))&1) for o in range(5)) for st in states])\niz=np.where(Sz==2)[0]; i0=np.where(Sz==0)[0]\n# free ion with B=1,C=0 etc: F2=49B+7C,F4=12.6C\ndef fi(B,C):\n    H = (49*B+7*C)*H2 + 12.6*C*H4\n    et=np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))\n    ez=np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)]))\n    return et,ez\net,ez=fi(1000,4000)\nprint(\"triplet\", np.round(et-et[0],1))\nprint(\"Sz0 all\", np.round(ez-et[0],1))\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "b78ad17fed2141e0422d5777c7ae0e83d5668ad94913254a24fefec5a16f964d",
+     "lines": 68,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm_y as SY\nfrom scipy.optimize import least_squares\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A.real\nA = {k:ang_k(k) for k in (0,2,4)}\nstates = [st for st in range(1<<10) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}; n=len(states)\ndef ann(i,st):\n    if not (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st ^ (1<<i)\ndef cre(i,st):\n    if (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st | (1<<i)\ndef op2(a,b,c,d):  # proper c+_a c+_b c_d c_c  (c applied first)\n    M = np.zeros((n,n))\n    for st in states:\n        r=ann(c,st)\n        if r is None: continue\n        s1,t=r; r=ann(d,t)\n        if r is None: continue\n        s2,t=r; r=cre(b,t)\n        if r is None: continue\n        s3,t=r; r=cre(a,t)\n        if r is None: continue\n        s4,t=r\n        M[index[t],index[st]] += s1*s2*s3*s4\n    return M\nso=lambda o,s: 2*o+s\ndef Hee(Am):\n    H=np.zeros((n,n))\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v=Am[a,b,c,d]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n         for t in (0,1):\n          # c+_{a s} c+_{b t} c_{d t} c_{c s}: rightmost c_{c s} first -> pass (c,s) as 'd' slot\n          H += 0.5*v*op2(so(a,s),so(b,t),so(c,s),so(d,t))\n    return H\nH0=Hee(A[0]); print(\"F0 const\", np.round(np.linalg.eigvalsh(H0)[[0,-1]],6))\nH2=Hee(A[2]); H4=Hee(A[4])\nnp.savez\nSz = np.array([sum(((st>>(2*o))&1)-((st>>(2*o+1))&1) for o in range(5)) for st in states])\niz=np.where(Sz==2)[0]; i0=np.where(Sz==0)[0]\n# free ion with B=1,C=0 etc: F2=49B+7C,F4=12.6C\ndef fi(B,C):\n    H = (49*B+7*C)*H2 + 12.6*C*H4\n    et=np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))\n    ez=np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)]))\n    return et,ez\net,ez=fi(1000,4000)\nprint(\"triplet\", np.round(et-et[0],1))\nprint(\"Sz0 all\", np.round(ez-et[0],1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "F0 const [28. 28.]\ntriplet [    0.     0.     0.     0.     0.     0.     0. 15000. 15000. 15000.]\nSz0 all [    0.     0.     0.     0.     0.     0.     0. 13000. 13000. 13000.\n 13000. 13000. 15000. 15000. 15000. 20000. 20000. 20000. 20000. 20000.\n 20000. 20000. 20000. 20000. 50000.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "M = np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H=np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 55,
+     "method": "eigen_solver",
+     "text": "H0=Hee(A[0]); print(\"F0 const\", np.round(np.linalg.eigvalsh(H0)[[0,-1]],6))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 63,
+     "method": "eigen_solver",
+     "text": "et=np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "ez=np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)]))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 11,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np\nfrom scipy.special import sph_harm_y as SY\nfrom scipy.optimize import least_squares\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A.real\nA = {k:ang_k(k) for k in (0,2,4)}\nstates = [st for st in range(1<<10) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}; n=len(states)\ndef ann(i,st):\n    if not (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st ^ (1<<i)\ndef cre(i,st):\n    if (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st | (1<<i)\ndef op2(a,b,c,d):\n    M = np.zeros((n,n))\n    for st in states:\n        r=ann(c,st)\n        if r is None: continue\n        s1,t=r; r=ann(d,t)\n        if r is None: continue\n        s2,t=r; r=cre(b,t)\n        if r is None: continue\n        s3,t=r; r=cre(a,t)\n        if r is None: continue\n        s4,t=r\n        M[index[t],index[st]] += s1*s2*s3*s4\n    return M\nso=lambda o,s: 2*o+s\ndef Hee(Am):\n    H=np.zeros((n,n))\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v=Am[a,b,c,d]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n         for t in (0,1):\n          H += 0.5*v*op2(so(a,s),so(b,t),so(c,s),so(d,t))\n    return H\nH2=Hee(A[2]); H4=Hee(A[4])\ndef one(a,b):\n    M=np.zeros((n,n))\n    for s in (0,1):\n        for st in states:\n            r=ann(so(b,s),st)\n            if r is None: continue\n            s1,t=r; r=cre(so(a,s),t)\n            if r is None: continue\n            s2,t=r\n            M[index[t],index[st]] += s1*s2\n    return M\nONE={(a,b):one(a,b) for a in range(5) for b in range(5)}\ns2=np.sqrt(2)\nv_xy=np.zeros(5,complex); v_xy[4]=1/(1j*s2); v_xy[0]=-1/(1j*s2)\nv_xz=np.zeros(5,complex); v_xz[3]=-1/s2; v_xz[1]=1/s2\nv_yz=np.zeros(5,complex); v_yz[3]=1j/s2; v_yz[1]=1j/s2\nv_z2=np.zeros(5,complex); v_z2[2]=1\nv_x2=np.zeros(5,complex); v_x2[4]=1/s2; v_x2[0]=1/s2\nPt=sum(np.outer(v,v.conj()) for v in (v_xy,v_xz,v_yz))\nPe=sum(np.outer(v,v.conj()) for v in (v_z2,v_x2))\nSz=np.array([sum(((st>>(2*o))&1)-((st>>(2*o+1))&1) for o in range(5)) for st in states])\niz=np.where(Sz==2)[0]; i0=np.where(Sz==0)[0]\ndef levels(Dq,B,C):\n    F2=49*B+7*C; F4=12.6*C\n    H=F2*H2+F4*H4\n    hm=-4*Dq*Pt+6*Dq*Pe\n    for a in range(5):\n        for b in range(5):\n            if abs(hm[a,b])>1e-14: H=H+hm[a,b]*ONE[(a,b)]\n    et=np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))\n    ez=np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)]))\n    ez=list(ez)\n    for t in et:\n        j=int(np.argmin(np.abs(np.array(ez)-t))); ez.pop(j)\n    return et, np.array(ez)\ndef uniq(e,tol=1e-3):\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<tol: out[-1][1]+=1\n        else: out.append([x,1])\n    return out\net,ez=levels(1000,1000,4000)\nprint(\"triplets (Ms=1) with mult:\", [(round(a-et[0],1),m) for a,m in uniq(et)])\nprint(\"singlets with mult:\", [(round(a-et[0],1),m) for a,m in uniq(ez)])\nnp.set_printoptions(linewidth=150)\nimport sys\n# store as function\ndef term_energies(Dq,B,C):\n    et,ez=levels(Dq,B,C)\n    tr=[(a-et[0],m) for a,m in uniq(et)]\n    si=[(a-et[0],m) for a,m in uniq(ez)]\n    return tr,si\nobs={'3T2':7400,'3T1F':12660,'3T1P':23840,'1E':15150}\n# fit: 3T2 mult3, 3T1F mult3 , 3T1P mult3 (triplet list), singlet 1E mult2\ndef model(p):\n    Dq,B,C=p\n    tr,si=term_energies(Dq,B,C)\n    return tr,si\ndef res(p):\n    tr,si=model(p)\n    trs=[a for a,m in tr if a>1e-6]\n    sis=[a for a,m in si]\n    # triplets sorted: 3T2, 3T1F, 3T1P\n    r=[trs[0]-7400, trs[1]-12660, trs[2]-23840]\n    # 1E candidates: choose the singlet closest to 15150 among 1E-multiplicity-2 levels\n    cands=[a for a,m in si if m==2]\n    r.append(min(abs(c-15150) for c in cands))\n    return np.array(r)\nprint(\"trip spectrum at guess:\", [(round(a),m) for a,m in model((740,1000,4000))[0]])\nsol=least_squares(res,[740,800,3500],x_scale=[100,100,500])\nprint(sol.x, res(sol.x))\ntr,si=model(sol.x)\nprint(\"triplets\", [(round(a),m) for a,m in tr])\nprint(\"singlets\", [(round(a),m) for a,m in si])\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "57144bd16dd03344541b90e7824752bfcbe1cd60d925433f0c3a88febf041f6d",
+     "lines": 128,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm_y as SY\nfrom scipy.optimize import least_squares\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A.real\nA = {k:ang_k(k) for k in (0,2,4)}\nstates = [st for st in range(1<<10) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}; n=len(states)\ndef ann(i,st):\n    if not (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st ^ (1<<i)\ndef cre(i,st):\n    if (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st | (1<<i)\ndef op2(a,b,c,d):\n    M = np.zeros((n,n))\n    for st in states:\n        r=ann(c,st)\n        if r is None: continue\n        s1,t=r; r=ann(d,t)\n        if r is None: continue\n        s2,t=r; r=cre(b,t)\n        if r is None: continue\n        s3,t=r; r=cre(a,t)\n        if r is None: continue\n        s4,t=r\n        M[index[t],index[st]] += s1*s2*s3*s4\n    return M\nso=lambda o,s: 2*o+s\ndef Hee(Am):\n    H=np.zeros((n,n))\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v=Am[a,b,c,d]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n         for t in (0,1):\n          H += 0.5*v*op2(so(a,s),so(b,t),so(c,s),so(d,t))\n    return H\nH2=Hee(A[2]); H4=Hee(A[4])\ndef one(a,b):\n    M=np.zeros((n,n))\n    for s in (0,1):\n        for st in states:\n            r=ann(so(b,s),st)\n            if r is None: continue\n            s1,t=r; r=cre(so(a,s),t)\n            if r is None: continue\n            s2,t=r\n            M[index[t],index[st]] += s1*s2\n    return M\nONE={(a,b):one(a,b) for a in range(5) for b in range(5)}\ns2=np.sqrt(2)\nv_xy=np.zeros(5,complex); v_xy[4]=1/(1j*s2); v_xy[0]=-1/(1j*s2)\nv_xz=np.zeros(5,complex); v_xz[3]=-1/s2; v_xz[1]=1/s2\nv_yz=np.zeros(5,complex); v_yz[3]=1j/s2; v_yz[1]=1j/s2\nv_z2=np.zeros(5,complex); v_z2[2]=1\nv_x2=np.zeros(5,complex); v_x2[4]=1/s2; v_x2[0]=1/s2\nPt=sum(np.outer(v,v.conj()) for v in (v_xy,v_xz,v_yz))\nPe=sum(np.outer(v,v.conj()) for v in (v_z2,v_x2))\nSz=np.array([sum(((st>>(2*o))&1)-((st>>(2*o+1))&1) for o in range(5)) for st in states])\niz=np.where(Sz==2)[0]; i0=np.where(Sz==0)[0]\ndef levels(Dq,B,C):\n    F2=49*B+7*C; F4=12.6*C\n    H=F2*H2+F4*H4\n    hm=-4*Dq*Pt+6*Dq*Pe\n    for a in range(5):\n        for b in range(5):\n            if abs(hm[a,b])>1e-14: H=H+hm[a,b]*ONE[(a,b)]\n    et=np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))\n    ez=np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)]))\n    ez=list(ez)\n    for t in et:\n        j=int(np.argmin(np.abs(np.array(ez)-t))); ez.pop(j)\n    return et, np.array(ez)\ndef uniq(e,tol=1e-3):\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<tol: out[-1][1]+=1\n        else: out.append([x,1])\n    return out\net,ez=levels(1000,1000,4000)\nprint(\"triplets (Ms=1) with mult:\", [(round(a-et[0],1),m) for a,m in uniq(et)])\nprint(\"singlets with mult:\", [(round(a-et[0],1),m) for a,m in uniq(ez)])\nnp.set_printoptions(linewidth=150)\nimport sys\n# store as function\ndef term_energies(Dq,B,C):\n    et,ez=levels(Dq,B,C)\n    tr=[(a-et[0],m) for a,m in uniq(et)]\n    si=[(a-et[0],m) for a,m in uniq(ez)]\n    return tr,si\nobs={'3T2':7400,'3T1F':12660,'3T1P':23840,'1E':15150}\n# fit: 3T2 mult3, 3T1F mult3 , 3T1P mult3 (triplet list), singlet 1E mult2\ndef model(p):\n    Dq,B,C=p\n    tr,si=term_energies(Dq,B,C)\n    return tr,si\ndef res(p):\n    tr,si=model(p)\n    trs=[a for a,m in tr if a>1e-6]\n    sis=[a for a,m in si]\n    # triplets sorted: 3T2, 3T1F, 3T1P\n    r=[trs[0]-7400, trs[1]-12660, trs[2]-23840]\n    # 1E candidates: choose the singlet closest to 15150 among 1E-multiplicity-2 levels\n    cands=[a for a,m in si if m==2]\n    r.append(min(abs(c-15150) for c in cands))\n    return np.array(r)\nprint(\"trip spectrum at guess:\", [(round(a),m) for a,m in model((740,1000,4000))[0]])\nsol=least_squares(res,[740,800,3500],x_scale=[100,100,500])\nprint(sol.x, res(sol.x))\ntr,si=model(sol.x)\nprint(\"triplets\", [(round(a),m) for a,m in tr])\nprint(\"singlets\", [(round(a),m) for a,m in si])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "triplets (Ms=1) with mult: [(np.float64(0.0), 1), (np.float64(10000.0), 3), (np.float64(16479.2), 3), (np.float64(28520.8), 3)]\nsinglets with mult: [(np.float64(15443.3), 2), (np.float64(25000.0), 3), (np.float64(25378.6), 1), (np.float64(30000.0), 3), (np.float64(37556.7), 2), (np.float64(38000.0), 3), (np.float64(64621.4), 1)]\ntrip spectrum at guess: [(0, 1), (7400, 3), (12547, 3), (24653, 3)]\n[ 748.09526578  933.6574599  4156.81223071] [ 8.09526578e+01 -5.70198630e+01  4.73973486e+00  1.81021067e-04]\ntriplets [(0, 1), (7481, 3), (12603, 3), (23845, 3)]\nsinglets [(15150, 2), (22164, 3), (23952, 1), (26998, 3), (32311, 2), (32778, 3), (60165, 1)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "M = np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H=np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 56,
+     "method": "matrix",
+     "text": "M=np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 84,
+     "method": "eigen_solver",
+     "text": "et=np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 85,
+     "method": "eigen_solver",
+     "text": "ez=np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)]))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 124,
+     "method": "least_squares",
+     "text": "sol=least_squares(res,[740,800,3500],x_scale=[100,100,500])"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B",
+    "C"
+   ]
+  },
+  {
+   "index": 12,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np\nfrom scipy.special import sph_harm_y as SY\nfrom scipy.optimize import least_squares\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A.real\nA = {k:ang_k(k) for k in (0,2,4)}\nstates = [st for st in range(1<<10) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}; n=len(states)\ndef ann(i,st):\n    if not (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st ^ (1<<i)\ndef cre(i,st):\n    if (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st | (1<<i)\ndef op2(a,b,c,d):\n    M = np.zeros((n,n))\n    for st in states:\n        r=ann(c,st)\n        if r is None: continue\n        s1,t=r; r=ann(d,t)\n        if r is None: continue\n        s2,t=r; r=cre(b,t)\n        if r is None: continue\n        s3,t=r; r=cre(a,t)\n        if r is None: continue\n        s4,t=r\n        M[index[t],index[st]] += s1*s2*s3*s4\n    return M\nso=lambda o,s: 2*o+s\ndef Hee(Am):\n    H=np.zeros((n,n))\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v=Am[a,b,c,d]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n         for t in (0,1):\n          H += 0.5*v*op2(so(a,s),so(b,t),so(c,s),so(d,t))\n    return H\nH2=Hee(A[2]); H4=Hee(A[4])\ndef one(a,b):\n    M=np.zeros((n,n))\n    for s in (0,1):\n        for st in states:\n            r=ann(so(b,s),st)\n            if r is None: continue\n            s1,t=r; r=cre(so(a,s),t)\n            if r is None: continue\n            s2,t=r\n            M[index[t],index[st]] += s1*s2\n    return M\nONE={(a,b):one(a,b) for a in range(5) for b in range(5)}\ns2=np.sqrt(2)\nv_xy=np.zeros(5,complex); v_xy[4]=1/(1j*s2); v_xy[0]=-1/(1j*s2)\nv_xz=np.zeros(5,complex); v_xz[3]=-1/s2; v_xz[1]=1/s2\nv_yz=np.zeros(5,complex); v_yz[3]=1j/s2; v_yz[1]=1j/s2\nv_z2=np.zeros(5,complex); v_z2[2]=1\nv_x2=np.zeros(5,complex); v_x2[4]=1/s2; v_x2[0]=1/s2\nPt=sum(np.outer(v,v.conj()) for v in (v_xy,v_xz,v_yz))\nPe=sum(np.outer(v,v.conj()) for v in (v_z2,v_x2))\nSz=np.array([sum(((st>>(2*o))&1)-((st>>(2*o+1))&1) for o in range(5)) for st in states])\niz=np.where(Sz==2)[0]; i0=np.where(Sz==0)[0]\ndef levels(Dq,B,C):\n    H=(49*B+7*C)*H2+12.6*C*H4\n    hm=-4*Dq*Pt+6*Dq*Pe\n    for a in range(5):\n        for b in range(5):\n            if abs(hm[a,b])>1e-14: H=H+hm[a,b]*ONE[(a,b)]\n    et=np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))\n    ez=list(np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)])))\n    for t in et:\n        j=int(np.argmin(np.abs(np.array(ez)-t))); ez.pop(j)\n    return et, np.array(ez)\ndef spec(Dq,B,C):\n    et,ez=levels(Dq,B,C)\n    E0=et[0]\n    trip=sorted(set(np.round(et-E0,4)))\n    # collapse multiplicities\n    def collapse(e):\n        out=[]\n        for x in np.sort(e):\n            if out and abs(x-out[-1][0])<1e-3: out[-1][1]+=1\n            else: out.append([x,1])\n        return out\n    return [(a,m) for a,m in collapse(et-E0)], [(a,m) for a,m in collapse(ez-E0)]\nDq=740.0\ndef res(p):\n    B,C=p\n    tr,si=spec(Dq,B,C)\n    trs=[a for a,m in tr if a>1e-6]\n    e1=[a for a,m in si if m==2]\n    return np.array([trs[1]-12660, trs[2]-23840, e1[0]-15150])\nsol=least_squares(res,[900,4000])\nprint(\"Dq=740 fit B,C:\", sol.x, \"C/B\", sol.x[1]/sol.x[0], \"resid\", res(sol.x))\ntr,si=spec(Dq,*sol.x)\nprint(\"triplets:\", [(round(a,1),m) for a,m in tr])\nprint(\"singlets:\", [(round(a,1),m) for a,m in si])\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "54b3003d34ed59018825ebea074dc854381be9cbf2b3880ef642eda0b8ee2324",
+     "lines": 111,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm_y as SY\nfrom scipy.optimize import least_squares\nnth, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nth)\nth = np.arccos(x); ph = np.linspace(0, 2*np.pi, nph, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij'); W = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nms = list(range(-2,3))\nYlm = {m: SY(2,m,TH,PH) for m in ms}\ndef ang_k(k):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Yq = SY(k,q,TH,PH)\n        P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])\n        P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])\n        A += (4*np.pi/(2*k+1))*np.einsum('ac,bd->abcd', P1, P2)\n    return A.real\nA = {k:ang_k(k) for k in (0,2,4)}\nstates = [st for st in range(1<<10) if bin(st).count('1')==8]\nindex = {st:i for i,st in enumerate(states)}; n=len(states)\ndef ann(i,st):\n    if not (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st ^ (1<<i)\ndef cre(i,st):\n    if (st>>i)&1: return None\n    return (-1)**bin(st & ((1<<i)-1)).count('1'), st | (1<<i)\ndef op2(a,b,c,d):\n    M = np.zeros((n,n))\n    for st in states:\n        r=ann(c,st)\n        if r is None: continue\n        s1,t=r; r=ann(d,t)\n        if r is None: continue\n        s2,t=r; r=cre(b,t)\n        if r is None: continue\n        s3,t=r; r=cre(a,t)\n        if r is None: continue\n        s4,t=r\n        M[index[t],index[st]] += s1*s2*s3*s4\n    return M\nso=lambda o,s: 2*o+s\ndef Hee(Am):\n    H=np.zeros((n,n))\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        v=Am[a,b,c,d]\n        if abs(v)<1e-12: continue\n        for s in (0,1):\n         for t in (0,1):\n          H += 0.5*v*op2(so(a,s),so(b,t),so(c,s),so(d,t))\n    return H\nH2=Hee(A[2]); H4=Hee(A[4])\ndef one(a,b):\n    M=np.zeros((n,n))\n    for s in (0,1):\n        for st in states:\n            r=ann(so(b,s),st)\n            if r is None: continue\n            s1,t=r; r=cre(so(a,s),t)\n            if r is None: continue\n            s2,t=r\n            M[index[t],index[st]] += s1*s2\n    return M\nONE={(a,b):one(a,b) for a in range(5) for b in range(5)}\ns2=np.sqrt(2)\nv_xy=np.zeros(5,complex); v_xy[4]=1/(1j*s2); v_xy[0]=-1/(1j*s2)\nv_xz=np.zeros(5,complex); v_xz[3]=-1/s2; v_xz[1]=1/s2\nv_yz=np.zeros(5,complex); v_yz[3]=1j/s2; v_yz[1]=1j/s2\nv_z2=np.zeros(5,complex); v_z2[2]=1\nv_x2=np.zeros(5,complex); v_x2[4]=1/s2; v_x2[0]=1/s2\nPt=sum(np.outer(v,v.conj()) for v in (v_xy,v_xz,v_yz))\nPe=sum(np.outer(v,v.conj()) for v in (v_z2,v_x2))\nSz=np.array([sum(((st>>(2*o))&1)-((st>>(2*o+1))&1) for o in range(5)) for st in states])\niz=np.where(Sz==2)[0]; i0=np.where(Sz==0)[0]\ndef levels(Dq,B,C):\n    H=(49*B+7*C)*H2+12.6*C*H4\n    hm=-4*Dq*Pt+6*Dq*Pe\n    for a in range(5):\n        for b in range(5):\n            if abs(hm[a,b])>1e-14: H=H+hm[a,b]*ONE[(a,b)]\n    et=np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))\n    ez=list(np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)])))\n    for t in et:\n        j=int(np.argmin(np.abs(np.array(ez)-t))); ez.pop(j)\n    return et, np.array(ez)\ndef spec(Dq,B,C):\n    et,ez=levels(Dq,B,C)\n    E0=et[0]\n    trip=sorted(set(np.round(et-E0,4)))\n    # collapse multiplicities\n    def collapse(e):\n        out=[]\n        for x in np.sort(e):\n            if out and abs(x-out[-1][0])<1e-3: out[-1][1]+=1\n            else: out.append([x,1])\n        return out\n    return [(a,m) for a,m in collapse(et-E0)], [(a,m) for a,m in collapse(ez-E0)]\nDq=740.0\ndef res(p):\n    B,C=p\n    tr,si=spec(Dq,B,C)\n    trs=[a for a,m in tr if a>1e-6]\n    e1=[a for a,m in si if m==2]\n    return np.array([trs[1]-12660, trs[2]-23840, e1[0]-15150])\nsol=least_squares(res,[900,4000])\nprint(\"Dq=740 fit B,C:\", sol.x, \"C/B\", sol.x[1]/sol.x[0], \"resid\", res(sol.x))\ntr,si=spec(Dq,*sol.x)\nprint(\"triplets:\", [(round(a,1),m) for a,m in tr])\nprint(\"singlets:\", [(round(a,1),m) for a,m in si])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq=740 fit B,C: [ 942.78568641 4129.17490002] C/B 4.3797598537572755 resid [-1.71779213e+02  1.35645093e+01  1.60279160e-06]\ntriplets: [(np.float64(0.0), 1), (np.float64(7400.0), 3), (np.float64(12488.2), 3), (np.float64(23853.6), 3)]\nsinglets: [(np.float64(15150.0), 2), (np.float64(22074.2), 3), (np.float64(23970.4), 1), (np.float64(26971.8), 3), (np.float64(32194.1), 2), (np.float64(32669.8), 3), (np.float64(60046.8), 1)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "P1 = np.array([[np.sum(W*np.conj(Ylm[a])*np.conj(Yq)*Ylm[c]) for c in ms] for a in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "P2 = np.array([[np.sum(W*np.conj(Ylm[b])*Yq*Ylm[d]) for d in ms] for b in ms])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "M = np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H=np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 56,
+     "method": "matrix",
+     "text": "M=np.zeros((n,n))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 83,
+     "method": "eigen_solver",
+     "text": "et=np.sort(np.linalg.eigvalsh(H[np.ix_(iz,iz)]))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 84,
+     "method": "eigen_solver",
+     "text": "ez=list(np.sort(np.linalg.eigvalsh(H[np.ix_(i0,i0)])))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 107,
+     "method": "least_squares",
+     "text": "sol=least_squares(res,[900,4000])"
+    }
+   ],
+   "produces": []
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 748.0,
+   "weak": false,
+   "steps": [
+    11
+   ],
+   "typed_in_steps": [],
+   "source_step": 11
+  },
+  {
+   "path": "B",
+   "value": 934.0,
+   "weak": false,
+   "steps": [
+    11
+   ],
+   "typed_in_steps": [],
+   "source_step": 11
+  },
+  {
+   "path": "C",
+   "value": 4157.0,
+   "weak": false,
+   "steps": [
+    11
+   ],
+   "typed_in_steps": [],
+   "source_step": 11
+  }
+ ],
+ "summary": {
+  "n_steps": 13,
+  "n_scripts": 12,
+  "n_failed_steps": 4,
+  "n_values": 3,
+  "n_linked": 3,
+  "n_weak": 0,
+  "source_steps": [
+   11
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null || cd .; pwd; touch x.py && echo ok

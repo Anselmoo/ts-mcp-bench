@@ -4,8 +4,8 @@
 
 Inputs: the run sets under each `--runs` folder (tsbench.score.run_sets), and per run its transcript
 `<model>/<cond>/<effort>/<task>-k<i>.jsonl`, the sidecar `<task>-k<i>.meta.json`, the run set's `scores.csv` and
-`MANIFEST.json`, the images in `<task>-k<i>.artifacts/` and the code tsbench.score.artifacts extracts. Only pilot
-tasks are looked up.
+`MANIFEST.json`, the images in `<task>-k<i>.artifacts/` and the code tsbench.score.artifacts extracts. Only the tasks
+of one split are looked up: the pilot here; the full report passes its own split.
 
 Three tabs. "All runs": one card per run (model, condition, effort, gateway, task, class, verdict with icon and text,
 the per-run figures of tsbench.report.run_figures, the run's own images and code, and a copyable reproduce block).
@@ -15,12 +15,15 @@ plus a search box; a d3 / JFS chart (Figura design system) of the share correct 
 filters.
 
 The page is one file: d3 7.9.0 and the JFS bundle are inlined from tsbench/_vendor/figura/js. Every figure and image
-is embedded as a data URI, within one budget of ~15 MB: the text of the cards is spent first, then the smallest figures
-and images are embedded and the rest is only linked (relative link, opens the file next to the run). Raster images above
-~300 KB are downscaled when PIL is installed and the budget can still hold them. The per-run figures are minified SVG,
-percent-encoded; a byte-identical figure is embedded once and cloned by the page script. Everything from the
-runs is HTML-escaped and every SVG is sanitised before it is embedded; the Content-Security-Policy forbids any
+is embedded as a data URI, within one budget of ~15 MB (`PAGE_BUDGET`): the text of the cards is spent first, then the
+smallest figures and images are embedded and the rest is only linked (relative link, opens the file next to the run).
+Raster images above ~300 KB are downscaled when PIL is installed and the budget can still hold them. The per-run figures
+are minified SVG, percent-encoded; a byte-identical figure is embedded once and cloned by the page script. Everything
+from the runs is HTML-escaped and every SVG is sanitised before it is embedded; the Content-Security-Policy forbids any
 external resource.
+
+`context(..., budget=None)`, the default of the full report, has no budget: every image as it is, every figure, every
+code block at its full length and no link to a file beside the page.
 """
 from __future__ import annotations
 
@@ -36,7 +39,7 @@ import urllib.parse
 
 from tsbench.conditions import gateway_label
 from tsbench.report import page, reproduce, run_figures
-from tsbench.report.base import as_bool, as_run_sets
+from tsbench.report.base import as_bool, as_run_sets, model_key, split_tasks
 from tsbench.report.page import href
 from tsbench.score import artifacts
 from tsbench.score.run_sets import run_sets_in
@@ -139,9 +142,9 @@ def svg_uri(svg: str) -> str:
     return "data:image/svg+xml," + urllib.parse.quote(svg, safe=" /:=;,!*()@$+[]?|{}")
 
 
-def find_svgs(text: str) -> list[str]:
-    """Inline <svg>...</svg> documents of a text, unsanitised."""
-    return [m.group(0) for m in _SVG_RE.finditer(text or "") if len(m.group(0)) <= MAX_SVG]
+def find_svgs(text: str, limit: int | None = MAX_SVG) -> list[str]:
+    """Inline <svg>...</svg> documents of a text of at most `limit` characters (None: every one), unsanitised."""
+    return [m.group(0) for m in _SVG_RE.finditer(text or "") if limit is None or len(m.group(0)) <= limit]
 
 
 def _normalize_svg(svg: str) -> str:
@@ -185,16 +188,16 @@ def verdict_from_scores(row: dict | None) -> str:
 _TASKS: dict = {}
 
 
-def pilot_tasks() -> dict:
-    """Pilot tasks by id (cached; only the pilot split is ever loaded). {} when the task set cannot be loaded."""
-    if "pilot" not in _TASKS:
+def tasks_of(split: str = "pilot") -> dict:
+    """The tasks of `split` by id (cached per split). {} when the task set cannot be loaded."""
+    if split not in _TASKS:
         try:
-            from tsbench.tasks import load
-            _TASKS["pilot"] = {t["id"]: t for t in load("pilot")}
+            _TASKS[split] = split_tasks(split)
         except Exception as exc:  # noqa: BLE001
-            run_figures.log(f"pilot task set not loadable ({type(exc).__name__}: {exc})")
-            _TASKS["pilot"] = {}
-    return _TASKS["pilot"]
+            run_figures.log(f"{split} task set not loadable ({type(exc).__name__}: {exc})")
+            _TASKS[split] = {}
+    return _TASKS[split]
+
 
 
 def _image_info(path: pathlib.Path, source: str, name: str | None = None) -> dict | None:
@@ -212,10 +215,44 @@ def _image_info(path: pathlib.Path, source: str, name: str | None = None) -> dic
     }
 
 
-def collect_runs(run_sets, reader=None) -> list[dict]:
+def image_index(images: pathlib.Path | None, name: str) -> dict[str, list[tuple[pathlib.Path, str, str]]]:
+    """The images saved for run set `name`, per run id `<model>/<condition>/<effort>/<stem>`: `(file, sha256, origin)`
+    of each row of `<images>/<name>.index.csv`. A `file` is relative to the folder above `images`. No index: no
+    image."""
+    index = images / f"{name}.index.csv" if images else None
+    if index is None or not index.is_file():
+        return {}
+    out: dict[str, list[tuple[pathlib.Path, str, str]]] = {}
+    with index.open(encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            out.setdefault(row["run_id"], []).append((images.parent / row["file"], row["sha256"], row["origin"]))
+    return out
+
+
+def _recovered(entries: list[tuple[pathlib.Path, str, str]], held: list[dict]) -> list[dict]:
+    """The images of a run's index entries that `held` does not hold yet, source "recovered", each with the `origin`
+    the index states, which its card prints. ValueError for a file that is missing or is not what the index says: a
+    page must not show another image under the name of the run."""
+    have = {i["sha256"] for i in held}
+    out = []
+    for file, sha, origin in entries:
+        if sha in have:
+            continue
+        info = _image_info(file, "recovered")
+        if info is None or info["sha256"] != sha:
+            raise ValueError(f"{file} is not the image its index names (sha256 {sha[:16]}…)")
+        have.add(sha)
+        out.append({**info, "origin": origin})
+    return out
+
+
+def collect_runs(run_sets, reader=None, split: str = "pilot", whole: bool = False,
+                 images: pathlib.Path | None = None) -> list[dict]:
     """One dict per transcript of the run sets: identity, verdict, images (list of dicts) and code entries. `reader`
     reads a transcript (default `read_transcript`; the full report passes the one the facts read with, so that no
-    transcript is parsed twice)."""
+    transcript is parsed twice). The task of a run is looked up in the tasks of `split`. With `whole` no inline SVG is
+    left out for its size and a run has no link to its view, a file beside the page. `images` is a folder of image
+    indexes (`image_index`): what a run produced but left outside its folder is added from there."""
     from tsbench.score.extract import read_transcript
     reader = reader or read_transcript
     runs: list[dict] = []
@@ -224,6 +261,7 @@ def collect_runs(run_sets, reader=None) -> list[dict]:
     for rs in as_run_sets(run_sets):
         root = rs.path
         scores = load_scores(root)
+        saved = image_index(images, rs.name)
         for t in artifacts.find_transcripts(root):
             rt = t.resolve()
             if rt in seen or t.name == "transcript.jsonl":
@@ -239,7 +277,7 @@ def collect_runs(run_sets, reader=None) -> list[dict]:
             k_match = re.search(r"-k(\d+)$", stem)
             k = str(side.get("k") or (k_match.group(1) if k_match else 1))
             row = scores.get((model, cond, effort, task, k))
-            task_rec = pilot_tasks().get(task)
+            task_rec = tasks_of(split).get(task)
             ev = None
             tr = None
             try:
@@ -270,19 +308,20 @@ def collect_runs(run_sets, reader=None) -> list[dict]:
                 "flags": _flags(cond, row, tr),
             }
             view = root / "views" / str(model) / str(cond) / str(effort) / (stem + ".html")
-            run["view"] = view if view.exists() else None
+            run["view"] = view if view.exists() and not whole else None
             if root not in manifests:
                 manifests[root] = reproduce.read_manifest(t, root)
             run["manifest"] = manifests[root]
             run["gateway"] = reproduce.is_gateway(run, run["manifest"])
             calls = artifacts.extract_code(t, tr=tr)
             run["code"] = [c for c in calls if c["kind"] != "image"]
-            run["images"] = _images_of_run(t, stem, calls, run["code_dir"], tr)
+            run["images"] = _images_of_run(t, stem, calls, run["code_dir"], tr, None if whole else MAX_SVG)
+            run["images"] += _recovered(saved.get(f"{model}/{cond}/{effort}/{stem}", []), run["images"])
             runs.append(run)
     runs.sort(
         key=lambda r: (
             r["task"],
-            r["model"],
+            model_key(r["model"]),
             r["cond"],
             r["effort"],
             r["label"],
@@ -305,8 +344,10 @@ def _flags(cond: str, row: dict | None, tr) -> list[str]:
                            "n_mcp_calls": sum(n.startswith("mcp__") for n in names)})
 
 
-def _images_of_run(t: pathlib.Path, stem: str, calls: list[dict], code_dir: pathlib.Path, tr=None) -> list[dict]:
-    """Every image of one run, each once (by sha256): harvested files, MCP image results, inline <svg> answers."""
+def _images_of_run(t: pathlib.Path, stem: str, calls: list[dict], code_dir: pathlib.Path, tr=None,
+                   max_svg: int | None = MAX_SVG) -> list[dict]:
+    """Every image of one run, each once (by sha256): harvested files, MCP image results, inline <svg> answers up to
+    `max_svg` characters (None: every one)."""
     imgs: list[dict] = []
     have_sha: set[str] = set()
     have_svg: set[str] = set()
@@ -328,7 +369,7 @@ def _images_of_run(t: pathlib.Path, stem: str, calls: list[dict], code_dir: path
         if c["kind"] == "image":
             add(_image_info(code_dir / c["path"], "mcp", c["path"]))
     for text in artifacts.answer_texts(tr if tr is not None else t):
-        for svg in find_svgs(text):
+        for svg in find_svgs(text, max_svg):
             if _normalize_svg(svg) in have_svg:
                 continue
             data = svg.encode("utf-8")
@@ -406,9 +447,14 @@ class ImagePool:
     def _cost(it: dict) -> int:
         return len(it["uri"]) if "uri" in it else len(it["data"]) * 4 // 3 + 64
 
-    def decide(self, budget: int) -> None:
+    def decide(self, budget: int | None) -> None:
         """Embed the smallest first while the budget lasts; the rest is linked (or dropped without a file). The big
-        raster images come last and are downscaled only while something can still fit."""
+        raster images come last and are downscaled only while something can still fit. Without a budget (None) every
+        item is embedded as it is."""
+        if budget is None:
+            for it in self.items:
+                it["embed"], it["lazy"] = True, False
+            return
         used = 0
         ready = sorted((i for i in self.items if not i["lazy"]), key=self._cost)
         big = sorted((i for i in self.items if i["lazy"]), key=lambda i: len(i["data"]))
@@ -480,6 +526,13 @@ def _sha(v, source: str, data: bytes | None) -> dict:
     return {"text": sha_text(v, source, data), "cls": cls}
 
 
+def _image_claim(r: dict, info: dict) -> dict:
+    """The line under an image: the origin the image index states, else what the run's own hash claim says."""
+    if "origin" in info:
+        return {"text": info["origin"], "cls": ""}
+    return _sha(r["sha_match"], info["source"], info["data"])
+
+
 def _head(r: dict, out_dir: pathlib.Path) -> dict:
     return {"model": r["model"], "cond": r["cond"], "effort": str(r["effort"]), "k": r["k"], "task": r["task"],
             "cls": r["class"], "label": r["label"], "verdict": r["verdict"],
@@ -505,15 +558,19 @@ def _image_card(r: dict, it: dict, pool: ImagePool, out_dir: pathlib.Path, ident
     return {"attrs": _attrs(r), "head": _head(r, out_dir), "ident": ident, "src": pool.src(it), "link": pool.link(it),
             "alt": f"{r['task']} {r['model']} {info['name']}", "source": info["source"], "name": info["name"],
             "kb": len(info["data"]) // 1024, "linked": it["embed"] is False,
-            "sha": _sha(r["sha_match"], info["source"], info["data"]), "repro": reproduce_text(r)}
+            "sha": _image_claim(r, info), "repro": reproduce_text(r)}
 
 
-def _read_capped(path: pathlib.Path) -> tuple[str, bool]:
+def _capped(text: str, cap: int | None) -> tuple[str, bool]:
+    """`text` cut at `cap` characters (None: whole) and whether it was cut."""
+    return (text[:cap], True) if cap is not None and len(text) > cap else (text, False)
+
+
+def _read_capped(path: pathlib.Path, cap: int | None) -> tuple[str, bool]:
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        return _capped(path.read_text(encoding="utf-8", errors="replace"), cap)
     except OSError:
         return "", False
-    return (text[:FILE_CAP], True) if len(text) > FILE_CAP else (text, False)
 
 
 def _block(label: str, status: dict, body: str, capped: bool, excerpt: str, rel: str) -> dict:
@@ -522,32 +579,32 @@ def _block(label: str, status: dict, body: str, capped: bool, excerpt: str, rel:
             "capped": capped, "excerpt": excerpt, "rel": rel}
 
 
-def _code_blocks(r: dict) -> list[dict]:
-    """The code blocks of a run (Bash commands, heredoc files, MCP calls)."""
+def _code_blocks(r: dict, entries: int | None = ENTRY_CAP, cap: int | None = FILE_CAP) -> list[dict]:
+    """The first `entries` code blocks of a run (Bash commands, heredoc files, MCP calls), each cut at `cap` characters;
+    None: all of them, whole."""
     blocks = []
     code_dir = r["code_dir"]
-    for c in r["code"][:ENTRY_CAP]:
+    for c in r["code"][:entries]:
         is_err = c.get("is_error") or (c.get("exit") not in (0, None))
         status = ({"text": f"error (exit {c.get('exit')})", "cls": "bad"} if is_err
                   else ({"text": "exit 0", "cls": "good"} if c.get("exit") == 0 else {"text": "no result", "cls": ""}))
         rel = f"{code_dir.name}/{c['path']}"
         if c["kind"] == "bash":
-            body, capped = c.get("skeleton") or "", False
-            if len(body) > FILE_CAP:
-                body, capped = body[:FILE_CAP], True
+            body, capped = _capped(c.get("skeleton") or "", cap)
             blocks.append(_block(f"Bash #{c.get('call', 0)}", status, body, capped, c.get("result_excerpt", ""), rel))
         elif c["kind"] == "heredoc":
-            body, capped = _read_capped(code_dir / c["path"])
+            body, capped = _read_capped(code_dir / c["path"], cap)
             blocks.append(_block(f"heredoc {c['name']} (Bash #{c.get('call', 0)})", status, body, capped, "", rel))
         else:
-            body, capped = _read_capped(code_dir / c["path"])
+            body, capped = _read_capped(code_dir / c["path"], cap)
             blocks.append(_block(f"MCP {c['name']}", status, body, capped, c.get("result_excerpt", ""), rel))
     return blocks
 
 
-def _code_card(r: dict, out_dir: pathlib.Path, ident: str = "") -> dict:
-    return {"attrs": _attrs(r), "head": _head(r, out_dir), "ident": ident, "blocks": _code_blocks(r),
-            "more": max(len(r["code"]) - ENTRY_CAP, 0),
+def _code_card(r: dict, out_dir: pathlib.Path, ident: str = "", whole: bool = False) -> dict:
+    entries, cap = (None, None) if whole else (ENTRY_CAP, FILE_CAP)
+    return {"attrs": _attrs(r), "head": _head(r, out_dir), "ident": ident, "blocks": _code_blocks(r, entries, cap),
+            "more": 0 if whole else max(len(r["code"]) - ENTRY_CAP, 0),
             "n_files": sum(c["kind"] in ("bash", "heredoc") for c in r["code"]),
             "n_mcp": sum(c["kind"] == "mcp" for c in r["code"]), "repro": reproduce_text(r)}
 
@@ -617,11 +674,15 @@ def _weight(data) -> int:
     return 0
 
 
-def context(run_sets, out_dir: pathlib.Path, make_figs: bool = True, reader=None) -> tuple[dict, dict]:
+def context(run_sets, out_dir: pathlib.Path, make_figs: bool = True, reader=None, split: str = "pilot",
+            budget: int | None = None, images: pathlib.Path | None = None) -> tuple[dict, dict]:
     """The data of the page and its counts: {runs, runs_with_code, code_files, images_by_source, cards, figures, ...}.
-    `run_sets`: RunSet objects or plain run folders. `reader`: see `collect_runs`."""
+    `run_sets`: RunSet objects or plain run folders. `reader`, `split` and `images`: see `collect_runs`. `budget`: the
+    page size in bytes that images and figures may fill; None: no limit, everything is embedded and nothing is cut or
+    linked."""
     out_dir = pathlib.Path(out_dir)
-    runs = collect_runs(run_sets, reader)
+    whole = budget is None
+    runs = collect_runs(run_sets, reader, split, whole, images)
 
     # per-run figures (matplotlib, Figura style), medians per class for the metric strips
     medians = run_figures.class_medians((r["class"], (r["ev"] or {}).get("metrics")) for r in runs if r["ev"])
@@ -644,7 +705,7 @@ def context(run_sets, out_dir: pathlib.Path, make_figs: bool = True, reader=None
         img_ids.setdefault(id(r), []).append(f"im-{n}")
     code_runs = [r for r in runs if r["code"]]
     code_ids = {id(r): f"co-{n}" for n, r in enumerate(code_runs)}
-    code_cards = [_code_card(r, out_dir, code_ids[id(r)]) for r in code_runs]
+    code_cards = [_code_card(r, out_dir, code_ids[id(r)], whole) for r in code_runs]
     run_cards: dict[str, list[dict]] = {}
     fig_refs: dict[int, tuple[dict, pathlib.Path]] = {}
     for r in runs:
@@ -655,7 +716,7 @@ def context(run_sets, out_dir: pathlib.Path, make_figs: bool = True, reader=None
     run_order = sorted(run_cards, key=lambda t: (class_of[t], t))
     # the text of the cards is spent first; images and figures share what is left of the page budget
     text_size = _weight(code_cards) + _weight(list(run_cards.values())) + 900_000
-    pool.decide(max(PAGE_BUDGET - text_size, 0))
+    pool.decide(None if whole else max(budget - text_size, 0))
     figure_entries = [e for t in run_order for c in run_cards[t] for e in c["figs"]]
     _place_figures(figure_entries, fig_refs, pool)
 
@@ -694,7 +755,8 @@ def context(run_sets, out_dir: pathlib.Path, make_figs: bool = True, reader=None
     }
 
     ctx = {"title": "Run gallery", "counts": counts, "n_sets": len({r["label"] for r in runs}),
-           "models": _opts(r["model"] for r in runs), "conds": _opts(r["cond"] for r in runs),
+           "models": sorted({r["model"] for r in runs if r["model"]}, key=model_key),
+           "conds": _opts(r["cond"] for r in runs),
            "classes": _opts(r["class"] for r in runs), "verdicts": list(run_figures.VERDICT_LABEL.items()),
            "run_tasks": [{"task": t, "cls": class_of[t], "cards": run_cards[t]}
                          for t in run_order],
@@ -704,7 +766,7 @@ def context(run_sets, out_dir: pathlib.Path, make_figs: bool = True, reader=None
 
 def build_html(run_sets, out_dir: pathlib.Path, make_figs: bool = True) -> tuple[str, dict]:
     """The page and its counts (see `context`). `run_sets`: RunSet objects or plain run folders."""
-    ctx, counts = context(run_sets, out_dir, make_figs)
+    ctx, counts = context(run_sets, out_dir, make_figs, budget=PAGE_BUDGET)
     return page.render("gallery.html.j2", **ctx, ctx=ctx), counts
 
 

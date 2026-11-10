@@ -1,0 +1,1 @@
+cd /tmp && python3 -c "from scipy.special import sph_harm_y; import inspect; print(sph_harm_y.__doc__[:300])"

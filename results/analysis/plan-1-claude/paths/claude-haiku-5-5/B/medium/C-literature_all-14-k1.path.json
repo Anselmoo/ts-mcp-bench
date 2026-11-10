@@ -1,0 +1,579 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-literature_all-14-k1.jsonl",
+ "transcript_sha256": "6379cd64686399872c712f8ce2693fb5a3845518148aa236e14796439b3cbeab",
+ "answer": {
+  "Dq": 921.5,
+  "B": 827.7,
+  "C": 4263.8,
+  "out_of_scope": false,
+  "reason": "Full d7 Hamiltonian diagonalization fitted to the three stated band assignments; the simple 10Dq shortcut would give 810 cm-1 instead."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d7.py\nimport numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.optimize import least_squares\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom math import pi, sqrt\n\n# angular grid\nnt, npz = 40, 80\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0, 2*pi, npz, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(npz)) * (2*pi/npz)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\n# real cubic d orbitals (normalized on sphere): xy,yz,zx,z2,x2-y2\nf = [sqrt(15/(4*pi))*X*Y, sqrt(15/(4*pi))*Y*Z, sqrt(15/(4*pi))*X*Z,\n     sqrt(5/(16*pi))*(3*Z**2-1), sqrt(15/(16*pi))*(X**2-Y**2)]\nnames = ['xy','yz','xz','z2','x2y2']\n# cubic field energies (relative to barycentre): t2g -4Dq, eg +6Dq (units of Dq)\nfieldDq = [-4,-4,-4,6,6]\n\n# Angular coefficients a_k(a,c,b,d)\ndef ak_table(k):\n    A = np.zeros((5,5,5,5))\n    for qi in range(-k,k+1):\n        Yk = sph_harm(qi, k, PH, TH)  # scipy: sph_harm(m, n, azimuth, polar)\n        M = np.array([[np.sum(W*f[a]*f[c]*np.conj(Yk)) for c in range(5)] for a in range(5)])\n        N = np.array([[np.sum(W*f[b]*f[d]*Yk) for d in range(5)] for b in range(5)])\n        A += np.einsum('ac,bd->acbd', M, N)\n    return A*4*pi/(2*k+1)   # indices [a,c,b,d]\nA0, A2, A4 = ak_table(0), ak_table(2), ak_table(4)\ndef Vint(a,b,c,d,F0,F2,F4):\n    # <ab|1/r12|cd>\n    return F0*A0[a,c,b,d]+F2*A2[a,c,b,d]+F4*A4[a,c,b,d]\n\n# spin orbitals: index = 2*orb + spin (0 up,1 down)\nno = 10\n# Fock space builder\ndef build(Dq, F0, F2, F4, Ne=7):\n    # one-body and two-body in full Fock space via Jordan-Wigner\n    I2 = identity(2, format='csr'); Zm = csr_matrix(np.diag([1.,-1.]))\n    a = csr_matrix(np.array([[0,1.],[0,0]]))  # annihilation on single mode: |1>->|0>? basis (0=empty,1=occupied) we use [[0,1],[0,0]]\n    def ann(j):\n        ops = [Zm]*j + [a] + [I2]*(no-j-1)\n        M = ops[0]\n        for o in ops[1:]:\n            M = kron(M, o, format='csr')\n        return M\n    c = [ann(j) for j in range(no)]\n    cd = [m.T.tocsr() for m in c]\n    dim = 2**no\n    H = csr_matrix((dim,dim))\n    for p in range(no):\n        orb, s = divmod(p, 2)\n        eps = Dq*fieldDq[orb]\n        if eps != 0:\n            H = H + eps*(cd[p]@c[p])\n    # two-body: 1/2 sum V[ab,cd] a+_a a+_b a_d a_c, with <ab|1/r|cd> spin-diagonal\n    for p in range(no):\n        for q in range(no):\n            op, sp = divmod(p,2); oq, sq = divmod(q,2)\n            for r in range(no):\n                for s_ in range(no):\n                    orr, sr = divmod(r,2); os_, ss = divmod(s_,2)\n                    if sp!=sr or sq!=ss: continue\n                    if p==q or r==s_: continue\n                    v = Vint(op,oq,orr,os_,F0,F2,F4)\n                    if abs(v)<1e-12: continue\n                    H = H + 0.5*v*(cd[p]@cd[q]@c[s_]@c[r])\n    # spin operators\n    Sz = sum(0.5*(cd[2*o]@c[2*o]-cd[2*o+1]@c[2*o+1]) for o in range(5))\n    Sp = sum(cd[2*o]@c[2*o+1] for o in range(5))\n    Sm = Sp.T.tocsr()\n    S2 = Sz@Sz + 0.5*(Sp@Sm+Sm@Sp)\n    # restrict to N=7\n    Nop = sum(cd[p]@c[p] for p in range(no))\n    Nd = Nop.diagonal()\n    idx = np.where(np.abs(Nd-Ne)<1e-9)[0]\n    Hs = H[idx][:,idx].toarray(); S2s = S2[idx][:,idx].toarray()\n    return Hs, S2s\nEOF\ncd /tmp && python3 -c \"\nimport d7\nHs,S2=d7.build(0.0,1,0,0)\nimport numpy as np\nprint(np.linalg.eigvalsh(S2).round(3)[:5], Hs.shape)\n\"",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "113d0431a752514f769c8355019290506ea72dc76a8603d36b17c861028bf41b",
+     "lines": 79,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.optimize import least_squares\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom math import pi, sqrt\n\n# angular grid\nnt, npz = 40, 80\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0, 2*pi, npz, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(npz)) * (2*pi/npz)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\n# real cubic d orbitals (normalized on sphere): xy,yz,zx,z2,x2-y2\nf = [sqrt(15/(4*pi))*X*Y, sqrt(15/(4*pi))*Y*Z, sqrt(15/(4*pi))*X*Z,\n     sqrt(5/(16*pi))*(3*Z**2-1), sqrt(15/(16*pi))*(X**2-Y**2)]\nnames = ['xy','yz','xz','z2','x2y2']\n# cubic field energies (relative to barycentre): t2g -4Dq, eg +6Dq (units of Dq)\nfieldDq = [-4,-4,-4,6,6]\n\n# Angular coefficients a_k(a,c,b,d)\ndef ak_table(k):\n    A = np.zeros((5,5,5,5))\n    for qi in range(-k,k+1):\n        Yk = sph_harm(qi, k, PH, TH)  # scipy: sph_harm(m, n, azimuth, polar)\n        M = np.array([[np.sum(W*f[a]*f[c]*np.conj(Yk)) for c in range(5)] for a in range(5)])\n        N = np.array([[np.sum(W*f[b]*f[d]*Yk) for d in range(5)] for b in range(5)])\n        A += np.einsum('ac,bd->acbd', M, N)\n    return A*4*pi/(2*k+1)   # indices [a,c,b,d]\nA0, A2, A4 = ak_table(0), ak_table(2), ak_table(4)\ndef Vint(a,b,c,d,F0,F2,F4):\n    # <ab|1/r12|cd>\n    return F0*A0[a,c,b,d]+F2*A2[a,c,b,d]+F4*A4[a,c,b,d]\n\n# spin orbitals: index = 2*orb + spin (0 up,1 down)\nno = 10\n# Fock space builder\ndef build(Dq, F0, F2, F4, Ne=7):\n    # one-body and two-body in full Fock space via Jordan-Wigner\n    I2 = identity(2, format='csr'); Zm = csr_matrix(np.diag([1.,-1.]))\n    a = csr_matrix(np.array([[0,1.],[0,0]]))  # annihilation on single mode: |1>->|0>? basis (0=empty,1=occupied) we use [[0,1],[0,0]]\n    def ann(j):\n        ops = [Zm]*j + [a] + [I2]*(no-j-1)\n        M = ops[0]\n        for o in ops[1:]:\n            M = kron(M, o, format='csr')\n        return M\n    c = [ann(j) for j in range(no)]\n    cd = [m.T.tocsr() for m in c]\n    dim = 2**no\n    H = csr_matrix((dim,dim))\n    for p in range(no):\n        orb, s = divmod(p, 2)\n        eps = Dq*fieldDq[orb]\n        if eps != 0:\n            H = H + eps*(cd[p]@c[p])\n    # two-body: 1/2 sum V[ab,cd] a+_a a+_b a_d a_c, with <ab|1/r|cd> spin-diagonal\n    for p in range(no):\n        for q in range(no):\n            op, sp = divmod(p,2); oq, sq = divmod(q,2)\n            for r in range(no):\n                for s_ in range(no):\n                    orr, sr = divmod(r,2); os_, ss = divmod(s_,2)\n                    if sp!=sr or sq!=ss: continue\n                    if p==q or r==s_: continue\n                    v = Vint(op,oq,orr,os_,F0,F2,F4)\n                    if abs(v)<1e-12: continue\n                    H = H + 0.5*v*(cd[p]@cd[q]@c[s_]@c[r])\n    # spin operators\n    Sz = sum(0.5*(cd[2*o]@c[2*o]-cd[2*o+1]@c[2*o+1]) for o in range(5))\n    Sp = sum(cd[2*o]@c[2*o+1] for o in range(5))\n    Sm = Sp.T.tocsr()\n    S2 = Sz@Sz + 0.5*(Sp@Sm+Sm@Sp)\n    # restrict to N=7\n    Nop = sum(cd[p]@c[p] for p in range(no))\n    Nd = Nop.diagonal()\n    idx = np.where(np.abs(Nd-Ne)<1e-9)[0]\n    Hs = H[idx][:,idx].toarray(); S2s = S2[idx][:,idx].toarray()\n    return Hs, S2s\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 89: /tmp/d7.py: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    import d7\nModuleNotFoundError: No module named 'd7'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d7.py",
+     "line": 23,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d7.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "M = np.array([[np.sum(W*f[a]*f[c]*np.conj(Yk)) for c in range(5)] for a in range(5)])"
+    },
+    {
+     "script": "d7.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "N = np.array([[np.sum(W*f[b]*f[d]*Yk) for d in range(5)] for b in range(5)])"
+    },
+    {
+     "script": "d7.py",
+     "line": 41,
+     "method": "matrix",
+     "text": "a = csr_matrix(np.array([[0,1.],[0,0]]))  # annihilation on single mode: |1>->|0>? basis (0=empty,1=occupied) we use [[0,1],[0,0]]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ 2>/dev/null && pwd; touch ~/x_test && echo homeok; python3 -c \"import numpy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch '/tmp/tsbench-home-xehwqch9/x_test': Read-only file system\nok\nShell cwd was reset to /tmp/tsbench-run-711ytt10",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p /tmp/tsbench-run-711ytt10/w && cd /tmp/tsbench-run-711ytt10/w && pwd && touch t && echo ok",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-run-711ytt10/w\nok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && cat << 'EOF' > d7.py\nimport numpy as np\nfrom scipy.special import sph_harm\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom math import pi, sqrt\n\nnt, npz = 40, 80\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0, 2*pi, npz, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(npz)) * (2*pi/npz)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nf = [sqrt(15/(4*pi))*X*Y, sqrt(15/(4*pi))*Y*Z, sqrt(15/(4*pi))*X*Z,\n     sqrt(5/(16*pi))*(3*Z**2-1), sqrt(15/(16*pi))*(X**2-Y**2)]\nfieldDq = [-4,-4,-4,6,6]\n\ndef ak_table(k):\n    A = np.zeros((5,5,5,5))\n    for qi in range(-k,k+1):\n        Yk = sph_harm(qi, k, PH, TH)\n        M = np.array([[np.sum(W*f[a]*f[c]*np.conj(Yk)) for c in range(5)] for a in range(5)])\n        N = np.array([[np.sum(W*f[b]*f[d]*Yk) for d in range(5)] for b in range(5)])\n        A += np.einsum('ac,bd->acbd', M, N)\n    return A*4*pi/(2*k+1)\nA0, A2, A4 = ak_table(0), ak_table(2), ak_table(4)\n\nno = 10\nI2 = identity(2, format='csr')\nZm = csr_matrix(np.diag([1.,-1.]))\nam = csr_matrix(np.array([[0,1.],[0,0]]))\ndef ann(j):\n    ops = [Zm]*j + [am] + [I2]*(no-j-1)\n    M = ops[0]\n    for o in ops[1:]:\n        M = kron(M, o, format='csr')\n    return M\nc = [ann(j) for j in range(no)]\ncd = [m.T.tocsr() for m in c]\nNop = sum(cd[p]@c[p] for p in range(no))\nidx = np.where(np.abs(Nop.diagonal()-7)<1e-9)[0]\nSz = sum(0.5*(cd[2*o]@c[2*o]-cd[2*o+1]@c[2*o+1]) for o in range(5))\nSp = sum(cd[2*o]@c[2*o+1] for o in range(5)); Sm = Sp.T.tocsr()\nS2 = (Sz@Sz + 0.5*(Sp@Sm+Sm@Sp))\nS2s = S2[idx][:,idx].toarray()\n# one-body (per Dq) and two-body operators (per F_k)\ndef op_one():\n    out=[]\n    for orb in range(5):\n        out.append(sum(cd[2*orb+s]@c[2*orb+s] for s in range(2)))\n    return out\nONE = op_one()\n# two-body pieces: T_k = 1/2 sum_{p,q,r,s spin-consistent} A_k[a,c,b,d] a+_p a+_q a_s a_r\nTWO = [csr_matrix((len(idx),len(idx))) for _ in range(3)]\ndef twobody(Ak):\n    H = csr_matrix((2**no,2**no))\n    for p in range(no):\n        for q in range(no):\n            if p==q: continue\n            op, sp = divmod(p,2); oq, sq = divmod(q,2)\n            for r in range(no):\n                for s_ in range(no):\n                    if s_==r: continue\n                    orr, sr = divmod(r,2); os_, ss = divmod(s_,2)\n                    if sp!=sr or sq!=ss: continue\n                    # electron1: (orbital a=op, c=orr) ; electron2: (b=oq, d=os_)\n                    v = Ak[op,orr,oq,os_]\n                    if abs(v)<1e-13: continue\n                    H = H + 0.5*v*(cd[p]@cd[q]@c[s_]@c[r])\n    return H\nTs = [twobody(A) for A in (A0,A2,A4)]\nTs = [T[idx][:,idx].toarray() for T in Ts]\nONEs = [o[idx][:,idx].toarray() for o in ONE]\nEOF\ncat << 'EOF' > run.py\nimport numpy as np\nfrom scipy.optimize import least_squares\nimport d7\nF0=1.0\ndef H(Dq,B,C):\n    F2 = 49*B + 7*C; F4 = 63*C/5\n    M = sum(Dq*d7.fieldDq[o]*d7.ONEs[o] for o in range(5))\n    M = M + d7.Ts[0]*F0 + d7.Ts[1]*F2 + d7.Ts[2]*F4\n    return M\n# check: Ms=3/2 sector spectrum via S2 eigen\nHm = H(0.0, 1000.0, 4000.0)\n# eigen decomposition joint: diagonalize H + mu*S2 to separate spins\nmu = 1e5\nev, V = np.linalg.eigh(Hm + mu*d7.S2s)\nS2v = np.einsum('ik,ij,jk->k', V, d7.S2s, V)\nE = np.einsum('ik,ij,jk->k', V, Hm, V)\nfor e,s in sorted(zip(E,S2v))[:40]:\n    print(round(e,2), round(s,3))\nEOF\ntime python3 run.py | head -60",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "d3d2bce12dc0417759bd5974fa140a4677325339319ec0ba0d556a4a71053758",
+     "lines": 71,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm\nfrom scipy.sparse import csr_matrix, identity, kron\nfrom math import pi, sqrt\n\nnt, npz = 40, 80\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0, 2*pi, npz, endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(npz)) * (2*pi/npz)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nf = [sqrt(15/(4*pi))*X*Y, sqrt(15/(4*pi))*Y*Z, sqrt(15/(4*pi))*X*Z,\n     sqrt(5/(16*pi))*(3*Z**2-1), sqrt(15/(16*pi))*(X**2-Y**2)]\nfieldDq = [-4,-4,-4,6,6]\n\ndef ak_table(k):\n    A = np.zeros((5,5,5,5))\n    for qi in range(-k,k+1):\n        Yk = sph_harm(qi, k, PH, TH)\n        M = np.array([[np.sum(W*f[a]*f[c]*np.conj(Yk)) for c in range(5)] for a in range(5)])\n        N = np.array([[np.sum(W*f[b]*f[d]*Yk) for d in range(5)] for b in range(5)])\n        A += np.einsum('ac,bd->acbd', M, N)\n    return A*4*pi/(2*k+1)\nA0, A2, A4 = ak_table(0), ak_table(2), ak_table(4)\n\nno = 10\nI2 = identity(2, format='csr')\nZm = csr_matrix(np.diag([1.,-1.]))\nam = csr_matrix(np.array([[0,1.],[0,0]]))\ndef ann(j):\n    ops = [Zm]*j + [am] + [I2]*(no-j-1)\n    M = ops[0]\n    for o in ops[1:]:\n        M = kron(M, o, format='csr')\n    return M\nc = [ann(j) for j in range(no)]\ncd = [m.T.tocsr() for m in c]\nNop = sum(cd[p]@c[p] for p in range(no))\nidx = np.where(np.abs(Nop.diagonal()-7)<1e-9)[0]\nSz = sum(0.5*(cd[2*o]@c[2*o]-cd[2*o+1]@c[2*o+1]) for o in range(5))\nSp = sum(cd[2*o]@c[2*o+1] for o in range(5)); Sm = Sp.T.tocsr()\nS2 = (Sz@Sz + 0.5*(Sp@Sm+Sm@Sp))\nS2s = S2[idx][:,idx].toarray()\n# one-body (per Dq) and two-body operators (per F_k)\ndef op_one():\n    out=[]\n    for orb in range(5):\n        out.append(sum(cd[2*orb+s]@c[2*orb+s] for s in range(2)))\n    return out\nONE = op_one()\n# two-body pieces: T_k = 1/2 sum_{p,q,r,s spin-consistent} A_k[a,c,b,d] a+_p a+_q a_s a_r\nTWO = [csr_matrix((len(idx),len(idx))) for _ in range(3)]\ndef twobody(Ak):\n    H = csr_matrix((2**no,2**no))\n    for p in range(no):\n        for q in range(no):\n            if p==q: continue\n            op, sp = divmod(p,2); oq, sq = divmod(q,2)\n            for r in range(no):\n                for s_ in range(no):\n                    if s_==r: continue\n                    orr, sr = divmod(r,2); os_, ss = divmod(s_,2)\n                    if sp!=sr or sq!=ss: continue\n                    # electron1: (orbital a=op, c=orr) ; electron2: (b=oq, d=os_)\n                    v = Ak[op,orr,oq,os_]\n                    if abs(v)<1e-13: continue\n                    H = H + 0.5*v*(cd[p]@cd[q]@c[s_]@c[r])\n    return H\nTs = [twobody(A) for A in (A0,A2,A4)]\nTs = [T[idx][:,idx].toarray() for T in Ts]\nONEs = [o[idx][:,idx].toarray() for o in ONE]\n"
+    },
+    {
+     "name": "run.py",
+     "sha256": "7eb5a877c88a1403737ba8a2127c6f3c131ce61654df0b2eea1b97ca6df663ec",
+     "lines": 18,
+     "code": "import numpy as np\nfrom scipy.optimize import least_squares\nimport d7\nF0=1.0\ndef H(Dq,B,C):\n    F2 = 49*B + 7*C; F4 = 63*C/5\n    M = sum(Dq*d7.fieldDq[o]*d7.ONEs[o] for o in range(5))\n    M = M + d7.Ts[0]*F0 + d7.Ts[1]*F2 + d7.Ts[2]*F4\n    return M\n# check: Ms=3/2 sector spectrum via S2 eigen\nHm = H(0.0, 1000.0, 4000.0)\n# eigen decomposition joint: diagonalize H + mu*S2 to separate spins\nmu = 1e5\nev, V = np.linalg.eigh(Hm + mu*d7.S2s)\nS2v = np.einsum('ik,ij,jk->k', V, d7.S2s, V)\nE = np.einsum('ik,ij,jk->k', V, Hm, V)\nfor e,s in sorted(zip(E,S2v))[:40]:\n    print(round(e,2), round(s,3))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Traceback (most recent call last):\n  File \"/tmp/tsbench-run-711ytt10/w/run.py\", line 3, in <module>\n    import d7\n  File \"/tmp/tsbench-run-711ytt10/w/d7.py\", line 2, in <module>\n    from scipy.special import sph_harm\nImportError: cannot import name 'sph_harm' from 'scipy.special' (<B_VENV>/lib/python3.14/site-packages/scipy/special/__init__.py)\n\nreal\t0m1,102s\nuser\t0m3,824s\nsys\t0m0,052s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 17,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d7.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "M = np.array([[np.sum(W*f[a]*f[c]*np.conj(Yk)) for c in range(5)] for a in range(5)])"
+    },
+    {
+     "script": "d7.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "N = np.array([[np.sum(W*f[b]*f[d]*Yk) for d in range(5)] for b in range(5)])"
+    },
+    {
+     "script": "d7.py",
+     "line": 29,
+     "method": "matrix",
+     "text": "am = csr_matrix(np.array([[0,1.],[0,0]]))"
+    },
+    {
+     "script": "run.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "run.py",
+     "line": 14,
+     "method": "eigen_solver",
+     "text": "ev, V = np.linalg.eigh(Hm + mu*d7.S2s)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y/; s/Yk = sph_harm(qi, k, PH, TH)/Yk = sph_harm_y(k, qi, TH, PH)/' d7.py && time python3 run.py | head -60",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Traceback (most recent call last):\n  File \"/tmp/tsbench-run-711ytt10/w/run.py\", line 3, in <module>\n    import d7\n  File \"/tmp/tsbench-run-711ytt10/w/d7.py\", line 24, in <module>\n    A0, A2, A4 = ak_table(0), ak_table(2), ak_table(4)\n                 ~~~~~~~~^^^\n  File \"/tmp/tsbench-run-711ytt10/w/d7.py\", line 22, in ak_table\n    A += np.einsum('ac,bd->acbd', M, N)\nnumpy._core._exceptions._UFuncOutputCastingError: Cannot cast ufunc 'add' output from dtype('complex128') to dtype('float64') with casting rule 'same_kind'\n\nreal\t0m1,073s\nuser\t0m3,804s\nsys\t0m0,043s",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && sed -i 's/A = np.zeros((5,5,5,5))/A = np.zeros((5,5,5,5),dtype=complex)/' d7.py && sed -i 's/    return A\\*4\\*pi\\/(2\\*k+1)/    return (A*4*pi\\/(2*k+1)).real/' d7.py && time python3 run.py | head -60",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-104579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n-89579.0 3.75\n\nreal\t0m1,407s\nuser\t0m5,240s\nsys\t0m0,052s",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && cat << 'EOF' > run2.py\nimport numpy as np\nimport d7\ndef levels(Dq,B,C):\n    F2 = 49*B + 7*C; F4 = 63*C/5\n    Hm = sum(Dq*d7.fieldDq[o]*d7.ONEs[o] for o in range(5)) + d7.Ts[0] + F2*d7.Ts[1] + F4*d7.Ts[2]\n    # block-diagonalize by S: diagonalize S2 then H in each eigenspace\n    s2, U = np.linalg.eigh(d7.S2s)\n    out={}\n    for S in (1.5, 0.5):\n        target = S*(S+1)\n        sel = np.abs(s2-target)<1e-6\n        Us = U[:,sel]\n        e = np.linalg.eigvalsh(Us.T@Hm@Us)\n        out[S]=np.sort(e)\n    return out\nif __name__==\"__main__\":\n    L = levels(0,1,0)\n    print(\"quartet:\", np.round(L[1.5]-L[1.5][0],1))\n    print(\"doublet:\", np.round(L[0.5]-L[1.5][0],1))\n    print(len(L[1.5]),len(L[0.5]))\nEOF\npython3 run2.py",
+   "scripts": [
+    {
+     "name": "run2.py",
+     "sha256": "c446c9b598a8bb1cb737127f8ae1148e035a4e1b13e2ec44a26df59cad00f3cd",
+     "lines": 20,
+     "code": "import numpy as np\nimport d7\ndef levels(Dq,B,C):\n    F2 = 49*B + 7*C; F4 = 63*C/5\n    Hm = sum(Dq*d7.fieldDq[o]*d7.ONEs[o] for o in range(5)) + d7.Ts[0] + F2*d7.Ts[1] + F4*d7.Ts[2]\n    # block-diagonalize by S: diagonalize S2 then H in each eigenspace\n    s2, U = np.linalg.eigh(d7.S2s)\n    out={}\n    for S in (1.5, 0.5):\n        target = S*(S+1)\n        sel = np.abs(s2-target)<1e-6\n        Us = U[:,sel]\n        e = np.linalg.eigvalsh(Us.T@Hm@Us)\n        out[S]=np.sort(e)\n    return out\nif __name__==\"__main__\":\n    L = levels(0,1,0)\n    print(\"quartet:\", np.round(L[1.5]-L[1.5][0],1))\n    print(\"doublet:\", np.round(L[0.5]-L[1.5][0],1))\n    print(len(L[1.5]),len(L[0.5]))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run2.py",
+     "written_in_step": 6
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "quartet: [ 0.  0.  0.  0.  0.  0.  0.  0.  0.  0.  0.  0.  0.  0.  0.  0.  0.  0.\n  0.  0.  0.  0.  0.  0.  0.  0.  0.  0. 15. 15. 15. 15. 15. 15. 15. 15.\n 15. 15. 15. 15.]\ndoublet: [ 4.   4.   4.   4.   4.   4.   4.   4.   4.   4.   4.   4.   4.   4.\n  4.   4.   4.   4.   6.1  6.1  6.1  6.1  6.1  6.1  6.1  6.1  6.1  6.1\n  9.   9.   9.   9.   9.   9.   9.   9.   9.   9.   9.   9.   9.   9.\n  9.   9.   9.   9.   9.   9.   9.   9.   9.   9.   9.   9.   9.   9.\n 24.  24.  24.  24.  24.  24.  24.  24.  24.  24.  24.  24.  24.  24.\n 33.9 33.9 33.9 33.9 33.9 33.9 33.9 33.9 33.9 33.9]\n40 80",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "run2.py",
+     "line": 7,
+     "method": "eigen_solver",
+     "text": "s2, U = np.linalg.eigh(d7.S2s)"
+    },
+    {
+     "script": "run2.py",
+     "line": 13,
+     "method": "eigen_solver",
+     "text": "e = np.linalg.eigvalsh(Us.T@Hm@Us)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && cat << 'EOF' > fit.py\nimport numpy as np\nfrom scipy.optimize import least_squares\nimport d7\nfrom run2 import levels\ndef uniq(e):\n    out=[]\n    for v in np.sort(e):\n        if out and abs(v-out[-1][0])<1e-6: out[-1][1]+=1\n        else: out.append([v,1])\n    return out\ndef terms(Dq,B,C):\n    L=levels(Dq,B,C)\n    q=uniq(L[1.5]); d=uniq(L[0.5])\n    return q,d\nq,d = terms(1000.,1000.,4000.)\nprint(\"quartets\", [(round(a-q[0][0],1),m) for a,m in q])\nprint(\"doublets\", [(round(a-q[0][0],1),m) for a,m in d])\nEOF\npython3 fit.py",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "7fa1ea9c31c15ccc2d01a1620570c73315df16e6295f71b42deba26a47289d10",
+     "lines": 17,
+     "code": "import numpy as np\nfrom scipy.optimize import least_squares\nimport d7\nfrom run2 import levels\ndef uniq(e):\n    out=[]\n    for v in np.sort(e):\n        if out and abs(v-out[-1][0])<1e-6: out[-1][1]+=1\n        else: out.append([v,1])\n    return out\ndef terms(Dq,B,C):\n    L=levels(Dq,B,C)\n    q=uniq(L[1.5]); d=uniq(L[0.5])\n    return q,d\nq,d = terms(1000.,1000.,4000.)\nprint(\"quartets\", [(round(a-q[0][0],1),m) for a,m in q])\nprint(\"doublets\", [(round(a-q[0][0],1),m) for a,m in d])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "quartets [(np.float64(0.0), 12), (np.float64(8736.1), 12), (np.float64(18736.1), 4), (np.float64(22472.2), 12)]\ndoublets [(np.float64(9207.8), 4), (np.float64(17277.6), 6), (np.float64(17651.3), 6), (np.float64(22540.1), 6), (np.float64(24736.1), 2), (np.float64(27148.6), 6), (np.float64(28568.3), 6), (np.float64(30634.5), 4), (np.float64(33997.7), 6), (np.float64(35411.5), 6), (np.float64(36661.4), 4), (np.float64(41545.9), 6), (np.float64(44736.1), 2), (np.float64(44883.0), 6), (np.float64(65440.7), 4), (np.float64(66337.0), 6)]",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && cat << 'EOF' > sym.py\nimport numpy as np\nfrom scipy.linalg import logm, expm\nimport d7\nfrom run2 import levels\nfrom math import pi\n# C4 rotation about z by 90 deg acting on functions: (R f)(r) = f(R^-1 r)\ndef rot_matrix(Rm):\n    # points on grid rotated\n    P = np.stack([d7.X.ravel(), d7.Y.ravel(), d7.Z.ravel()])\n    Q = Rm.T @ P   # R^-1 applied to points (R^-1 = R^T)\n    th = np.arccos(np.clip(Q[2],-1,1)); ph = np.arctan2(Q[1],Q[0])\n    X,Y,Z = Q\n    fr = [np.sqrt(15/(4*pi))*X*Y, np.sqrt(15/(4*pi))*Y*Z, np.sqrt(15/(4*pi))*X*Z,\n          np.sqrt(5/(16*pi))*(3*Z**2-1), np.sqrt(15/(16*pi))*(X**2-Y**2)]\n    W = d7.W.ravel()\n    U = np.zeros((5,5))\n    for a in range(5):\n        for b in range(5):\n            U[a,b] = np.sum(W*fr[a]*d7.f[b].ravel())\n    return U\nc4 = np.array([[0,-1,0],[1,0,0],[0,0,1.]])\nU = rot_matrix(c4)\nprint(np.round(U,6))\n# check orthogonal\nprint(np.allclose(U@U.T,np.eye(5),atol=1e-6))\nW10 = np.kron(U, np.eye(2))  # orbital index*2+spin ordering -> orbital outer? need check\n# our spin-orbital index p=2*orb+s  => kron(U,I2) is correct\nL = logm(W10).real\nG = np.zeros((10,10))\nGmat = sum(L[p,q]*d7.cd[p]@d7.c[q] for p in range(10) for q in range(10) if abs(L[p,q])>1e-12)\nGs = Gmat[d7.idx][:,d7.idx].toarray()\nGam = expm(Gs)\nnp.save('Gam.npy', Gam)\ndef labels(Dq,B,C):\n    F2=49*B+7*C; F4=63*C/5\n    Hm = sum(Dq*d7.fieldDq[o]*d7.ONEs[o] for o in range(5)) + d7.Ts[0] + F2*d7.Ts[1] + F4*d7.Ts[2]\n    s2,Uq = np.linalg.eigh(d7.S2s)\n    out=[]\n    for S in (1.5,0.5):\n        sel = np.abs(s2-S*(S+1))<1e-6\n        Us = Uq[:,sel]\n        e,V = np.linalg.eigh(Us.T@Hm@Us)\n        Gm = Us.T@Gam@Us\n        # group degenerate levels\n        i=0\n        while i<len(e):\n            j=i\n            while j+1<len(e) and abs(e[j+1]-e[i])<1e-6: j+=1\n            Vb = V[:,i:j+1]\n            chi = np.trace(Vb.T@Gm@Vb)  # trace of C4 in this level\n            out.append((S, e[i], j-i+1, round(chi,3)))\n            i=j+1\n    return out\nif __name__==\"__main__\":\n    E0 = None\n    for S,e,m,chi in labels(1000.,1000.,4000.):\n        print(S, round(e,1), m, chi)\nEOF\nsed -i 's/^ONEs = .*/&\\nW = None/' d7.py\npython3 - << 'EOF'\nimport re\nsrc=open('/tmp/tsbench-run-711ytt10/w/d7.py').read()\nsrc=src.replace(\"W = None\\n\",\"\")\n# add grid weights for rotation use\nsrc+=\"\\nWG = W\\n\"\nopen('/tmp/tsbench-run-711ytt10/w/d7.py','w').write(src)\nEOF\nsed -i 's/W = d7.W.ravel()/W = d7.WG.ravel()/' sym.py\npython3 sym.py",
+   "scripts": [
+    {
+     "name": "sym.py",
+     "sha256": "9d69c8076018d27b99b769a48bdeb5ab0ba2726b2e00b52c10e41b74aab55dbf",
+     "lines": 57,
+     "code": "import numpy as np\nfrom scipy.linalg import logm, expm\nimport d7\nfrom run2 import levels\nfrom math import pi\n# C4 rotation about z by 90 deg acting on functions: (R f)(r) = f(R^-1 r)\ndef rot_matrix(Rm):\n    # points on grid rotated\n    P = np.stack([d7.X.ravel(), d7.Y.ravel(), d7.Z.ravel()])\n    Q = Rm.T @ P   # R^-1 applied to points (R^-1 = R^T)\n    th = np.arccos(np.clip(Q[2],-1,1)); ph = np.arctan2(Q[1],Q[0])\n    X,Y,Z = Q\n    fr = [np.sqrt(15/(4*pi))*X*Y, np.sqrt(15/(4*pi))*Y*Z, np.sqrt(15/(4*pi))*X*Z,\n          np.sqrt(5/(16*pi))*(3*Z**2-1), np.sqrt(15/(16*pi))*(X**2-Y**2)]\n    W = d7.W.ravel()\n    U = np.zeros((5,5))\n    for a in range(5):\n        for b in range(5):\n            U[a,b] = np.sum(W*fr[a]*d7.f[b].ravel())\n    return U\nc4 = np.array([[0,-1,0],[1,0,0],[0,0,1.]])\nU = rot_matrix(c4)\nprint(np.round(U,6))\n# check orthogonal\nprint(np.allclose(U@U.T,np.eye(5),atol=1e-6))\nW10 = np.kron(U, np.eye(2))  # orbital index*2+spin ordering -> orbital outer? need check\n# our spin-orbital index p=2*orb+s  => kron(U,I2) is correct\nL = logm(W10).real\nG = np.zeros((10,10))\nGmat = sum(L[p,q]*d7.cd[p]@d7.c[q] for p in range(10) for q in range(10) if abs(L[p,q])>1e-12)\nGs = Gmat[d7.idx][:,d7.idx].toarray()\nGam = expm(Gs)\nnp.save('Gam.npy', Gam)\ndef labels(Dq,B,C):\n    F2=49*B+7*C; F4=63*C/5\n    Hm = sum(Dq*d7.fieldDq[o]*d7.ONEs[o] for o in range(5)) + d7.Ts[0] + F2*d7.Ts[1] + F4*d7.Ts[2]\n    s2,Uq = np.linalg.eigh(d7.S2s)\n    out=[]\n    for S in (1.5,0.5):\n        sel = np.abs(s2-S*(S+1))<1e-6\n        Us = Uq[:,sel]\n        e,V = np.linalg.eigh(Us.T@Hm@Us)\n        Gm = Us.T@Gam@Us\n        # group degenerate levels\n        i=0\n        while i<len(e):\n            j=i\n            while j+1<len(e) and abs(e[j+1]-e[i])<1e-6: j+=1\n            Vb = V[:,i:j+1]\n            chi = np.trace(Vb.T@Gm@Vb)  # trace of C4 in this level\n            out.append((S, e[i], j-i+1, round(chi,3)))\n            i=j+1\n    return out\nif __name__==\"__main__\":\n    E0 = None\n    for S,e,m,chi in labels(1000.,1000.,4000.):\n        print(S, round(e,1), m, chi)\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "ef6a6ad217c3804212f8698c7a64311c88543e100264f5e73e4796611a06ba60",
+     "lines": 6,
+     "code": "import re\nsrc=open('/tmp/tsbench-run-711ytt10/w/d7.py').read()\nsrc=src.replace(\"W = None\\n\",\"\")\n# add grid weights for rotation use\nsrc+=\"\\nWG = W\\n\"\nopen('/tmp/tsbench-run-711ytt10/w/d7.py','w').write(src)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "sym.py",
+     "written_in_step": 8
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[[-1.  0.  0. -0. -0.]\n [ 0.  0. -1. -0. -0.]\n [-0.  1. -0. -0.  0.]\n [ 0. -0. -0.  1.  0.]\n [-0. -0. -0. -0. -1.]]\nTrue\n1.5 -111315.1 12 4.0\n1.5 -102579.0 12 4.0\n1.5 -92579.0 4 4.0\n1.5 -88842.9 12 4.0\n0.5 -102107.3 4 3.968\n0.5 -94037.5 6 1.855\n0.5 -93663.8 6 1.962\n0.5 -88775.0 6 1.833\n0.5 -86579.0 2 -0.0\n0.5 -84166.5 6 1.833\n0.5 -82746.8 6 -1.351\n0.5 -80680.6 4 0.423\n0.5 -77317.5 6 0.304\n0.5 -75903.6 6 0.019\n0.5 -74653.7 4 0.55\n0.5 -69769.2 6 0.259\n0.5 -66579.0 2 0.0\n0.5 -66432.1 6 -0.356\n0.5 -45874.4 4 3.06\n0.5 -44978.1 6 1.642",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "sym.py",
+     "line": 16,
+     "method": "matrix",
+     "text": "U = np.zeros((5,5))"
+    },
+    {
+     "script": "sym.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "U[a,b] = np.sum(W*fr[a]*d7.f[b].ravel())"
+    },
+    {
+     "script": "sym.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "c4 = np.array([[0,-1,0],[1,0,0],[0,0,1.]])"
+    },
+    {
+     "script": "sym.py",
+     "line": 29,
+     "method": "matrix",
+     "text": "G = np.zeros((10,10))"
+    },
+    {
+     "script": "sym.py",
+     "line": 37,
+     "method": "eigen_solver",
+     "text": "s2,Uq = np.linalg.eigh(d7.S2s)"
+    },
+    {
+     "script": "sym.py",
+     "line": 42,
+     "method": "eigen_solver",
+     "text": "e,V = np.linalg.eigh(Us.T@Hm@Us)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && cat << 'EOF' > sym2.py\nimport numpy as np\nfrom scipy.linalg import expm\nimport d7\nfrom sym import rot_matrix\nfrom math import pi\ndef Rz(phi):\n    return np.array([[np.cos(phi),-np.sin(phi),0],[np.sin(phi),np.cos(phi),0],[0,0,1.]])\nh=1e-4\nK = (rot_matrix(Rz(h)) - rot_matrix(Rz(-h)))/(2*h)   # d/dphi U(phi) at 0\n# Check: U(phi) = expm(phi*K0) with K0 generator; K0 = K at phi=0\nK10 = np.kron(K, np.eye(2))\nG = sum(K10[p,q]*d7.cd[p]@d7.c[q] for p in range(10) for q in range(10) if abs(K10[p,q])>1e-12)\nGs = G[d7.idx][:,d7.idx].toarray()\nGam = expm(Gs*pi/2)\n# sanity: Gam^4 should be identity\nprint(\"C4^4=1:\", np.allclose(np.linalg.matrix_power(Gam,4),np.eye(len(Gam)),atol=1e-6))\nnp.save('Gam.npy', Gam)\nEOF\npython3 sym2.py 2>&1 | tail -3\nsed -i 's/^Gam = .*//' sym.py; sed -i 's/^Gs = Gmat.*//' sym.py; sed -i 's/^Gmat = .*//' sym.py\ncat << 'EOF' > lab.py\nimport numpy as np\nimport d7\nGam = np.load('Gam.npy')\ndef labels(Dq,B,C):\n    F2=49*B+7*C; F4=63*C/5\n    Hm = sum(Dq*d7.fieldDq[o]*d7.ONEs[o] for o in range(5)) + d7.Ts[0] + F2*d7.Ts[1] + F4*d7.Ts[2]\n    s2,Uq = np.linalg.eigh(d7.S2s)\n    out=[]\n    for S in (1.5,0.5):\n        sel = np.abs(s2-S*(S+1))<1e-6\n        Us = Uq[:,sel]\n        e,V = np.linalg.eigh(Us.T@Hm@Us)\n        Gm = Us.T@Gam@Us\n        i=0\n        while i<len(e):\n            j=i\n            while j+1<len(e) and abs(e[j+1]-e[i])<1e-6: j+=1\n            Vb = V[:,i:j+1]\n            chi = np.trace(Vb.T@Gm@Vb)\n            out.append((S, e[i], j-i+1, round(chi.real,3)))\n            i=j+1\n    return out\nif __name__==\"__main__\":\n    for S,e,m,chi in labels(1000.,1000.,4000.):\n        print(S, round(e,1), m, chi)\nEOF\npython3 lab.py",
+   "scripts": [
+    {
+     "name": "sym2.py",
+     "sha256": "730c5842eaab87d8eae505e8857836c6a0cd788780d8b33cbdba574d68333eb1",
+     "lines": 17,
+     "code": "import numpy as np\nfrom scipy.linalg import expm\nimport d7\nfrom sym import rot_matrix\nfrom math import pi\ndef Rz(phi):\n    return np.array([[np.cos(phi),-np.sin(phi),0],[np.sin(phi),np.cos(phi),0],[0,0,1.]])\nh=1e-4\nK = (rot_matrix(Rz(h)) - rot_matrix(Rz(-h)))/(2*h)   # d/dphi U(phi) at 0\n# Check: U(phi) = expm(phi*K0) with K0 generator; K0 = K at phi=0\nK10 = np.kron(K, np.eye(2))\nG = sum(K10[p,q]*d7.cd[p]@d7.c[q] for p in range(10) for q in range(10) if abs(K10[p,q])>1e-12)\nGs = G[d7.idx][:,d7.idx].toarray()\nGam = expm(Gs*pi/2)\n# sanity: Gam^4 should be identity\nprint(\"C4^4=1:\", np.allclose(np.linalg.matrix_power(Gam,4),np.eye(len(Gam)),atol=1e-6))\nnp.save('Gam.npy', Gam)\n"
+    },
+    {
+     "name": "lab.py",
+     "sha256": "323e17b6eec606906a6a481cff5fd4508a34f6c4862b96524dfadd9e710df273",
+     "lines": 25,
+     "code": "import numpy as np\nimport d7\nGam = np.load('Gam.npy')\ndef labels(Dq,B,C):\n    F2=49*B+7*C; F4=63*C/5\n    Hm = sum(Dq*d7.fieldDq[o]*d7.ONEs[o] for o in range(5)) + d7.Ts[0] + F2*d7.Ts[1] + F4*d7.Ts[2]\n    s2,Uq = np.linalg.eigh(d7.S2s)\n    out=[]\n    for S in (1.5,0.5):\n        sel = np.abs(s2-S*(S+1))<1e-6\n        Us = Uq[:,sel]\n        e,V = np.linalg.eigh(Us.T@Hm@Us)\n        Gm = Us.T@Gam@Us\n        i=0\n        while i<len(e):\n            j=i\n            while j+1<len(e) and abs(e[j+1]-e[i])<1e-6: j+=1\n            Vb = V[:,i:j+1]\n            chi = np.trace(Vb.T@Gm@Vb)\n            out.append((S, e[i], j-i+1, round(chi.real,3)))\n            i=j+1\n    return out\nif __name__==\"__main__\":\n    for S,e,m,chi in labels(1000.,1000.,4000.):\n        print(S, round(e,1), m, chi)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "sym2.py",
+     "written_in_step": 9
+    },
+    {
+     "name": "lab.py",
+     "written_in_step": 9
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": " [-0. -0. -0. -0. -1.]]\nTrue\nC4^4=1: True\n1.5 -111315.1 12 4.0\n1.5 -102579.0 12 -4.0\n1.5 -92579.0 4 -4.0\n1.5 -88842.9 12 4.0\n0.5 -102107.3 4 0.0\n0.5 -94037.5 6 2.0\n0.5 -93663.8 6 -2.0\n0.5 -88775.0 6 2.0\n0.5 -86579.0 2 2.0\n0.5 -84166.5 6 -2.0\n0.5 -82746.8 6 2.0\n0.5 -80680.6 4 0.0\n0.5 -77317.5 6 -2.0\n0.5 -75903.6 6 2.0\n0.5 -74653.7 4 -0.0\n0.5 -69769.2 6 -2.0\n0.5 -66579.0 2 -2.0\n0.5 -66432.1 6 2.0\n0.5 -45874.4 4 0.0\n0.5 -44978.1 6 -2.0",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "sym2.py",
+     "line": 7,
+     "method": "matrix",
+     "text": "return np.array([[np.cos(phi),-np.sin(phi),0],[np.sin(phi),np.cos(phi),0],[0,0,1.]])"
+    },
+    {
+     "script": "lab.py",
+     "line": 7,
+     "method": "eigen_solver",
+     "text": "s2,Uq = np.linalg.eigh(d7.S2s)"
+    },
+    {
+     "script": "lab.py",
+     "line": 12,
+     "method": "eigen_solver",
+     "text": "e,V = np.linalg.eigh(Us.T@Hm@Us)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && cat << 'EOF' > fit2.py\nimport numpy as np\nfrom scipy.optimize import least_squares\nfrom lab import labels\ndef pick(Dq,B,C):\n    L = labels(Dq,B,C)\n    g = [x for x in L if x[0]==1.5 and x[2]==12 and x[3]==4][0][1]  # ground 4T1g\n    q_T2 = [x for x in L if x[0]==1.5 and x[2]==12 and x[3]==-4]\n    q_T1 = [x for x in L if x[0]==1.5 and x[2]==12 and x[3]==4]\n    d_T1 = [x for x in L if x[0]==0.5 and x[2]==6 and x[3]==2]\n    return g, q_T2[0][1]-g, q_T1[1][1]-g, d_T1[1][1]-g, d_T1[0][1]-g\ndef res(p):\n    Dq,B,C = p\n    g,t2,t1q2,t1d2,t1d1 = pick(Dq,B,C)\n    return [t2-8100, t1q2-19400, t1d2-21600]\nfor guess in [(800,900,3500),(810,1000,4000),(900,800,3000)]:\n    sol = least_squares(res, guess, xtol=1e-12, ftol=1e-12, gtol=1e-12)\n    print(sol.x, res(sol.x))\n    print(pick(*sol.x))\nEOF\npython3 fit2.py 2>&1 | grep -v \"^\\[\\|C4\"",
+   "scripts": [
+    {
+     "name": "fit2.py",
+     "sha256": "41bd13c92e42b0696ded6730391594f17d1b1db79eaa744e428ed90273c1ab14",
+     "lines": 18,
+     "code": "import numpy as np\nfrom scipy.optimize import least_squares\nfrom lab import labels\ndef pick(Dq,B,C):\n    L = labels(Dq,B,C)\n    g = [x for x in L if x[0]==1.5 and x[2]==12 and x[3]==4][0][1]  # ground 4T1g\n    q_T2 = [x for x in L if x[0]==1.5 and x[2]==12 and x[3]==-4]\n    q_T1 = [x for x in L if x[0]==1.5 and x[2]==12 and x[3]==4]\n    d_T1 = [x for x in L if x[0]==0.5 and x[2]==6 and x[3]==2]\n    return g, q_T2[0][1]-g, q_T1[1][1]-g, d_T1[1][1]-g, d_T1[0][1]-g\ndef res(p):\n    Dq,B,C = p\n    g,t2,t1q2,t1d2,t1d1 = pick(Dq,B,C)\n    return [t2-8100, t1q2-19400, t1d2-21600]\nfor guess in [(800,900,3500),(810,1000,4000),(900,800,3000)]:\n    sol = least_squares(res, guess, xtol=1e-12, ftol=1e-12, gtol=1e-12)\n    print(sol.x, res(sol.x))\n    print(pick(*sol.x))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit2.py",
+     "written_in_step": 10
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(np.float64(-107489.54455965238), np.float64(8099.999999999971), np.float64(19400.0), np.float64(21599.999999999927), np.float64(17128.702035359107))\n(np.float64(-107489.5445596531), np.float64(8099.999999999971), np.float64(19399.999999999927), np.float64(21600.00000000003), np.float64(17128.70203535918))\n(np.float64(-107489.54455965277), np.float64(8099.999999999985), np.float64(19399.99999999994), np.float64(21599.999999999985), np.float64(17128.702035359078))",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit2.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit2.py",
+     "line": 16,
+     "method": "least_squares",
+     "text": "sol = least_squares(res, guess, xtol=1e-12, ftol=1e-12, gtol=1e-12)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 11,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && sed -i 's/    print(sol.x, res(sol.x))/    print(\"SOL\", sol.x, res(sol.x))/' fit2.py && python3 fit2.py 2>&1 | grep -E \"SOL|^\\(\" ",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "fit2.py",
+     "written_in_step": 10
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "SOL [ 921.53825637  827.69217092 4263.82193007] [np.float64(-2.9103830456733704e-11), np.float64(0.0), np.float64(-7.275957614183426e-11)]\n(np.float64(-107489.54455965238), np.float64(8099.999999999971), np.float64(19400.0), np.float64(21599.999999999927), np.float64(17128.702035359107))\nSOL [ 921.53825637  827.69217092 4263.82193007] [np.float64(-2.9103830456733704e-11), np.float64(-7.275957614183426e-11), np.float64(2.9103830456733704e-11)]\n(np.float64(-107489.5445596531), np.float64(8099.999999999971), np.float64(19399.999999999927), np.float64(21600.00000000003), np.float64(17128.70203535918))\nSOL [ 921.53825637  827.69217092 4263.82193007] [np.float64(-1.4551915228366852e-11), np.float64(-5.820766091346741e-11), np.float64(-1.4551915228366852e-11)]\n(np.float64(-107489.54455965277), np.float64(8099.999999999985), np.float64(19399.99999999994), np.float64(21599.999999999985), np.float64(17128.702035359078))",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": [
+    "Dq",
+    "B",
+    "C"
+   ]
+  },
+  {
+   "index": 12,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && python3 -c \"\nfrom lab import labels\nfor B in [0,1e-3,300,1000]:\n    L=labels(1000.,B,4*B)\n    g=[x for x in L if x[0]==1.5 and x[2]==12 and x[3]==4][0][1]\n    t2=[x for x in L if x[0]==1.5 and x[2]==12 and x[3]==-4][0][1]\n    print(B, round(t2-g,2))\n\" 2>&1 | grep -v \"C4\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Traceback (most recent call last):\n  File \"<string>\", line 6, in <module>\n    t2=[x for x in L if x[0]==1.5 and x[2]==12 and x[3]==-4][0][1]\n       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^\nIndexError: list index out of range",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 13,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-711ytt10/w && python3 -c \"\nfrom lab import labels\nfor B in [1e-3,100]:\n    L=labels(1000.,B,4*B)\n    print([ (round(x[1],1),x[2],x[3]) for x in L if x[0]==1.5])\n\" 2>&1 | grep -v \"C4\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[(np.float64(-7979.1), 12, np.float64(4.0)), (np.float64(2020.9), 12, np.float64(-4.0)), (np.float64(2020.9), 12, np.float64(4.0)), (np.float64(12020.9), 4, np.float64(-4.0))]\n[(np.float64(-18171.9), 12, np.float64(4.0)), (np.float64(-8439.0), 12, np.float64(-4.0)), (np.float64(-7206.1), 12, np.float64(4.0)), (np.float64(1561.0), 4, np.float64(-4.0))]",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 921.5,
+   "weak": false,
+   "steps": [
+    11
+   ],
+   "typed_in_steps": [],
+   "source_step": 11
+  },
+  {
+   "path": "B",
+   "value": 827.7,
+   "weak": false,
+   "steps": [
+    11
+   ],
+   "typed_in_steps": [],
+   "source_step": 11
+  },
+  {
+   "path": "C",
+   "value": 4263.8,
+   "weak": false,
+   "steps": [
+    11
+   ],
+   "typed_in_steps": [],
+   "source_step": 11
+  }
+ ],
+ "summary": {
+  "n_steps": 14,
+  "n_scripts": 10,
+  "n_failed_steps": 1,
+  "n_values": 3,
+  "n_linked": 3,
+  "n_weak": 0,
+  "source_steps": [
+   11
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": true
+ }
+}

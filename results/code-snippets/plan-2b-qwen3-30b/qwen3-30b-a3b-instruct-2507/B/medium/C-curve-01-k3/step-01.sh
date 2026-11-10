@@ -1,0 +1,1 @@
+echo 'Calculating ligand-field energies for octahedral d4 ion with B = 821 cm⁻¹, C = 3657 cm⁻¹, and Dq/B = 0.90, 2.15, 3.35...'

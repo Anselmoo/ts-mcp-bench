@@ -1,0 +1,1 @@
+sed -i 's/chis=\[np.trace(Vc.conj().T@Om@Vc) for Om in Oms\]/chis=[np.trace(Vc.conj().T@Om@Vc)\/(2*S+1) for Om in Oms]/' ts.py && grep -n "chis=" ts.py && (time OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 ts.py) 2>&1 | grep -v -i matplotlib

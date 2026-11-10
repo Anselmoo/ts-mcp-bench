@@ -1,0 +1,1 @@
+sed -i "s/A=np.einsum('acI,IJ,bdJ->acbd',G\*W\[None,None,:\],Pk,G)/A=np.einsum('acI,IJ,bdJ->acbd',G*W[None,None,:],Pk,G*W[None,None,:])/" ts.py && grep -n "einsum('acI" ts.py && python3 dbg3.py 2>&1 | tail -2 && python3 ts.py 2>&1 | grep -v -i matplotlib

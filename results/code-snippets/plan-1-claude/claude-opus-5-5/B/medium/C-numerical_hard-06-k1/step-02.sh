@@ -1,0 +1,1 @@
+cd $HOME 2>/dev/null || cd .; mkdir -p ./w 2>/dev/null; echo test > ./w/t && echo ok; pwd

@@ -1,0 +1,2 @@
+
+cd /tmp/tsbench-run-de_x16pn && sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y/; s/def Ykq(k,q,t,p): return sph_harm(q,k,p,t)/def Ykq(k,q,t,p): return sph_harm_y(k,q,t,p)/' ni.py && timeout 900 python3 ni.py

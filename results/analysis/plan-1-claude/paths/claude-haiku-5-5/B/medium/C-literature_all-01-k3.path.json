@@ -1,0 +1,257 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-literature_all-01-k3.jsonl",
+ "transcript_sha256": "1721e8bed7b75b1e72654168370285206b7f9ce1ac6d26748d2288bac8b5860b",
+ "answer": {
+  "Dq": 515.0,
+  "B": 790.0,
+  "C": 3555.0,
+  "out_of_scope": false,
+  "reason": "Solved the full d8 tetrahedral energy matrix with C = 4.5B so the 3T2 and 3T1(P) levels match the 4400 and 15500 cm-1 bands."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/ni.py\nimport numpy as np, itertools\nfrom scipy.optimize import fsolve\nfrom scipy.special import eval_legendre\n# quadrature on sphere\nnt, nphi = 40, 80\nxg, wg = np.polynomial.legendre.leggauss(nt)\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for j in range(nphi):\n        ph=2*np.pi*j/nphi\n        pts.append([st*np.cos(ph),st*np.sin(ph),ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\n# real d orbitals (unit-sphere angular parts), order: xy,yz,zx,z2,x2y2\norbs=[np.sqrt(15/(4*np.pi))*x*y, np.sqrt(15/(4*np.pi))*y*z, np.sqrt(15/(4*np.pi))*z*x,\n      np.sqrt(5/(16*np.pi))*(3*z*z-1), np.sqrt(15/(16*np.pi))*(x*x-y*y)]\nO=np.array(orbs)  # 5 x N\nG=P@P.T; G=np.clip(G,-1,1)\nPk={k:eval_legendre(k,G) for k in (0,2,4)}\ndef Ang(k):\n    # A[a,c,b,d] = int psi_a psi_c(1) P_k psi_b psi_d(2)\n    rho=np.einsum('an,cn,n->acn',O,O,W)  # 5x5xN\n    M=np.einsum('acn,nm,bdm->acbd', rho, Pk[k]*1.0, rho, optimize=True)\n    return M\nA={k:Ang(k) for k in (0,2,4)}\ndef Vtensor(B,C):\n    F4=441*C/35.0\n    F2=(441*B+5*F4)/9.0\n    F0=0.0\n    return F0*A[0]+F2*A[2]+F4*A[4]\n# Fock space: 10 spin orbitals: index = 2*orb + spin (0 up,1 down)\nndet=None\ndef states(ne):\n    out=[]\n    for c in itertools.combinations(range(10),ne):\n        out.append(sum(1<<i for i in c))\n    return out\ndef build(Dq,B,C):\n    eps=np.zeros(10)\n    for o in range(5):\n        e = -6*Dq if o>=3 else 4*Dq   # Td: e (z2,x2y2) low, t2 high\n        eps[2*o]=eps[2*o+1]=e\n    Vt=Vtensor(B,C)\n    basis=[s for s in states(8) if (bin(s & sum(1<<(2*o) for o in range(5))).count('1')==5)]\n    # Ms=1: n_up=5, n_down=3\n    basis=[s for s in states(8) if bin(s & 0b0101010101).count('1')==5]\n    idx={s:i for i,s in enumerate(basis)}\n    H=np.zeros((len(basis),)*2)\n    def occ(s): return [i for i in range(10) if s>>i &1]\n    for i,s in enumerate(basis):\n        for p in occ(s): H[i,i]+=eps[p]\n    # two-body: 1/2 sum V_{ijkl} a_i^+ a_j^+ a_l a_k with V_ijkl=<ij|V|kl>\n    spin=lambda p: p%2\n    orb=lambda p: p//2\n    for i,s in enumerate(basis):\n        o_list=occ(s)\n        for k in o_list:\n            for l in o_list:\n                if l==k: continue\n                # a_l a_k acting: annihilate k then l\n                # use general: for j, i' creation\n                pass\n    # simpler: loop over pairs of occupied (k<l) and all pairs (p<q) of final\n    for i,s in enumerate(basis):\n        ol=occ(s)\n        for a_ in range(len(ol)):\n            for b_ in range(a_+1,len(ol)):\n                k,l=ol[a_],ol[b_]\n                # annihilate k,l -> state t, then create p,q\n                t=s & ~(1<<k) & ~(1<<l)\n                for p in range(10):\n                    for q in range(p+1,10):\n                        if t>>p &1 or t>>q &1: continue\n                        # operator sum over ordered: 1/2 sum_{ijkl} V_{ij,kl} a+_i a+_j a_l a_k\n                        # for pair set {k,l}->{p,q}: contributions amplitude\n                        # matrix element <p q|V|k l> direct minus exchange\n                        def amp(pp,qq,kk,ll):\n                            if spin(pp)!=spin(kk) or spin(qq)!=spin(ll):\n                                return 0.0\n                            return Vt[orb(pp),orb(kk),orb(qq),orb(ll)]\n                        # direct: <pq|V|kl> with spins; exchange: <pq|V|lk>\n                        val=0.0\n                        for (pp,qq) in [(p,q),(q,p)]:\n                            for (kk,ll) in [(k,l),(l,k)]:\n                                pass\n                        # build full sign-correct element via determinant sign\n                        sgn_val = 0.0\n                        # matrix element of (1/2) sum V a+p a+q a_l a_k : use standard\n                        # <pq|V|kl> = V(p,k,q,l) with 1/2 factor summing both orderings -> just direct+exchange\n                        d = amp(p,q,k,l) - amp(p,q,l,k)\n                        if d==0: continue\n                        # sign from ordering: final state ordering (p<q) and initial (k<l)\n                        # compute fermionic sign: create/annihilate sequence\n                        def sign_apply(state, ops):\n                            sg=1\n                            st=state\n                            for typ,ix in ops:\n                                if typ=='a':\n                                    n=bin(st & ((1<<ix)-1)).count('1')\n                                    sg*= (-1)**n; st&=~(1<<ix)\n                                else:\n                                    n=bin(st & ((1<<ix)-1)).count('1')\n                                    sg*= (-1)**n; st|=(1<<ix)\n                            return sg,st\n                        sg,res=sign_apply(s,[('a',l),('a',k),('c',q),('c',p)])\n                        # careful: we need a_q+ a_p+ a_l a_k ordering; do explicit\n                        if res!=t|(1<<p)|(1<<q): continue\n                        H[idx[t|(1<<p)|(1<<q)], i] += 0  # placeholder\n                        # fill via direct computation below\n        # no-op\n    return basis,idx,H,eps,Vt\nEOF\necho skip",
+   "scripts": [
+    {
+     "name": "ni.py",
+     "sha256": "12e46926412a402a80069183e6623e87367fe2056af9eaa751e1d8ca3dbb33e1",
+     "lines": 112,
+     "code": "import numpy as np, itertools\nfrom scipy.optimize import fsolve\nfrom scipy.special import eval_legendre\n# quadrature on sphere\nnt, nphi = 40, 80\nxg, wg = np.polynomial.legendre.leggauss(nt)\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for j in range(nphi):\n        ph=2*np.pi*j/nphi\n        pts.append([st*np.cos(ph),st*np.sin(ph),ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\n# real d orbitals (unit-sphere angular parts), order: xy,yz,zx,z2,x2y2\norbs=[np.sqrt(15/(4*np.pi))*x*y, np.sqrt(15/(4*np.pi))*y*z, np.sqrt(15/(4*np.pi))*z*x,\n      np.sqrt(5/(16*np.pi))*(3*z*z-1), np.sqrt(15/(16*np.pi))*(x*x-y*y)]\nO=np.array(orbs)  # 5 x N\nG=P@P.T; G=np.clip(G,-1,1)\nPk={k:eval_legendre(k,G) for k in (0,2,4)}\ndef Ang(k):\n    # A[a,c,b,d] = int psi_a psi_c(1) P_k psi_b psi_d(2)\n    rho=np.einsum('an,cn,n->acn',O,O,W)  # 5x5xN\n    M=np.einsum('acn,nm,bdm->acbd', rho, Pk[k]*1.0, rho, optimize=True)\n    return M\nA={k:Ang(k) for k in (0,2,4)}\ndef Vtensor(B,C):\n    F4=441*C/35.0\n    F2=(441*B+5*F4)/9.0\n    F0=0.0\n    return F0*A[0]+F2*A[2]+F4*A[4]\n# Fock space: 10 spin orbitals: index = 2*orb + spin (0 up,1 down)\nndet=None\ndef states(ne):\n    out=[]\n    for c in itertools.combinations(range(10),ne):\n        out.append(sum(1<<i for i in c))\n    return out\ndef build(Dq,B,C):\n    eps=np.zeros(10)\n    for o in range(5):\n        e = -6*Dq if o>=3 else 4*Dq   # Td: e (z2,x2y2) low, t2 high\n        eps[2*o]=eps[2*o+1]=e\n    Vt=Vtensor(B,C)\n    basis=[s for s in states(8) if (bin(s & sum(1<<(2*o) for o in range(5))).count('1')==5)]\n    # Ms=1: n_up=5, n_down=3\n    basis=[s for s in states(8) if bin(s & 0b0101010101).count('1')==5]\n    idx={s:i for i,s in enumerate(basis)}\n    H=np.zeros((len(basis),)*2)\n    def occ(s): return [i for i in range(10) if s>>i &1]\n    for i,s in enumerate(basis):\n        for p in occ(s): H[i,i]+=eps[p]\n    # two-body: 1/2 sum V_{ijkl} a_i^+ a_j^+ a_l a_k with V_ijkl=<ij|V|kl>\n    spin=lambda p: p%2\n    orb=lambda p: p//2\n    for i,s in enumerate(basis):\n        o_list=occ(s)\n        for k in o_list:\n            for l in o_list:\n                if l==k: continue\n                # a_l a_k acting: annihilate k then l\n                # use general: for j, i' creation\n                pass\n    # simpler: loop over pairs of occupied (k<l) and all pairs (p<q) of final\n    for i,s in enumerate(basis):\n        ol=occ(s)\n        for a_ in range(len(ol)):\n            for b_ in range(a_+1,len(ol)):\n                k,l=ol[a_],ol[b_]\n                # annihilate k,l -> state t, then create p,q\n                t=s & ~(1<<k) & ~(1<<l)\n                for p in range(10):\n                    for q in range(p+1,10):\n                        if t>>p &1 or t>>q &1: continue\n                        # operator sum over ordered: 1/2 sum_{ijkl} V_{ij,kl} a+_i a+_j a_l a_k\n                        # for pair set {k,l}->{p,q}: contributions amplitude\n                        # matrix element <p q|V|k l> direct minus exchange\n                        def amp(pp,qq,kk,ll):\n                            if spin(pp)!=spin(kk) or spin(qq)!=spin(ll):\n                                return 0.0\n                            return Vt[orb(pp),orb(kk),orb(qq),orb(ll)]\n                        # direct: <pq|V|kl> with spins; exchange: <pq|V|lk>\n                        val=0.0\n                        for (pp,qq) in [(p,q),(q,p)]:\n                            for (kk,ll) in [(k,l),(l,k)]:\n                                pass\n                        # build full sign-correct element via determinant sign\n                        sgn_val = 0.0\n                        # matrix element of (1/2) sum V a+p a+q a_l a_k : use standard\n                        # <pq|V|kl> = V(p,k,q,l) with 1/2 factor summing both orderings -> just direct+exchange\n                        d = amp(p,q,k,l) - amp(p,q,l,k)\n                        if d==0: continue\n                        # sign from ordering: final state ordering (p<q) and initial (k<l)\n                        # compute fermionic sign: create/annihilate sequence\n                        def sign_apply(state, ops):\n                            sg=1\n                            st=state\n                            for typ,ix in ops:\n                                if typ=='a':\n                                    n=bin(st & ((1<<ix)-1)).count('1')\n                                    sg*= (-1)**n; st&=~(1<<ix)\n                                else:\n                                    n=bin(st & ((1<<ix)-1)).count('1')\n                                    sg*= (-1)**n; st|=(1<<ix)\n                            return sg,st\n                        sg,res=sign_apply(s,[('a',l),('a',k),('c',q),('c',p)])\n                        # careful: we need a_q+ a_p+ a_l a_k ordering; do explicit\n                        if res!=t|(1<<p)|(1<<q): continue\n                        H[idx[t|(1<<p)|(1<<q)], i] += 0  # placeholder\n                        # fill via direct computation below\n        # no-op\n    return basis,idx,H,eps,Vt\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 117: /tmp/ni.py: Read-only file system\nskip",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "ni.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "\nmkdir -p ~/ni && cd ~/ni && cat << 'EOF' > ni.py\nimport numpy as np, itertools\nfrom scipy.optimize import fsolve\nfrom scipy.special import eval_legendre\nnt, nphi = 30, 60\nxg, wg = np.polynomial.legendre.leggauss(nt)\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for j in range(nphi):\n        ph=2*np.pi*j/nphi\n        pts.append([st*np.cos(ph),st*np.sin(ph),ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nc=np.sqrt(15/(4*np.pi))\norbs=[c*x*y, c*y*z, c*z*x, np.sqrt(5/(16*np.pi))*(3*z*z-1), np.sqrt(15/(16*np.pi))*(x*x-y*y)]\nO=np.array(orbs)\nG=np.clip(P@P.T,-1,1)\nrho=np.einsum('an,cn,n->acn',O,O,W)\nA={}\nfor k in (0,2,4):\n    Pk=eval_legendre(k,G)\n    A[k]=np.einsum('acn,nm,bdm->acbd', rho, Pk, rho, optimize=True)\nprint(\"check Ang0 diag:\", np.round(A[0][0,0,0,0],6), np.round(A[0][0,0,1,1],6))\ndef Vt_of(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return F2*A[2]+F4*A[4]   # F0 irrelevant for triplet splittings (constant)\ndef apply_ops(s, ops):\n    # ops list applied right-to-left as given: list of (type,index) in order of application\n    sg=1; st=s\n    for typ,ix in ops:\n        n=bin(st & ((1<<ix)-1)).count('1')\n        if typ=='a':\n            if not (st>>ix)&1: return 0,None\n            sg*=(-1)**n; st&=~(1<<ix)\n        else:\n            if (st>>ix)&1: return 0,None\n            sg*=(-1)**n; st|=(1<<ix)\n    return sg,st\ndef energies(Dq,B,C,ne=8,nup=5):\n    eps=np.array([(-6*Dq if o>=3 else 4*Dq) for o in range(5) for _ in (0,1)])\n    Vt=Vt_of(B,C)\n    basis=[sum(1<<i for i in cc) for cc in itertools.combinations(range(10),ne)]\n    basis=[s for s in basis if bin(s & 0b0101010101).count('1')==nup]\n    idx={s:i for i,s in enumerate(basis)}\n    n=len(basis); H=np.zeros((n,n))\n    for i,s in enumerate(basis):\n        for p in range(10):\n            if (s>>p)&1: H[i,i]+=eps[p]\n    # 1/2 sum V_ijkl c+_i c+_j c_l c_k ; <ij|V|kl> = delta(si,sk)delta(sj,sl) Vt[oi,ok,oj,ol]\n    for i,s in enumerate(basis):\n        for a in range(10):\n            for b in range(10):\n                for cc_ in range(10):\n                    for d in range(10):\n                        # k=cc_ (annihilate first), l=d ; amplitude <ab|V|cc_ d>\n                        if a%2!=cc_%2 or b%2!=d%2: continue\n                        v=Vt[a//2,cc_//2,b//2,d//2]\n                        if abs(v)<1e-14: continue\n                        # apply c_k then c_l? operator c+_a c+_b c_d c_cc : annihilate cc_ first? order: c_l c_k with k=cc_, l=d\n                        sg,st=apply_ops(s,[('a',cc_),('a',d),('c',b),('c',a)][::-1][::-1])\n                        # apply order: first c_l? we apply in order: a(d) then a(cc_), but operator is c_d c_cc (rightmost cc acts first)\n                        sg,st=apply_ops(s,[('a',cc_)])\n                        if sg==0: continue\n                        sg2,st2=apply_ops(st,[('a',d)])\n                        if sg2==0: continue\n                        sg3,st3=apply_ops(st2,[('c',b)])\n                        if sg3==0: continue\n                        sg4,st4=apply_ops(st3,[('c',a)])\n                        if sg4==0: continue\n                        H[idx[st4],i]+=0.5*v*sg*sg2*sg3*sg4\n    # symmetrize check\n    return H, basis\nif __name__==\"__main__\":\n    H,b=energies(0.0,1.0,4.5)\n    print(np.round(np.linalg.eigvalsh(H),4))\nEOF\npython3 ni.py",
+   "scripts": [
+    {
+     "name": "ni.py",
+     "sha256": "95ef5ed3284466afa2eeedcfb1ce73f94cea2b6e5a5bb6d297dd853e3b700c5a",
+     "lines": 75,
+     "code": "import numpy as np, itertools\nfrom scipy.optimize import fsolve\nfrom scipy.special import eval_legendre\nnt, nphi = 30, 60\nxg, wg = np.polynomial.legendre.leggauss(nt)\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for j in range(nphi):\n        ph=2*np.pi*j/nphi\n        pts.append([st*np.cos(ph),st*np.sin(ph),ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nc=np.sqrt(15/(4*np.pi))\norbs=[c*x*y, c*y*z, c*z*x, np.sqrt(5/(16*np.pi))*(3*z*z-1), np.sqrt(15/(16*np.pi))*(x*x-y*y)]\nO=np.array(orbs)\nG=np.clip(P@P.T,-1,1)\nrho=np.einsum('an,cn,n->acn',O,O,W)\nA={}\nfor k in (0,2,4):\n    Pk=eval_legendre(k,G)\n    A[k]=np.einsum('acn,nm,bdm->acbd', rho, Pk, rho, optimize=True)\nprint(\"check Ang0 diag:\", np.round(A[0][0,0,0,0],6), np.round(A[0][0,0,1,1],6))\ndef Vt_of(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return F2*A[2]+F4*A[4]   # F0 irrelevant for triplet splittings (constant)\ndef apply_ops(s, ops):\n    # ops list applied right-to-left as given: list of (type,index) in order of application\n    sg=1; st=s\n    for typ,ix in ops:\n        n=bin(st & ((1<<ix)-1)).count('1')\n        if typ=='a':\n            if not (st>>ix)&1: return 0,None\n            sg*=(-1)**n; st&=~(1<<ix)\n        else:\n            if (st>>ix)&1: return 0,None\n            sg*=(-1)**n; st|=(1<<ix)\n    return sg,st\ndef energies(Dq,B,C,ne=8,nup=5):\n    eps=np.array([(-6*Dq if o>=3 else 4*Dq) for o in range(5) for _ in (0,1)])\n    Vt=Vt_of(B,C)\n    basis=[sum(1<<i for i in cc) for cc in itertools.combinations(range(10),ne)]\n    basis=[s for s in basis if bin(s & 0b0101010101).count('1')==nup]\n    idx={s:i for i,s in enumerate(basis)}\n    n=len(basis); H=np.zeros((n,n))\n    for i,s in enumerate(basis):\n        for p in range(10):\n            if (s>>p)&1: H[i,i]+=eps[p]\n    # 1/2 sum V_ijkl c+_i c+_j c_l c_k ; <ij|V|kl> = delta(si,sk)delta(sj,sl) Vt[oi,ok,oj,ol]\n    for i,s in enumerate(basis):\n        for a in range(10):\n            for b in range(10):\n                for cc_ in range(10):\n                    for d in range(10):\n                        # k=cc_ (annihilate first), l=d ; amplitude <ab|V|cc_ d>\n                        if a%2!=cc_%2 or b%2!=d%2: continue\n                        v=Vt[a//2,cc_//2,b//2,d//2]\n                        if abs(v)<1e-14: continue\n                        # apply c_k then c_l? operator c+_a c+_b c_d c_cc : annihilate cc_ first? order: c_l c_k with k=cc_, l=d\n                        sg,st=apply_ops(s,[('a',cc_),('a',d),('c',b),('c',a)][::-1][::-1])\n                        # apply order: first c_l? we apply in order: a(d) then a(cc_), but operator is c_d c_cc (rightmost cc acts first)\n                        sg,st=apply_ops(s,[('a',cc_)])\n                        if sg==0: continue\n                        sg2,st2=apply_ops(st,[('a',d)])\n                        if sg2==0: continue\n                        sg3,st3=apply_ops(st2,[('c',b)])\n                        if sg3==0: continue\n                        sg4,st4=apply_ops(st3,[('c',a)])\n                        if sg4==0: continue\n                        H[idx[st4],i]+=0.5*v*sg*sg2*sg3*sg4\n    # symmetrize check\n    return H, basis\nif __name__==\"__main__\":\n    H,b=energies(0.0,1.0,4.5)\n    print(np.round(np.linalg.eigvalsh(H),4))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "ni.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/ni’: Read-only file system\npython3: can't open file '/tmp/tsbench-run-byaa6kok/ni.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "ni.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    },
+    {
+     "script": "ni.py",
+     "line": 45,
+     "method": "matrix",
+     "text": "n=len(basis); H=np.zeros((n,n))"
+    },
+    {
+     "script": "ni.py",
+     "line": 75,
+     "method": "eigen_solver",
+     "text": "print(np.round(np.linalg.eigvalsh(H),4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "pwd; ls -ld . ; touch ./x_test && echo ok; df -h . | tail -1; echo $HOME",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-run-byaa6kok\ndrwx------ 3 <USER> <USER> 4096 Nov  4 12:37 .\nok\n/dev/vda1       158G   89G   63G  59% /tmp/tsbench-run-byaa6kok\n/tmp/tsbench-home-xehwqch9",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-byaa6kok && rm -f x_test && cat << 'EOF' > ni.py\nimport numpy as np, itertools\nfrom scipy.special import eval_legendre\nnt, nphi = 30, 60\nxg, wg = np.polynomial.legendre.leggauss(nt)\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for j in range(nphi):\n        ph=2*np.pi*j/nphi\n        pts.append([st*np.cos(ph),st*np.sin(ph),ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nc=np.sqrt(15/(4*np.pi))\nO=np.array([c*x*y, c*y*z, c*z*x, np.sqrt(5/(16*np.pi))*(3*z*z-1), np.sqrt(15/(16*np.pi))*(x*x-y*y)])\nG=np.clip(P@P.T,-1,1)\nrho=np.einsum('an,cn,n->acn',O,O,W)\nA={}\nfor k in (0,2,4):\n    A[k]=np.einsum('acn,nm,bdm->acbd', rho, eval_legendre(k,G), rho, optimize=True)\ndef Vt_of(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return F2*A[2]+F4*A[4]\ndef apply(s, typ, ix):\n    if typ=='a':\n        if not (s>>ix)&1: return 0,None\n    else:\n        if (s>>ix)&1: return 0,None\n    n=bin(s & ((1<<ix)-1)).count('1')\n    return (-1)**n, (s & ~(1<<ix)) if typ=='a' else (s | (1<<ix))\ndef energies(Dq,B,C,ne=8,nup=5):\n    eps=np.array([(-6*Dq if o>=3 else 4*Dq) for o in range(5) for _ in (0,1)])\n    Vt=Vt_of(B,C)\n    basis=[sum(1<<i for i in cc) for cc in itertools.combinations(range(10),ne)]\n    basis=[s for s in basis if bin(s & 0b0101010101).count('1')==nup]\n    idx={s:i for i,s in enumerate(basis)}\n    n=len(basis); H=np.zeros((n,n))\n    for i,s in enumerate(basis):\n        for p in range(10):\n            if (s>>p)&1: H[i,i]+=eps[p]\n    for i,s in enumerate(basis):\n        for a in range(10):\n            for b in range(10):\n                for k in range(10):\n                    for l in range(10):\n                        if a%2!=k%2 or b%2!=l%2: continue\n                        v=Vt[a//2,k//2,b//2,l//2]\n                        if abs(v)<1e-14: continue\n                        # operator c+_a c+_b c_l c_k\n                        sg=1; st=s; ok=True\n                        for typ,ix in (('a',k),('a',l),('c',b),('c',a)):\n                            f,st=apply(st,typ,ix)\n                            if f==0: ok=False;break\n                            sg*=f\n                        if ok:\n                            H[idx[st],i]+=0.5*v*sg\n    return H, basis\nif __name__==\"__main__\":\n    H,b=energies(0.0,1.0,4.5)\n    print(\"symmetric:\", np.allclose(H,H.T))\n    print(np.round(np.linalg.eigvalsh(H),4))\nEOF\npython3 ni.py",
+   "scripts": [
+    {
+     "name": "ni.py",
+     "sha256": "ec00f8b984d28965e1092c0ce31cd3c83c1a5d7f6ea6ecd06df2f5e0eec7f4db",
+     "lines": 60,
+     "code": "import numpy as np, itertools\nfrom scipy.special import eval_legendre\nnt, nphi = 30, 60\nxg, wg = np.polynomial.legendre.leggauss(nt)\npts=[];w=[]\nfor ct,wt in zip(xg,wg):\n    st=np.sqrt(1-ct*ct)\n    for j in range(nphi):\n        ph=2*np.pi*j/nphi\n        pts.append([st*np.cos(ph),st*np.sin(ph),ct]); w.append(wt*2*np.pi/nphi)\nP=np.array(pts); W=np.array(w)\nx,y,z=P.T\nc=np.sqrt(15/(4*np.pi))\nO=np.array([c*x*y, c*y*z, c*z*x, np.sqrt(5/(16*np.pi))*(3*z*z-1), np.sqrt(15/(16*np.pi))*(x*x-y*y)])\nG=np.clip(P@P.T,-1,1)\nrho=np.einsum('an,cn,n->acn',O,O,W)\nA={}\nfor k in (0,2,4):\n    A[k]=np.einsum('acn,nm,bdm->acbd', rho, eval_legendre(k,G), rho, optimize=True)\ndef Vt_of(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0\n    return F2*A[2]+F4*A[4]\ndef apply(s, typ, ix):\n    if typ=='a':\n        if not (s>>ix)&1: return 0,None\n    else:\n        if (s>>ix)&1: return 0,None\n    n=bin(s & ((1<<ix)-1)).count('1')\n    return (-1)**n, (s & ~(1<<ix)) if typ=='a' else (s | (1<<ix))\ndef energies(Dq,B,C,ne=8,nup=5):\n    eps=np.array([(-6*Dq if o>=3 else 4*Dq) for o in range(5) for _ in (0,1)])\n    Vt=Vt_of(B,C)\n    basis=[sum(1<<i for i in cc) for cc in itertools.combinations(range(10),ne)]\n    basis=[s for s in basis if bin(s & 0b0101010101).count('1')==nup]\n    idx={s:i for i,s in enumerate(basis)}\n    n=len(basis); H=np.zeros((n,n))\n    for i,s in enumerate(basis):\n        for p in range(10):\n            if (s>>p)&1: H[i,i]+=eps[p]\n    for i,s in enumerate(basis):\n        for a in range(10):\n            for b in range(10):\n                for k in range(10):\n                    for l in range(10):\n                        if a%2!=k%2 or b%2!=l%2: continue\n                        v=Vt[a//2,k//2,b//2,l//2]\n                        if abs(v)<1e-14: continue\n                        # operator c+_a c+_b c_l c_k\n                        sg=1; st=s; ok=True\n                        for typ,ix in (('a',k),('a',l),('c',b),('c',a)):\n                            f,st=apply(st,typ,ix)\n                            if f==0: ok=False;break\n                            sg*=f\n                        if ok:\n                            H[idx[st],i]+=0.5*v*sg\n    return H, basis\nif __name__==\"__main__\":\n    H,b=energies(0.0,1.0,4.5)\n    print(\"symmetric:\", np.allclose(H,H.T))\n    print(np.round(np.linalg.eigvalsh(H),4))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "ni.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "symmetric: True\n[-131.9 -131.9 -131.9 -131.9 -131.9 -131.9 -131.9 -116.9 -116.9 -116.9]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "ni.py",
+     "line": 36,
+     "method": "matrix",
+     "text": "n=len(basis); H=np.zeros((n,n))"
+    },
+    {
+     "script": "ni.py",
+     "line": 60,
+     "method": "eigen_solver",
+     "text": "print(np.round(np.linalg.eigvalsh(H),4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp/tsbench-run-byaa6kok && cat << 'EOF' > solve.py\nimport numpy as np\nfrom ni import energies\nfrom scipy.optimize import fsolve\ndef levels(Dq,B):\n    H,_=energies(Dq,B,4.5*B)\n    ev=np.sort(np.linalg.eigvalsh(H))\n    # group\n    out=[];cur=[ev[0]]\n    for e in ev[1:]:\n        if abs(e-cur[-1])<1e-6: cur.append(e)\n        else: out.append((np.mean(cur),len(cur))); cur=[e]\n    out.append((np.mean(cur),len(cur)))\n    return out\ndef resid(p):\n    Dq,B=p\n    L=levels(Dq,B); g=L[0][0]\n    # levels: 3T1F(3), 3T2(3), 3A2(1), 3T1P(3)\n    print(Dq,B,[(round(e-g,1),m) for e,m in L]) if False else None\n    t1=[e-g for e,m in L if m==3]\n    return [t1[1]-4400, t1[2]-15500]\nfor Dq,B in [(440,800),(500,700)]:\n    print([(round(e-levels(Dq,B)[0][0],1),m) for e,m in levels(Dq,B)])\nsol=fsolve(resid,[440,800],xtol=1e-10)\nprint(\"solution Dq,B:\",sol, \"C=\",4.5*sol[1])\nprint([(round(e-levels(*sol)[0][0],1),m) for e,m in levels(*sol)])\nEOF\npython3 solve.py",
+   "scripts": [
+    {
+     "name": "solve.py",
+     "sha256": "2a853072fd5041b0d73c7b86fa528db24a0c2206cd457c046d7a2ffed9565f37",
+     "lines": 25,
+     "code": "import numpy as np\nfrom ni import energies\nfrom scipy.optimize import fsolve\ndef levels(Dq,B):\n    H,_=energies(Dq,B,4.5*B)\n    ev=np.sort(np.linalg.eigvalsh(H))\n    # group\n    out=[];cur=[ev[0]]\n    for e in ev[1:]:\n        if abs(e-cur[-1])<1e-6: cur.append(e)\n        else: out.append((np.mean(cur),len(cur))); cur=[e]\n    out.append((np.mean(cur),len(cur)))\n    return out\ndef resid(p):\n    Dq,B=p\n    L=levels(Dq,B); g=L[0][0]\n    # levels: 3T1F(3), 3T2(3), 3A2(1), 3T1P(3)\n    print(Dq,B,[(round(e-g,1),m) for e,m in L]) if False else None\n    t1=[e-g for e,m in L if m==3]\n    return [t1[1]-4400, t1[2]-15500]\nfor Dq,B in [(440,800),(500,700)]:\n    print([(round(e-levels(Dq,B)[0][0],1),m) for e,m in levels(Dq,B)])\nsol=fsolve(resid,[440,800],xtol=1e-10)\nprint(\"solution Dq,B:\",sol, \"C=\",4.5*sol[1])\nprint([(round(e-levels(*sol)[0][0],1),m) for e,m in levels(*sol)])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "solve.py",
+     "written_in_step": 4
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[(np.float64(0.0), 3), (np.float64(3728.6), 3), (np.float64(8128.6), 1), (np.float64(15057.2), 3)]\n[(np.float64(0.0), 3), (np.float64(4290.1), 3), (np.float64(9290.1), 1), (np.float64(14080.1), 3)]\nsolution Dq,B: [515.13234264 790.08822843] C= 3555.3970279154605\n[(np.float64(0.0), 3), (np.float64(4400.0), 3), (np.float64(9551.3), 1), (np.float64(15500.0), 3)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "solve.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    },
+    {
+     "script": "solve.py",
+     "line": 6,
+     "method": "eigen_solver",
+     "text": "ev=np.sort(np.linalg.eigvalsh(H))"
+    },
+    {
+     "script": "solve.py",
+     "line": 23,
+     "method": "least_squares",
+     "text": "sol=fsolve(resid,[440,800],xtol=1e-10)"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B",
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 515.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "B",
+   "value": 790.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "C",
+   "value": 3555.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  }
+ ],
+ "summary": {
+  "n_steps": 5,
+  "n_scripts": 4,
+  "n_failed_steps": 1,
+  "n_values": 3,
+  "n_linked": 3,
+  "n_weak": 0,
+  "source_steps": [
+   4
+  ],
+  "methods": [
+   "least_squares",
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

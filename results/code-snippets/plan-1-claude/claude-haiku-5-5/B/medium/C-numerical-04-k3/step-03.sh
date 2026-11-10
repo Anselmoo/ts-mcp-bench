@@ -1,0 +1,1 @@
+cd "$HOME" 2>/dev/null || cd /var/tmp; pwd; ls -ld . ; touch t && echo writable

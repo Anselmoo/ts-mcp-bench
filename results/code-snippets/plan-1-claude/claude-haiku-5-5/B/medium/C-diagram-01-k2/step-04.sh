@@ -1,0 +1,1 @@
+sed -i 's|        chis=\[sum(np.trace(Vc.T@M@Vc) for M in Mclass\[k\])/sizes\[k\] for k in range(5)\]|        chis=[sum(np.trace(Vc.T@M@Vc) for M in Mclass[k])/sizes[k]/mult for k in range(5)]|' ts.py && grep -n "chis=" ts.py && python3 ts.py 2>&1 | tail -n 100

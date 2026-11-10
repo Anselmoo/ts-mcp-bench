@@ -1,0 +1,1 @@
+cd $(mktemp -d) 2>/dev/null || cd ~; pwd; touch x && echo writable

@@ -1,0 +1,100 @@
+cd /; python3 - << 'EOF'
+import numpy as np, itertools
+from scipy.special import sph_harm_y
+from scipy.optimize import least_squares
+def sph_harm(m,k,PH,TH): return sph_harm_y(k,m,TH,PH)
+xg,wg=np.polynomial.legendre.leggauss(30)
+nphi=60
+th=np.arccos(xg); ph=np.arange(nphi)*2*np.pi/nphi
+TH,PH=np.meshgrid(th,ph,indexing='ij'); W=(np.outer(wg,np.ones(nphi))*2*np.pi/nphi)
+x=np.sin(TH)*np.cos(PH); y=np.sin(TH)*np.sin(PH); z=np.cos(TH)
+orbs={'xy':x*y,'xz':x*z,'yz':y*z,'z2':(3*z**2-1)/2,'x2y2':(x**2-y**2)*np.sqrt(3)/2}
+names=list(orbs)
+for n in names:
+    f=orbs[n]; orbs[n]=f/np.sqrt(np.sum(W*f*f))
+def Rkq(k):
+    out=[]
+    for m in range(-k,k+1):
+        if m==0: out.append(sph_harm(0,k,PH,TH).real)
+        elif m>0: out.append(np.sqrt(2)*(-1)**m*sph_harm(m,k,PH,TH).real)
+        else: out.append(np.sqrt(2)*(-1)**m*sph_harm(-m,k,PH,TH).imag)
+    return out
+def ak(k):
+    R=Rkq(k); n=5
+    G=np.zeros((n,n,len(R)))
+    for i,a in enumerate(names):
+        for j,c in enumerate(names):
+            for q,Rq in enumerate(R):
+                G[i,j,q]=np.sum(W*orbs[a]*orbs[c]*Rq)
+    return np.einsum('acq,bdq->abcd',G,G)*4*np.pi/(2*k+1)
+A={k:ak(k) for k in (0,2,4)}
+so=[(o,s) for o in range(5) for s in (0,1)]
+N=10
+dets=list(itertools.combinations(range(N),7))
+idx={d:i for i,d in enumerate(dets)}
+M=len(dets)
+def apply_ops(det,ops):
+    occ=list(det); sign=1
+    for typ,i in reversed(ops):
+        if typ=='a':
+            if i not in occ: return None,0
+            p=occ.index(i); sign*=(-1)**p; occ.pop(p)
+        else:
+            if i in occ: return None,0
+            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)
+    return tuple(occ),sign
+ee=[(i,j,k,l) for i,j,k,l in itertools.product(range(N),repeat=4) if so[i][1]==so[k][1] and so[j][1]==so[l][1]]
+def op_matrix(terms):
+    H=np.zeros((M,M))
+    for m,d in enumerate(dets):
+        for (i,j,k,l,v) in terms:
+            r,s=apply_ops(d,[('c',i),('c',j),('a',l),('a',k)])
+            if r is not None: H[idx[r],m]+=0.5*v*s
+    return H
+def coul(k):
+    T=[]
+    for (i,j,kk,l) in ee:
+        v=A[k][so[i][0],so[j][0],so[kk][0],so[l][0]]
+        if abs(v)>1e-12: T.append((i,j,kk,l,v))
+    return op_matrix(T)
+H2=coul(2); H4=coul(4)
+hd=np.array([-4.0 if o<3 else 6.0 for o,s in so])
+Hcf=np.diag([sum(hd[i] for i in d) for d in dets])
+Sz=np.zeros((M,M)); Sp=np.zeros((M,M))
+for m,d in enumerate(dets):
+    Sz[m,m]=sum(0.5 if so[i][1]==0 else -0.5 for i in d)
+    for o in range(5):
+        r,s=apply_ops(d,[('c',2*o),('a',2*o+1)])
+        if r is not None: Sp[idx[r],m]+=s
+S2=Sz@Sz+0.5*(Sp@Sp.T+Sp.T@Sp)
+w,U=np.linalg.eigh(S2)
+Q={S:U[:,np.abs(w-S*(S+1))<1e-6] for S in (1.5,0.5)}
+P={S:(Q[S].T@Hcf@Q[S],Q[S].T@H2@Q[S],Q[S].T@H4@Q[S]) for S in Q}
+def levels(Dq,B,C):
+    F4=12.6*C; F2=49*B+7*C
+    out={}
+    for S in (1.5,0.5):
+        c,a2,a4=P[S]
+        e=np.linalg.eigvalsh(Dq*c+F2*a2+F4*a4)
+        u=[]
+        for x in np.sort(e):
+            if not u or abs(x-u[-1][0])>1e-3: u.append([x,1])
+            else: u[-1][1]+=1
+        out[S]=u
+    return out
+obs=np.array([8480,16305,20360,21001.])
+# quartet: 4T2=q[1], 4A2=q[2], 4T1P=q[3]; doublet 2T1(2) = one of doublet levels with deg 6
+def pred(p,dsel):
+    Dq,B,C=p
+    L=levels(Dq,B,C); q=[a for a,b in L[1.5]]; d=L[0.5]
+    g=q[0]
+    return np.array([q[1]-g,q[2]-g,q[3]-g,d[dsel][0]-g])
+best=[]
+for dsel in range(len(levels(900,900,4000)[0.5])):
+    if levels(900,900,4000)[0.5][dsel][1]!=6: continue
+    f=lambda p: pred(p,dsel)-obs
+    r=least_squares(f,[900,900,4000],bounds=([0,300,1000],[3000,1500,6000]))
+    best.append((np.sqrt(np.mean(r.fun**2)),dsel,r.x,r.fun))
+best.sort(key=lambda t:t[0])
+for b in best[:6]: print(np.round(b[0],1),b[1],np.round(b[2],1),np.round(b[3],1))
+EOF

@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> && history | tail -0; fc -ln -2 2>/dev/null | head -0; echo

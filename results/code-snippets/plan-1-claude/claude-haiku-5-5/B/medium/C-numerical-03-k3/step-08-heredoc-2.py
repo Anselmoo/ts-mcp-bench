@@ -1,0 +1,5 @@
+import sys; sys.path.insert(0,'/tmp')
+exec(open('/tmp/chk.py').read())
+np.set_printoptions(linewidth=150,suppress=True)
+print("V(III)-like test:", np.round(np.linalg.eigvalsh(build(1780,860,3500)),0))
+print("Dq=1 B=1 C=4:", np.round(np.linalg.eigvalsh(build(1,1,4)),4))

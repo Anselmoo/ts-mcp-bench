@@ -1,0 +1,1 @@
+for d in <SANDBOX_TMP> /dev/shm /var/tmp; do touch $d/t 2>&1 && echo ok $d; done

@@ -1,17 +1,20 @@
-"""Several models in one figure: share correct per model and condition, and the paired differences per model.
+"""Several models in one figure: share correct per model and condition, the paired differences per model, a bubble
+chart of tokens against share correct and a heat map of the classes.
 
-Both take the rows of `facts.models_overview`. A model is a band: its name at the left (wrapped at the characters
-`-`, `_`, `.`, `/` and spaces, never cut), the lines of its conditions or pairs beside it, and the numbers in one
-column right of the plot. A condition or a pair the model does not have leaves its line empty.
+`model_shares` and `model_paired` take the rows of `facts.models_overview`. A model is a band: its name at the left
+(wrapped at the characters `-`, `_`, `.`, `/` and spaces, never cut), the lines of its conditions or pairs beside it,
+and the numbers in one column right of the plot. A condition or a pair the model does not have leaves its line empty.
+`model_bubbles` has one bubble per model and condition, `class_heat` one panel per condition.
 """
 from __future__ import annotations
 
+import math
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from . import base
 
-__all__ = ["model_paired", "model_shares"]
+__all__ = ["class_heat", "model_bubbles", "model_paired", "model_shares"]
 
 _MINUS = "−"
 _LINE = 22.0  # one condition or pair line
@@ -171,3 +174,129 @@ def model_paired(rows: Sequence[dict], *, width: float = base.FULL_W) -> str:
                   [-1, -0.5, 0, 0.5, 1], -1.0, 1.0, "percentage points",
                   lambda v: "0" if v == 0 else base.signed_pp(v), "Paired differences in share correct per model",
                   lines, True)
+
+
+# ---------------------------------------------------------------- bubbles: tokens against share correct
+
+_R_MAX = 24.0  # the bubble of the largest number of runs
+
+
+def _box_free(box: tuple[float, float, float, float], taken: Sequence[tuple[float, float, float, float]]) -> bool:
+    x0, y0, x1, y1 = box
+    return all(x1 <= a or b <= x0 or y1 <= c or d <= y0 for a, c, b, d in taken)
+
+
+def _name_at(name: str, cx: float, cy: float, r: float, taken: list[tuple[float, float, float, float]],
+             limits: tuple[float, float, float, float]) -> str:
+    """The name of a model beside its last bubble: above, below, right or left, the first place free of other names
+    and bubbles and inside `limits`; above when none is."""
+    w, h, gap = base.text_width(name) + 2, base.TEXT_PX, 3.0
+    places = [(cx - w / 2, cy - r - gap - h), (cx - w / 2, cy + r + gap), (cx + r + gap, cy - h / 2),
+              (cx - r - gap - w, cy - h / 2)]
+    boxes = [(x, y, x + w, y + h) for x, y in places]
+    ok = [b for b in boxes if _box_free(b, taken) and limits[0] <= b[0] and b[2] <= limits[2] and limits[1] <= b[1]
+          and b[3] <= limits[3]]
+    box = ok[0] if ok else boxes[0]
+    taken.append(box)
+    return base.text(box[0] + 1, box[1] + h * 0.8, name, "start", "b")
+
+
+def model_bubbles(points: Sequence[Mapping], *, width: float = base.FULL_W, height: float = 420.0) -> str:
+    """One bubble per model and condition: x = median output tokens per run (log axis), y = share correct, area = runs,
+    colour = condition (the letter in the bubble says it again). A thin line joins the bubbles of one model in the order
+    A, B, C; its name stands beside its last bubble. `points` `[{"model", "label", "cond", "tokens", "share", "k",
+    "n"}]`; `label` is the short name of the model. A point without tokens or runs has no bubble."""
+    pts = [p for p in points if p.get("tokens") and p.get("n")]
+    if not pts:
+        return ""
+    w, top, x0, x1, axis_y = float(width), 34.0, 48.0, float(width) - 14.0, 34.0 + height
+    lo = 10.0 ** math.floor(math.log10(min(float(p["tokens"]) for p in pts)))
+    hi = 10.0 ** math.ceil(math.log10(max(float(p["tokens"]) for p in pts) * 1.01))
+    sx, sy = base.Log(lo, hi, x0 + _R_MAX, x1 - _R_MAX), base.Linear(0.0, 1.0, axis_y - _R_MAX, top + _R_MAX)
+    peak = max(int(p["n"]) for p in pts)
+    radius = {id(p): _R_MAX * math.sqrt(int(p["n"]) / peak) for p in pts}
+    out = [base.legend([(c, c) for c in base.CONDS if any(p["cond"] == c for p in pts)], x0, 14)[0],
+           base.text(x1, 14, f"area = runs, largest {peak}", "end", "mut"),
+           base.axis_bottom(sx, sx.ticks(), axis_y, x0, x1, "median output tokens per run, log scale",
+                            lambda v: base.number(v, 0), grid_to=top),
+           base.axis_left(sy, [0, 0.25, 0.5, 0.75, 1], x0, top, axis_y, "share correct", lambda v: base.number(100 * v),
+                          grid_to=x1)]
+    models = list(dict.fromkeys(str(p["model"]) for p in pts))
+    own = {m: sorted((p for p in pts if str(p["model"]) == m), key=lambda p: base.CONDS.index(p["cond"]))
+           for m in models}
+    taken = [(sx(float(p["tokens"])) - radius[id(p)], sy(float(p["share"])) - radius[id(p)],
+              sx(float(p["tokens"])) + radius[id(p)], sy(float(p["share"])) + radius[id(p)]) for p in pts]
+    for m in models:
+        line = own[m]
+        out += [base.line(sx(float(a["tokens"])), sy(float(a["share"])), sx(float(b["tokens"])), sy(float(b["share"])))
+                for a, b in zip(line, line[1:], strict=False)]
+    for p in sorted(pts, key=lambda q: -int(q["n"])):
+        cx, cy, r, c = sx(float(p["tokens"])), sy(float(p["share"])), radius[id(p)], p["cond"]
+        tip = (f"{p['model']}, {c}: median {base.number(float(p['tokens']), 0)} output tokens, "
+               f"{base.pct(float(p['share']))} correct, {p['k']}/{p['n']} runs")
+        out.append(base.circle(cx, cy, r, f"bubble c-{c} k-{c}", tip))
+        out.append(base.text(cx, cy + base.TEXT_PX * 0.35, c, "middle", "b"))
+    for m in models:
+        last = own[m][-1]
+        cx, cy, r = sx(float(last["tokens"])), sy(float(last["share"])), radius[id(last)]
+        out.append(_name_at(str(last.get("label") or m), cx, cy, r, taken, (x0, top, x1, axis_y)))
+    return base.figure(w, axis_y + 12 + 2 * base.TEXT_PX + 8, "Median output tokens against share correct, one bubble "
+                       "per model and condition", out)
+
+
+# ---------------------------------------------------------------- heat map: model by class, per condition
+
+_CELL_H = 26.0
+_HEAD_H = 26.0  # the class names above a panel
+_COND_H = 22.0  # the condition above a panel
+
+
+def class_heat(rows: Sequence[Mapping], color: Callable[[float], tuple[str, str]], *,
+               width: float = base.FULL_W) -> str:
+    """Tasks solved per model and class, one panel per condition: a cell is shaded by k/n and prints it. `rows`
+    `[{"model", "conds": [...], "classes": [{"class", "k": {cond: k}, "n_by": {cond: n}, "n": n}]}]`, a class in the
+    order of its first appearance; `color(p)` gives (fill, ink) of a share. A cell with no evaluable run says `no run`
+    and is not drawn as 0."""
+    classes = list(dict.fromkeys(str(x["class"]) for r in rows for x in r["classes"]))
+    conds = [c for c in base.CONDS if any(c in r["conds"] for r in rows)]
+    if not classes or not conds:
+        return ""
+    w = float(width)
+    names = [str(r["model"]) for r in rows]
+    col, wrapped = _name_lines(names, w)
+    x0 = col + _GAP
+    cell_w = (w - x0) / len(classes)
+    heights = [max(_CELL_H, len(n) * _NAME_PITCH + 6) for n in wrapped]
+    by = [{str(x["class"]): x for x in r["classes"]} for r in rows]
+    c = base.coord
+    out: list[str] = []
+    y = 0.0
+    for cond in conds:
+        out.append(base.text(0, y + base.TEXT_PX, f"Condition {cond}", "start", "b"))
+        y += _COND_H
+        for j, cls in enumerate(classes):
+            label = base.fit(cls, cell_w - 4, base.SMALL_PX)
+            out.append(base.text(x0 + (j + 0.5) * cell_w, y + base.SMALL_PX, label, "middle", "mut", base.SMALL_PX))
+        y += _HEAD_H - 6
+        for i, name in enumerate(names):
+            h = heights[i]
+            top_y = y + (h - len(wrapped[i]) * _NAME_PITCH) / 2
+            out += [base.text(0, top_y + base.TEXT_PX * 0.9 + n * _NAME_PITCH, s) for n, s in enumerate(wrapped[i])]
+            for j, cls in enumerate(classes):
+                x = by[i].get(cls)
+                n = int((x.get("n_by") or {}).get(cond, x["n"])) if x and cond in rows[i]["conds"] else 0
+                tx, ty = x0 + (j + 0.5) * cell_w, y + h / 2 + base.TEXT_PX * 0.35
+                if not n:
+                    out.append(base.rect(x0 + j * cell_w + 1, y + 1, cell_w - 2, h - 2, "band",
+                                         f"{name}, {cond}, {cls}: no run"))
+                    out.append(base.text(tx, ty, "no run", "middle", "mut", base.SMALL_PX))
+                    continue
+                k = int(x["k"].get(cond, 0))
+                fill, ink = color(k / n)
+                tip = f"{name}, {cond}, {cls}: {k} of {n} tasks ({base.pct(k / n)})"
+                out.append(f'<rect x="{c(x0 + j * cell_w + 1)}" y="{c(y + 1)}" width="{c(cell_w - 2)}" '
+                           f'height="{c(h - 2)}" style="fill:{fill}"><title>{base.escape(tip)}</title></rect>')
+                out.append(f'<text x="{c(tx)}" y="{c(ty)}" text-anchor="middle" style="fill:{ink}">{k}/{n}</text>')
+            y += h
+        y += 14
+    return base.figure(w, y, "Tasks solved per model and class, one panel per condition", out)

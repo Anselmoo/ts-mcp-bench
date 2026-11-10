@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; mkdir -p ./ni && cd ./ni && pwd && touch x && echo writable

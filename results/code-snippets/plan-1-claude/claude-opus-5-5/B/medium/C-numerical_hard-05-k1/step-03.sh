@@ -1,0 +1,1 @@
+cd /dev/shm 2>/dev/null && touch x && echo shm; ls -ld /tmp /var/tmp; pwd

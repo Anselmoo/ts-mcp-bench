@@ -1,0 +1,1 @@
+pwd; ls -ld /tmp /tmp/tsbench-run-81uchm8f 2>&1; touch /tmp/tsbench-run-81uchm8f/x 2>&1 && echo ok

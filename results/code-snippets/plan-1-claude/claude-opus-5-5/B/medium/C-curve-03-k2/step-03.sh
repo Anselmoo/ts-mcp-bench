@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-yxvn6zk7; touch a && echo ok; ls

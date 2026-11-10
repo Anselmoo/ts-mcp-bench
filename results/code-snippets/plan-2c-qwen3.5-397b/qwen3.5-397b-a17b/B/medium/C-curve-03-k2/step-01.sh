@@ -1,0 +1,1 @@
+find / -name "*.py" -o -name "*.txt" -o -name "*.dat" 2>/dev/null | head -50

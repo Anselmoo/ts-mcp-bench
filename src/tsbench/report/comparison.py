@@ -28,12 +28,21 @@ import datetime
 import json
 import math
 import pathlib
-import re
 import statistics
 
 from tsbench.core.api_errors import is_context_overflow
 from tsbench.report import page
-from tsbench.report.base import HARNESS, as_bool, as_number, as_run_sets, median, not_evaluable
+from tsbench.report.base import (
+    HARNESS,
+    as_bool,
+    as_number,
+    as_run_sets,
+    display_model,
+    is_claude,
+    median,
+    model_key,
+    not_evaluable,
+)
 from tsbench.report.svg.base import round_half_up
 from tsbench.score.run_sets import run_sets_in
 
@@ -43,7 +52,6 @@ __all__ = ["build_html", "collect", "context", "main", "sentences", "heatmap_cla
 COLORS = {"A": page.THEME["series-1"], "B": page.THEME["series-2"], "C": page.THEME["series-3"]}  # Figura series-1..3
 COND_NAMES = page.COND_NAMES
 CONDS = ("A", "B", "C")
-MODEL_ORDER = ["haiku", "sonnet", "opus"]
 NOT_EVAL = ("na429",)  # left out of every rate: HTTP 429 or another API error
 CATEGORY_TEXT = page.CATEGORY_TEXT
 
@@ -61,21 +69,6 @@ def _pct(x) -> str:
 
 def _usd(x) -> str:
     return "–" if x is None else f"{_decimal(x, 2)} USD"
-
-
-def display_model(model: str) -> str:
-    """`claude-haiku-5-5` -> `Haiku`; any other model id stays as it is."""
-    m = re.match(r"^claude-([a-z]+)-", model or "")
-    return m.group(1).capitalize() if m else (model or "?")
-
-
-def is_claude(model: str) -> bool:
-    return str(model).startswith("claude-")
-
-
-def model_key(model: str):
-    short = display_model(model).lower()
-    return (0, MODEL_ORDER.index(short), "") if short in MODEL_ORDER else (1, 0, model)
 
 
 def outcome_of(row: dict, task: dict | None, limited: bool) -> str:

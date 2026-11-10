@@ -1,0 +1,1 @@
+echo 'For d7 in Oh symmetry:\n- ⁴T₂g: E = 3*Dq + 2*B\n- ⁴A₂g: E = 6*Dq + 3*B\n- ²Eg: E = 3*Dq + 2*B\n- ²T₂g: E = 3*Dq + 2*B\n- ²T₁g: E = 3*Dq + 2*B\n- ²A₁g: E = 6*Dq + 3*B\n\nThese are the standard expressions from ligand field theory. The energies are relative to the ground term ⁴T₁g (E=0). We will compute E/B for each term at Dq/B = 1.45, 2.45, 3.00.'

@@ -1,0 +1,1 @@
+ls -la /dev/shm/ 2>&1 | head; ls /dev/shm/w 2>&1

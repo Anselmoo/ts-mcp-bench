@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null; mkdir -p ./w 2>/dev/null; echo test > ./w/t && echo ok || (cd $TMPDIR && pwd)

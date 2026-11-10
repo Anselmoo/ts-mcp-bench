@@ -1,0 +1,1 @@
+echo 'Calculating ligand-field terms for octahedral d7 ion with B = 784 cm⁻¹, C = 3699 cm⁻¹, and Dq/B = 1.45, 2.45, 3.00...'

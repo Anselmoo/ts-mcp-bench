@@ -22,6 +22,7 @@ import json
 import math
 import os
 import pathlib
+import re
 import typing
 import urllib.parse
 from collections.abc import Iterable, Sequence
@@ -35,7 +36,7 @@ from tsbench.report.svg.base import fixed, plural, round_half_up
 __all__ = ["CATEGORY_TEXT", "COND_LABEL", "COND_NAMES", "CSP", "ENV", "FLAG_TEXT", "MIN_SHARE_RUNS",
            "RUNTIME_JS", "SEG_KEYS", "STATUS", "STATUS_TEXT", "change_text", "color_ramp", "doi_href",
            "escape_html", "few_text", "figura_js", "find_js", "flag_notes", "href", "icon",
-           "json_for_script", "plural", "rate_row", "render", "run_flags", "share_interval", "signed",
+           "json_for_script", "local_links", "plural", "rate_row", "render", "run_flags", "share_interval", "signed",
            "task_pairs", "THEME"]
 
 # the colours of the Figura theme `neutral` that the pages also use outside the figures
@@ -180,6 +181,19 @@ def href(target, out_dir) -> str | None:
     if rel.startswith("/") or ":" in rel.split("/", 1)[0]:
         return None
     return urllib.parse.quote(rel)
+
+
+_SCRIPTED = re.compile(r"<(script|style)\b[^>]*>.*?</\1\s*>", re.S | re.I)
+_LINK_ATTR = re.compile(r"""\s(?:xlink:)?(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+_SELF_CONTAINED = ("#", "data:", "https:", "http:", "mailto:")
+
+
+def local_links(markup: str) -> list[str]:
+    """Every `src` and `href` of a page that points to a file beside it: what stops working when the page is copied on
+    its own. An anchor, a data URI and a web address (http, https, mailto) stay valid; scripts and styles are not
+    read."""
+    found = (a or b for a, b in _LINK_ATTR.findall(_SCRIPTED.sub("", markup)))
+    return sorted({f for f in found if not f.strip().lower().startswith(_SELF_CONTAINED)})
 
 
 def svg(figure: str) -> Markup:

@@ -1,0 +1,1 @@
+sed -i 's/    if s1!=s3 or s2!=s4: return 0./    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: return 0./' t.py; python3 d.py; python3 t.py

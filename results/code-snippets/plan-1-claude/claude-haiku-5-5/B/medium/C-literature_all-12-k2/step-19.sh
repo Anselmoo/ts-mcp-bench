@@ -1,0 +1,1 @@
+sed -i 's/F2=49\*B+5\*C/F2=49*B+7*C/' fit2.py fit.py ident.py && python3 chk.py && python3 grid.py

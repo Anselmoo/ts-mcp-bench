@@ -1,0 +1,1 @@
+cd /tmp && pwd && touch x 2>&1; echo $HOME; ls -ld $HOME /var/tmp 2>&1; df -h /var/tmp 2>&1 | tail -1

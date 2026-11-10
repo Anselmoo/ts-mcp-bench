@@ -1,0 +1,1 @@
+sed -i 's/H2,H4,HD,S2=np.load(.m.npy.)/H2,H4,HD,S2=np.load("m.npy"); S2=S2-0.75/; s/{0.75:.2.,3.75:.4.,8.75:.6.}/{0.0:"2",3.0:"4",8.0:"6"}/' fit2.py && python3 fit2.py

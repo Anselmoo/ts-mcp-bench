@@ -1,0 +1,1 @@
+sed -i "s/Phi=orbs(pts\[:,0\],pts\[:,1\],pts\[:,2\])/Phi=orbs(pts[:,0],pts[:,1],pts[:,2])\/np.sqrt(4*np.pi)/; s/'ia,ic,ij,jb,jd->acbd'/'ai,ci,ij,bj,dj->acbd'/" d4.py && time python3 d4.py

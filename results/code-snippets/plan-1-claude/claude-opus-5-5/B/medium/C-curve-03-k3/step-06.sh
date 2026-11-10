@@ -1,0 +1,1 @@
+mkdir -p $TMPDIR && cd $TMPDIR && history | tail -0; echo test > t && echo ok

@@ -1,0 +1,262 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-opus-5-5/B/medium/C-numerical_hard-02-k2.jsonl",
+ "transcript_sha256": "2dcda4b340edb6525d3cd0626de6f3207433163b062ba866d6f5ec750e5415ff",
+ "answer": {
+  "Dq": 2580.0,
+  "B": 756.0,
+  "C": 3252.0,
+  "out_of_scope": false,
+  "reason": "A full d4 ligand-field fit with C/B = 4.3 reproduces all three spin-allowed triplet bands exactly."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d4.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\n# ck(k,m1,m2)= sqrt(4pi/(2k+1)) * int Y2m1* Yk(m1-m2) Y2m2\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    # int conj(Y_l1m1) Y_kq Y_l2m2 = (-1)^m1 gaunt(2,k,2,-m1,q,m2)\n    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))\nCK={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\ndef eri(a,b,c,d,F):  # <ab|cd> orbitals m, a,c electron1\n    if a+b!=c+d: return 0.0\n    return sum(F[k]*CK[(k,a,c)]*CK[(k,d,b)] for k in (0,2,4))\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),4))\nidx={d:i for i,d in enumerate(dets)}\ndef V1(a,b,Dq):\n    if a==b: return {0:6,1:-4,-1:-4,2:1,-2:1}[a]*Dq\n    if {a,b}=={2,-2}: return 5*Dq\n    return 0\ndef build(Dq,B,C):\n    F4=C/35; F2=B+5*F4\n    F={0:0,2:F2*49/49,4:F4}\n    # with ck normalized such that F^k Slater: F2(Racah)=F^2/49 -> use F^k\n    F={0:0,2:F2*49,4:F4*441}\n    N=len(dets); H=np.zeros((N,N))\n    for i,D in enumerate(dets):\n        for j,E in enumerate(dets):\n            if j<i: continue\n            Ds=set(D);Es=set(E)\n            diff1=[p for p in D if p not in Es]; diff2=[p for p in E if p not in Ds]\n            if len(diff1)>2: continue\n            def sgn(det,p):\n                return (-1)**det.index(p)\n            val=0\n            if len(diff1)==0:\n                for p in D: val+=V1(so[p][0],so[p][0],Dq)\n                for p,q in itertools.combinations(D,2):\n                    (ma,sa),(mb,sb)=so[p],so[q]\n                    val+=eri(ma,mb,ma,mb,F)\n                    if sa==sb: val-=eri(ma,mb,mb,ma,F)\n            elif len(diff1)==1:\n                p=diff1[0];q=diff2[0]\n                s=sgn(D,p)*sgn(E,q)\n                if so[p][1]==so[q][1]: val+=V1(so[p][0],so[q][0],Dq)\n                for r in D:\n                    if r==p: continue\n                    (ma,sa),(mc,sc),(mr,sr)=so[p],so[q],so[r]\n                    if sa==sc: val+=eri(ma,mr,mc,mr,F)\n                    if sa==sr and sr==sc: val-=eri(ma,mr,mr,mc,F)\n                val*=s\n            else:\n                p1,p2=diff1;q1,q2=diff2\n                # sign: move to front\n                Dr=[x for x in D if x not in diff1]; Er=[x for x in E if x not in diff2]\n                def perm_sign(lst,target):\n                    l=list(lst); s=1\n                    for i in range(len(l)):\n                        j=l.index(target[i])\n                        if j!=i: l[i],l[j]=l[j],l[i]; s=-s\n                    return s\n                s=perm_sign(D,[p1,p2]+Dr)*perm_sign(E,[q1,q2]+Er)\n                (a,sa),(b,sb),(c,sc),(d,sd)=so[p1],so[p2],so[q1],so[q2]\n                if sa==sc and sb==sd: val+=eri(a,b,c,d,F)\n                if sa==sd and sb==sc: val-=eri(a,b,d,c,F)\n                val*=s\n            H[i,j]=val;H[j,i]=val\n    return H\n# Sz=1 dets (3 up 1 down? Sz = (nup-ndn)/2 =1 -> 3 up,1 down); S^2 via restricting Ms=1 and Ms=2\ndef ms_of(D): return sum(1 if so[p][1]==0 else -1 for p in D)/2\ndef levels(Dq,B,C):\n    H=build(Dq,B,C)\n    sel1=[i for i,D in enumerate(dets) if ms_of(D)==1]\n    sel2=[i for i,D in enumerate(dets) if ms_of(D)==2]\n    e1=np.linalg.eigvalsh(H[np.ix_(sel1,sel1)]); e2=np.linalg.eigvalsh(H[np.ix_(sel2,sel2)])\n    # triplet levels = Ms=1 levels minus quintet ones\n    e1=list(np.round(e1,4)); \n    for x in np.round(e2,4):\n        # remove closest\n        k=np.argmin(np.abs(np.array(e1)-x)); e1.pop(k)\n    e=np.array(sorted(e1))\n    # group\n    g=[];\n    for x in e:\n        if g and abs(x-g[-1][0])<1e-2: g[-1][1]+=1\n        else: g.append([x,1])\n    return g\nimport sys\nB=float(sys.argv[1]);Dq=float(sys.argv[2])\ng=levels(Dq,B,4.3*B)\nE0=g[0][0]\nfor x,n in g[:8]: print(round(x-E0,1),n)\nEOF\npython3 /tmp/d4.py 700 3000\n",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "70be716b8af0ca0cae9f8cd3ca9ed34c1716b940c1cd64f0de3f45ca6d75bc78",
+     "lines": 93,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\n# ck(k,m1,m2)= sqrt(4pi/(2k+1)) * int Y2m1* Yk(m1-m2) Y2m2\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    # int conj(Y_l1m1) Y_kq Y_l2m2 = (-1)^m1 gaunt(2,k,2,-m1,q,m2)\n    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))\nCK={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\ndef eri(a,b,c,d,F):  # <ab|cd> orbitals m, a,c electron1\n    if a+b!=c+d: return 0.0\n    return sum(F[k]*CK[(k,a,c)]*CK[(k,d,b)] for k in (0,2,4))\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),4))\nidx={d:i for i,d in enumerate(dets)}\ndef V1(a,b,Dq):\n    if a==b: return {0:6,1:-4,-1:-4,2:1,-2:1}[a]*Dq\n    if {a,b}=={2,-2}: return 5*Dq\n    return 0\ndef build(Dq,B,C):\n    F4=C/35; F2=B+5*F4\n    F={0:0,2:F2*49/49,4:F4}\n    # with ck normalized such that F^k Slater: F2(Racah)=F^2/49 -> use F^k\n    F={0:0,2:F2*49,4:F4*441}\n    N=len(dets); H=np.zeros((N,N))\n    for i,D in enumerate(dets):\n        for j,E in enumerate(dets):\n            if j<i: continue\n            Ds=set(D);Es=set(E)\n            diff1=[p for p in D if p not in Es]; diff2=[p for p in E if p not in Ds]\n            if len(diff1)>2: continue\n            def sgn(det,p):\n                return (-1)**det.index(p)\n            val=0\n            if len(diff1)==0:\n                for p in D: val+=V1(so[p][0],so[p][0],Dq)\n                for p,q in itertools.combinations(D,2):\n                    (ma,sa),(mb,sb)=so[p],so[q]\n                    val+=eri(ma,mb,ma,mb,F)\n                    if sa==sb: val-=eri(ma,mb,mb,ma,F)\n            elif len(diff1)==1:\n                p=diff1[0];q=diff2[0]\n                s=sgn(D,p)*sgn(E,q)\n                if so[p][1]==so[q][1]: val+=V1(so[p][0],so[q][0],Dq)\n                for r in D:\n                    if r==p: continue\n                    (ma,sa),(mc,sc),(mr,sr)=so[p],so[q],so[r]\n                    if sa==sc: val+=eri(ma,mr,mc,mr,F)\n                    if sa==sr and sr==sc: val-=eri(ma,mr,mr,mc,F)\n                val*=s\n            else:\n                p1,p2=diff1;q1,q2=diff2\n                # sign: move to front\n                Dr=[x for x in D if x not in diff1]; Er=[x for x in E if x not in diff2]\n                def perm_sign(lst,target):\n                    l=list(lst); s=1\n                    for i in range(len(l)):\n                        j=l.index(target[i])\n                        if j!=i: l[i],l[j]=l[j],l[i]; s=-s\n                    return s\n                s=perm_sign(D,[p1,p2]+Dr)*perm_sign(E,[q1,q2]+Er)\n                (a,sa),(b,sb),(c,sc),(d,sd)=so[p1],so[p2],so[q1],so[q2]\n                if sa==sc and sb==sd: val+=eri(a,b,c,d,F)\n                if sa==sd and sb==sc: val-=eri(a,b,d,c,F)\n                val*=s\n            H[i,j]=val;H[j,i]=val\n    return H\n# Sz=1 dets (3 up 1 down? Sz = (nup-ndn)/2 =1 -> 3 up,1 down); S^2 via restricting Ms=1 and Ms=2\ndef ms_of(D): return sum(1 if so[p][1]==0 else -1 for p in D)/2\ndef levels(Dq,B,C):\n    H=build(Dq,B,C)\n    sel1=[i for i,D in enumerate(dets) if ms_of(D)==1]\n    sel2=[i for i,D in enumerate(dets) if ms_of(D)==2]\n    e1=np.linalg.eigvalsh(H[np.ix_(sel1,sel1)]); e2=np.linalg.eigvalsh(H[np.ix_(sel2,sel2)])\n    # triplet levels = Ms=1 levels minus quintet ones\n    e1=list(np.round(e1,4)); \n    for x in np.round(e2,4):\n        # remove closest\n        k=np.argmin(np.abs(np.array(e1)-x)); e1.pop(k)\n    e=np.array(sorted(e1))\n    # group\n    g=[];\n    for x in e:\n        if g and abs(x-g[-1][0])<1e-2: g[-1][1]+=1\n        else: g.append([x,1])\n    return g\nimport sys\nB=float(sys.argv[1]);Dq=float(sys.argv[2])\ng=levels(Dq,B,4.3*B)\nE0=g[0][0]\nfor x,n in g[:8]: print(round(x-E0,1),n)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d4.py",
+     "written_in_step": 0
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 99: /tmp/d4.py: Read-only file system\npython3: can't open file '/tmp/d4.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d4.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "N=len(dets); H=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 68,
+     "method": "matrix",
+     "text": "H[i,j]=val;H[j,i]=val"
+    },
+    {
+     "script": "d4.py",
+     "line": 76,
+     "method": "eigen_solver",
+     "text": "e1=np.linalg.eigvalsh(H[np.ix_(sel1,sel1)]); e2=np.linalg.eigvalsh(H[np.ix_(sel2,sel2)])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ 2>/dev/null; pwd; touch x && echo ok; echo $TMPDIR",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 'x': Read-only file system\n<SANDBOX_TMP>\nShell cwd was reset to /tmp/tsbench-run-n_g2hj0h",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd $TMPDIR && cat << 'EOF' > d4.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))\nCK={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\ndef eri(a,b,c,d,F):\n    if a+b!=c+d: return 0.0\n    return sum(F[k]*CK[(k,a,c)]*CK[(k,d,b)] for k in (0,2,4))\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),4))\ndef V1(a,b,Dq):\n    if a==b: return {0:6,1:-4,-1:-4,2:1,-2:1}[a]*Dq\n    if {a,b}=={2,-2}: return 5*Dq\n    return 0\ndef perm_sign(lst,target):\n    l=list(lst); s=1\n    for i in range(len(l)):\n        j=l.index(target[i])\n        if j!=i: l[i],l[j]=l[j],l[i]; s=-s\n    return s\ndef build(Dq,B,C,sel):\n    F4=C/35; F2=B+5*F4\n    F={0:0,2:F2*49,4:F4*441}\n    D_=[dets[i] for i in sel]; N=len(D_); H=np.zeros((N,N))\n    for i,D in enumerate(D_):\n        for j,E in enumerate(D_):\n            if j<i: continue\n            Ds=set(D);Es=set(E)\n            diff1=[p for p in D if p not in Es]; diff2=[p for p in E if p not in Ds]\n            if len(diff1)>2: continue\n            val=0\n            if len(diff1)==0:\n                for p in D: val+=V1(so[p][0],so[p][0],Dq)\n                for p,q in itertools.combinations(D,2):\n                    (ma,sa),(mb,sb)=so[p],so[q]\n                    val+=eri(ma,mb,ma,mb,F)\n                    if sa==sb: val-=eri(ma,mb,mb,ma,F)\n            elif len(diff1)==1:\n                p=diff1[0];q=diff2[0]\n                Dr=[x for x in D if x!=p]\n                s=perm_sign(D,[p]+Dr)*perm_sign(E,[q]+Dr)\n                if so[p][1]==so[q][1]: val+=V1(so[p][0],so[q][0],Dq)\n                for r in Dr:\n                    (ma,sa),(mc,sc),(mr,sr)=so[p],so[q],so[r]\n                    if sa==sc: val+=eri(ma,mr,mc,mr,F)\n                    if sa==sr and sr==sc: val-=eri(ma,mr,mr,mc,F)\n                val*=s\n            else:\n                p1,p2=diff1;q1,q2=diff2\n                Dr=[x for x in D if x not in diff1]\n                s=perm_sign(D,[p1,p2]+Dr)*perm_sign(E,[q1,q2]+Dr)\n                (a,sa),(b,sb),(c,sc),(d,sd)=so[p1],so[p2],so[q1],so[q2]\n                if sa==sc and sb==sd: val+=eri(a,b,c,d,F)\n                if sa==sd and sb==sc: val-=eri(a,b,d,c,F)\n                val*=s\n            H[i,j]=val;H[j,i]=val\n    return H\ndef ms_of(D): return sum(1 if so[p][1]==0 else -1 for p in D)/2\nsel1=[i for i,D in enumerate(dets) if ms_of(D)==1]\nsel2=[i for i,D in enumerate(dets) if ms_of(D)==2]\nsel0=[i for i,D in enumerate(dets) if ms_of(D)==0]\ndef levels(Dq,B,C,singlets=False):\n    e1=list(np.round(np.linalg.eigvalsh(build(Dq,B,C,sel1)),3))\n    for x in np.round(np.linalg.eigvalsh(build(Dq,B,C,sel2)),3):\n        e1.pop(int(np.argmin(np.abs(np.array(e1)-x))))\n    e=sorted(e1)\n    g=[]\n    for x in e:\n        if g and abs(x-g[-1][0])<0.05: g[-1][1]+=1\n        else: g.append([x,1])\n    return g\nEOF\ncat > run.py << 'EOF'\nimport sys; sys.path.insert(0,'.')\nfrom d4 import *\nB=float(sys.argv[1]);Dq=float(sys.argv[2])\ng=levels(Dq,B,4.3*B); E0=g[0][0]\nfor x,n in g[:8]: print(round(x-E0,1),n)\nEOF\npython3 run.py 1000 0.0001 | head; echo; python3 run.py 600 3000\n",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "27ef28ea02ed55494a1058f15e64f53fb60c1becc5357dc15ecaf09054d4459b",
+     "lines": 74,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float((-1)**m1*gaunt(2,k,2,-m1,q,m2))*np.sqrt(4*np.pi/(2*k+1))\nCK={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\ndef eri(a,b,c,d,F):\n    if a+b!=c+d: return 0.0\n    return sum(F[k]*CK[(k,a,c)]*CK[(k,d,b)] for k in (0,2,4))\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),4))\ndef V1(a,b,Dq):\n    if a==b: return {0:6,1:-4,-1:-4,2:1,-2:1}[a]*Dq\n    if {a,b}=={2,-2}: return 5*Dq\n    return 0\ndef perm_sign(lst,target):\n    l=list(lst); s=1\n    for i in range(len(l)):\n        j=l.index(target[i])\n        if j!=i: l[i],l[j]=l[j],l[i]; s=-s\n    return s\ndef build(Dq,B,C,sel):\n    F4=C/35; F2=B+5*F4\n    F={0:0,2:F2*49,4:F4*441}\n    D_=[dets[i] for i in sel]; N=len(D_); H=np.zeros((N,N))\n    for i,D in enumerate(D_):\n        for j,E in enumerate(D_):\n            if j<i: continue\n            Ds=set(D);Es=set(E)\n            diff1=[p for p in D if p not in Es]; diff2=[p for p in E if p not in Ds]\n            if len(diff1)>2: continue\n            val=0\n            if len(diff1)==0:\n                for p in D: val+=V1(so[p][0],so[p][0],Dq)\n                for p,q in itertools.combinations(D,2):\n                    (ma,sa),(mb,sb)=so[p],so[q]\n                    val+=eri(ma,mb,ma,mb,F)\n                    if sa==sb: val-=eri(ma,mb,mb,ma,F)\n            elif len(diff1)==1:\n                p=diff1[0];q=diff2[0]\n                Dr=[x for x in D if x!=p]\n                s=perm_sign(D,[p]+Dr)*perm_sign(E,[q]+Dr)\n                if so[p][1]==so[q][1]: val+=V1(so[p][0],so[q][0],Dq)\n                for r in Dr:\n                    (ma,sa),(mc,sc),(mr,sr)=so[p],so[q],so[r]\n                    if sa==sc: val+=eri(ma,mr,mc,mr,F)\n                    if sa==sr and sr==sc: val-=eri(ma,mr,mr,mc,F)\n                val*=s\n            else:\n                p1,p2=diff1;q1,q2=diff2\n                Dr=[x for x in D if x not in diff1]\n                s=perm_sign(D,[p1,p2]+Dr)*perm_sign(E,[q1,q2]+Dr)\n                (a,sa),(b,sb),(c,sc),(d,sd)=so[p1],so[p2],so[q1],so[q2]\n                if sa==sc and sb==sd: val+=eri(a,b,c,d,F)\n                if sa==sd and sb==sc: val-=eri(a,b,d,c,F)\n                val*=s\n            H[i,j]=val;H[j,i]=val\n    return H\ndef ms_of(D): return sum(1 if so[p][1]==0 else -1 for p in D)/2\nsel1=[i for i,D in enumerate(dets) if ms_of(D)==1]\nsel2=[i for i,D in enumerate(dets) if ms_of(D)==2]\nsel0=[i for i,D in enumerate(dets) if ms_of(D)==0]\ndef levels(Dq,B,C,singlets=False):\n    e1=list(np.round(np.linalg.eigvalsh(build(Dq,B,C,sel1)),3))\n    for x in np.round(np.linalg.eigvalsh(build(Dq,B,C,sel2)),3):\n        e1.pop(int(np.argmin(np.abs(np.array(e1)-x))))\n    e=sorted(e1)\n    g=[]\n    for x in e:\n        if g and abs(x-g[-1][0])<0.05: g[-1][1]+=1\n        else: g.append([x,1])\n    return g\n"
+    },
+    {
+     "name": "run.py",
+     "sha256": "603b62e3da62ab5f8c6d7127a9d467b78811775f09579343cac83cdae1cde0e4",
+     "lines": 5,
+     "code": "import sys; sys.path.insert(0,'.')\nfrom d4 import *\nB=float(sys.argv[1]);Dq=float(sys.argv[2])\ng=levels(Dq,B,4.3*B); E0=g[0][0]\nfor x,n in g[:8]: print(round(x-E0,1),n)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0.0 11\n2835.8 3\n3175.8 7\n5000.0 9\n12000.0 5\n33724.2 7\n34064.2 3\n\n0.0 3\n27519.3 2\n28166.6 3\n28875.9 3\n29848.0 1\n31029.9 1\n32556.6 2\n40714.3 3\nShell cwd was reset to /tmp/tsbench-run-n_g2hj0h",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "D_=[dets[i] for i in sel]; N=len(D_); H=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 59,
+     "method": "matrix",
+     "text": "H[i,j]=val;H[j,i]=val"
+    },
+    {
+     "script": "d4.py",
+     "line": 66,
+     "method": "eigen_solver",
+     "text": "e1=list(np.round(np.linalg.eigvalsh(build(Dq,B,C,sel1)),3))"
+    },
+    {
+     "script": "d4.py",
+     "line": 67,
+     "method": "eigen_solver",
+     "text": "for x in np.round(np.linalg.eigvalsh(build(Dq,B,C,sel2)),3):"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd $TMPDIR && cat > fit.py << 'EOF'\nimport sys; sys.path.insert(0,'.')\nfrom d4 import *\nfrom scipy.optimize import least_squares\nobs=np.array([22900,23730,24580])\ndef res(p):\n    Dq,B=p; g=levels(Dq,B,4.3*B); E0=g[0][0]\n    assert g[0][1]==3\n    return np.array([g[i][0]-E0 for i in (1,2,3)])-obs\nr=least_squares(res,[2500,700])\nprint(r.x,res(r.x))\nDq,B=r.x; g=levels(Dq,B,4.3*B)\nprint([(round(x-g[0][0]),n) for x,n in g[:6]])\nEOF\npython3 fit.py\n",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "a5bc006585034ced8f6ba3d353e1c621a5b8445ee68b7ae9b5d2812617ea3d98",
+     "lines": 12,
+     "code": "import sys; sys.path.insert(0,'.')\nfrom d4 import *\nfrom scipy.optimize import least_squares\nobs=np.array([22900,23730,24580])\ndef res(p):\n    Dq,B=p; g=levels(Dq,B,4.3*B); E0=g[0][0]\n    assert g[0][1]==3\n    return np.array([g[i][0]-E0 for i in (1,2,3)])-obs\nr=least_squares(res,[2500,700])\nprint(r.x,res(r.x))\nDq,B=r.x; g=levels(Dq,B,4.3*B)\nprint([(round(x-g[0][0]),n) for x,n in g[:6]])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[2524.05326822  692.33266411] [-355.17  -428.24  -491.907]\n[(0, 3), (22545, 2), (23302, 3), (24088, 3), (25257, 1), (26303, 1)]\nShell cwd was reset to /tmp/tsbench-run-n_g2hj0h",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit.py",
+     "line": 9,
+     "method": "least_squares",
+     "text": "r=least_squares(res,[2500,700])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd $TMPDIR && sed -i 's/least_squares(res,\\[2500,700\\])/least_squares(res,[2500,700],diff_step=1e-3)/' fit.py && python3 fit.py\n",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[2580.33764147  756.29442726] [-0.01   0.021 -0.012]\n[(0, 3), (22900, 2), (23730, 3), (24580, 3), (25870, 1), (26937, 1)]\nShell cwd was reset to /tmp/tsbench-run-n_g2hj0h",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [],
+   "produces": [
+    "Dq",
+    "B"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 2580.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "B",
+   "value": 756.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "C",
+   "value": 3252.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 5,
+  "n_scripts": 4,
+  "n_failed_steps": 1,
+  "n_values": 3,
+  "n_linked": 2,
+  "n_weak": 0,
+  "source_steps": [
+   4
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": true
+ }
+}

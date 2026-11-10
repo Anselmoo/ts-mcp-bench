@@ -10,6 +10,7 @@ import os
 import pathlib
 import re
 import subprocess
+import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CODE_DIRS = ("src", "tests", "tools", "contrib")
@@ -98,6 +99,18 @@ def _export_ignore(*paths: str) -> dict[str, str]:
     out = subprocess.run(["git", "check-attr", "export-ignore", "--", *paths], cwd=ROOT, capture_output=True, text=True,
                          check=True, encoding="utf-8").stdout
     return {line.split(": ")[0]: line.split(": ")[-1] for line in out.splitlines()}
+
+
+def test_gitignore_lets_the_published_analysis_through():
+    """Otherwise a later plan's analysis is left out of the data commit, without a word."""
+    lines = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert lines.index("!results/analysis/") > lines.index("analysis/")
+
+
+def test_lint_leaves_out_the_run_data():
+    """The code under results/ is what the models wrote: data, not code of this repository."""
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "results" in config["tool"]["ruff"]["extend-exclude"]
 
 
 def test_release_archive_leaves_out_the_gitleaks_fingerprints():

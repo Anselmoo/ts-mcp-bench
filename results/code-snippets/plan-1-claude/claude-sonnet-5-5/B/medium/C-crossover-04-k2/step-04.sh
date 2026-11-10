@@ -1,0 +1,1 @@
+cd /dev/shm && touch x && echo w; python3 -c "import sympy,scipy;print(1)"

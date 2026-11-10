@@ -1,0 +1,512 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-racah_c-04-k2.jsonl",
+ "transcript_sha256": "63e954d6f5b3346ffc38154eaf75b1f3c650e5abde23c1b1cb923a9bd3512aa0",
+ "answer": {
+  "Dq": 1743.0,
+  "B": 781.0,
+  "C": 3243.0,
+  "out_of_scope": false,
+  "reason": "Full d3 ligand-field diagonalization fitted to the three quartet bands and the spin-forbidden 2Eg band gives Dq, B and C directly."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d3.py\nimport numpy as np, itertools\nfrom scipy.optimize import least_squares\nfrom scipy.special import sph_harm\n# angular grid\nnt, nph = 40, 80\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\n# real d functions (normalized on sphere)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\n# index: 0 xy,1 yz,2 zx (t2g); 3 x2-y2, 4 z2 (eg)\nnorm = [np.sum(W*f*f) for f in orbs]\norbs = [f/np.sqrt(n) for f,n in zip(orbs,norm)]\n# angular coefficients G_K(i,k ; j,l) = 4pi/(2K+1) sum_q [int phi_i phi_k Y_Kq*][int phi_j phi_l Y_Kq]\ndef Gcoef(i,k,j,l):\n    out = {}\n    for K in (0,2,4):\n        s = 0\n        for q in range(-K,K+1):\n            Ykq = sph_harm(q, K, PH, TH)\n            A = np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq))\n            Bv = np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s += A*Bv\n        out[K] = (4*np.pi/(2*K+1))*s.real\n    return out\n# spin orbitals: idx = 2*orb + spin (0 up,1 down)\nN=10\nG = {}\nfor i,k,j,l in itertools.product(range(5),repeat=4):\n    G[(i,k,j,l)] = Gcoef(i,k,j,l)\ndef build(Dq,B,C):\n    F4 = 441*C/35; F2 = (441*B+5*F4)/9\n    F = {0:0.0,2:F2,4:F4}\n    # one-electron\n    h = np.zeros((N,N))\n    for o in range(5):\n        e = -4*Dq if o<3 else 6*Dq\n        for s in range(2): h[2*o+s,2*o+s]=e\n    # two-electron integrals g[a,b,c,d] = <ab|1/r|cd> with spin deltas: a(orb i,spin s) etc\n    g = np.zeros((N,N,N,N))\n    for a,b,cc,d in itertools.product(range(N),repeat=4):\n        ia,sa=divmod(a,2); ib,sb=divmod(b,2); ic,sc=divmod(cc,2); id_,sd=divmod(d,2)\n        if sa!=sc or sb!=sd: continue\n        gg = G[(ia,ic,ib,id_)]\n        g[a,b,cc,d] = sum(gg[K]*F[K] for K in (0,2,4))\n    # basis: 3-electron determinants\n    states = [s for s in itertools.combinations(range(N),3)]\n    idx = {s:n for n,s in enumerate(states)}\n    M = len(states)\n    H = np.zeros((M,M))\n    def apply_two(occ, a,b,cc,d):\n        # c_a^dag c_b^dag c_c c_d  acting on ordered occupations (tuple sorted)\n        pass\n    for n,s in enumerate(states):\n        occ = list(s)\n        # one-electron\n        H[n,n] += sum(h[o,o] for o in occ)\n        # two-electron: 1/2 sum g_abcd c_a^+ c_b^+ c_d c_c  (<ab|cd>: a,b out; c,d in)\n        for p,q,r,t in itertools.product(range(N),repeat=4):\n            if g[p,q,r,t]==0: continue\n            # operator 1/2 g_{pqrt} c_p^+ c_q^+ c_t c_r\n            st = list(occ); sign=1\n            # annihilate r then t\n            ok=True\n            for op,ann in ((r,True),(t,True)):\n                pass\n            # do: apply c_r then c_t (order: c_p+ c_q+ c_t c_r -> first c_r, then c_t)\n            lst=list(st)\n            def annih(lst,x):\n                if x not in lst: return None,0\n                pos=lst.index(x); sg=(-1)**pos; lst.pop(pos); return lst,sg\n            lst,s1=annih(lst,r)\n            if lst is None: continue\n            lst,s2=annih(lst,t)\n            if lst is None: continue\n            def create(lst,x):\n                if x in lst: return None,0\n                pos=sum(1 for y in lst if y<x); sg=(-1)**pos; lst.insert(pos,x); lst.sort(); return lst,sg\n            lst,s3=create(lst,q)\n            if lst is None: continue\n            lst,s4=create(lst,p)\n            if lst is None: continue\n            H[idx[tuple(lst)],n] += 0.5*g[p,q,r,t]*s1*s2*s3*s4\n    return H, states\nEOF\ncd /tmp && python3 -c \"\nexec(open('d3.py').read())\nimport numpy as np\nH,st=build(1000,600,3000)\nprint(H.shape, np.allclose(H,H.T))\n\"\n",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "0024b605609bd9c49ca27af2043de5c131bcbe7b001760b420f0278daaef02ae",
+     "lines": 87,
+     "code": "import numpy as np, itertools\nfrom scipy.optimize import least_squares\nfrom scipy.special import sph_harm\n# angular grid\nnt, nph = 40, 80\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\n# real d functions (normalized on sphere)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\n# index: 0 xy,1 yz,2 zx (t2g); 3 x2-y2, 4 z2 (eg)\nnorm = [np.sum(W*f*f) for f in orbs]\norbs = [f/np.sqrt(n) for f,n in zip(orbs,norm)]\n# angular coefficients G_K(i,k ; j,l) = 4pi/(2K+1) sum_q [int phi_i phi_k Y_Kq*][int phi_j phi_l Y_Kq]\ndef Gcoef(i,k,j,l):\n    out = {}\n    for K in (0,2,4):\n        s = 0\n        for q in range(-K,K+1):\n            Ykq = sph_harm(q, K, PH, TH)\n            A = np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq))\n            Bv = np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s += A*Bv\n        out[K] = (4*np.pi/(2*K+1))*s.real\n    return out\n# spin orbitals: idx = 2*orb + spin (0 up,1 down)\nN=10\nG = {}\nfor i,k,j,l in itertools.product(range(5),repeat=4):\n    G[(i,k,j,l)] = Gcoef(i,k,j,l)\ndef build(Dq,B,C):\n    F4 = 441*C/35; F2 = (441*B+5*F4)/9\n    F = {0:0.0,2:F2,4:F4}\n    # one-electron\n    h = np.zeros((N,N))\n    for o in range(5):\n        e = -4*Dq if o<3 else 6*Dq\n        for s in range(2): h[2*o+s,2*o+s]=e\n    # two-electron integrals g[a,b,c,d] = <ab|1/r|cd> with spin deltas: a(orb i,spin s) etc\n    g = np.zeros((N,N,N,N))\n    for a,b,cc,d in itertools.product(range(N),repeat=4):\n        ia,sa=divmod(a,2); ib,sb=divmod(b,2); ic,sc=divmod(cc,2); id_,sd=divmod(d,2)\n        if sa!=sc or sb!=sd: continue\n        gg = G[(ia,ic,ib,id_)]\n        g[a,b,cc,d] = sum(gg[K]*F[K] for K in (0,2,4))\n    # basis: 3-electron determinants\n    states = [s for s in itertools.combinations(range(N),3)]\n    idx = {s:n for n,s in enumerate(states)}\n    M = len(states)\n    H = np.zeros((M,M))\n    def apply_two(occ, a,b,cc,d):\n        # c_a^dag c_b^dag c_c c_d  acting on ordered occupations (tuple sorted)\n        pass\n    for n,s in enumerate(states):\n        occ = list(s)\n        # one-electron\n        H[n,n] += sum(h[o,o] for o in occ)\n        # two-electron: 1/2 sum g_abcd c_a^+ c_b^+ c_d c_c  (<ab|cd>: a,b out; c,d in)\n        for p,q,r,t in itertools.product(range(N),repeat=4):\n            if g[p,q,r,t]==0: continue\n            # operator 1/2 g_{pqrt} c_p^+ c_q^+ c_t c_r\n            st = list(occ); sign=1\n            # annihilate r then t\n            ok=True\n            for op,ann in ((r,True),(t,True)):\n                pass\n            # do: apply c_r then c_t (order: c_p+ c_q+ c_t c_r -> first c_r, then c_t)\n            lst=list(st)\n            def annih(lst,x):\n                if x not in lst: return None,0\n                pos=lst.index(x); sg=(-1)**pos; lst.pop(pos); return lst,sg\n            lst,s1=annih(lst,r)\n            if lst is None: continue\n            lst,s2=annih(lst,t)\n            if lst is None: continue\n            def create(lst,x):\n                if x in lst: return None,0\n                pos=sum(1 for y in lst if y<x); sg=(-1)**pos; lst.insert(pos,x); lst.sort(); return lst,sg\n            lst,s3=create(lst,q)\n            if lst is None: continue\n            lst,s4=create(lst,p)\n            if lst is None: continue\n            H[idx[tuple(lst)],n] += 0.5*g[p,q,r,t]*s1*s2*s3*s4\n    return H, states\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 98: /tmp/d3.py: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    exec(open('d3.py').read())\n         ~~~~^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: 'd3.py'",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d3.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "h = np.zeros((N,N))"
+    },
+    {
+     "script": "d3.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "g = np.zeros((N,N,N,N))"
+    },
+    {
+     "script": "d3.py",
+     "line": 53,
+     "method": "matrix",
+     "text": "H = np.zeros((M,M))"
+    },
+    {
+     "script": "d3.py",
+     "line": 60,
+     "method": "matrix",
+     "text": "H[n,n] += sum(h[o,o] for o in occ)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ && pwd && touch x_test && echo ok; python3 -c \"import numpy, scipy; print(numpy.__version__, scipy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 'x_test': Read-only file system\n2.5.4 1.18.1\nShell cwd was reset to /tmp/tsbench-run-w85np7as",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq))\n            Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={}\nfor i,k,j,l in itertools.product(range(5),repeat=4):\n    G[(i,k,j,l)]=Gcoef(i,k,j,l)\n# sanity: Slater check: G0 for (ii,jj) should be 1/(4pi)*4pi... print a few\nprint(G[(0,0,0,0)], G[(4,4,0,0)], G[(0,0,4,4)])\nnp.save('/dev/null',0) if False else None\nimport pickle\npickle.dump(G, open('/home/G.pkl','wb')) if False else None\nglobals()['G']=G\nstates=list(itertools.combinations(range(N),3)); idx={s:n for n,s in enumerate(states)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef energy_matrix(Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    # two-electron terms: list of (p,q,r,t,val) for 1/2 g c_p+ c_q+ c_t c_r\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        # <p q | 1/r | r t>?? use <ab|cd>: a=p,b=q (out), c=r,d=t (in): spin a=c, b=d\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]\n        val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            H[idx[tuple(l)],n]+=v*s1*s2*s3*s4\n    return H\nH=energy_matrix(1000,600,3000)\nprint(np.allclose(H,H.T), np.linalg.eigvalsh(H)[:5])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "183bac9c217245e302d252e49e27736f0c44f8a52e7214afe7af3ba4375174bf",
+     "lines": 70,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq))\n            Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={}\nfor i,k,j,l in itertools.product(range(5),repeat=4):\n    G[(i,k,j,l)]=Gcoef(i,k,j,l)\n# sanity: Slater check: G0 for (ii,jj) should be 1/(4pi)*4pi... print a few\nprint(G[(0,0,0,0)], G[(4,4,0,0)], G[(0,0,4,4)])\nnp.save('/dev/null',0) if False else None\nimport pickle\npickle.dump(G, open('/home/G.pkl','wb')) if False else None\nglobals()['G']=G\nstates=list(itertools.combinations(range(N),3)); idx={s:n for n,s in enumerate(states)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef energy_matrix(Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    # two-electron terms: list of (p,q,r,t,val) for 1/2 g c_p+ c_q+ c_t c_r\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        # <p q | 1/r | r t>?? use <ab|cd>: a=p,b=q (out), c=r,d=t (in): spin a=c, b=d\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]\n        val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            H[idx[tuple(l)],n]+=v*s1*s2*s3*s4\n    return H\nH=energy_matrix(1000,600,3000)\nprint(np.allclose(H,H.T), np.linalg.eigvalsh(H)[:5])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "{0: np.float64(1.0000000000000004), 2: np.float64(0.0816326530612245), 4: np.float64(0.0816326530612245)} {0: np.float64(0.9999999999999999), 2: np.float64(-0.08163265306122701), 4: np.float64(0.013605442176871187)} {0: np.float64(0.9999999999999999), 2: np.float64(-0.08163265306122701), 4: np.float64(0.013605442176871187)}\nTrue [-33600. -33600. -33600. -33600. -23600.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 55,
+     "method": "matrix",
+     "text": "M=len(states); H=np.zeros((M,M))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 57,
+     "method": "matrix",
+     "text": "H[n,n]+=sum(h[o] for o in s)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 70,
+     "method": "eigen_solver",
+     "text": "print(np.allclose(H,H.T), np.linalg.eigvalsh(H)[:5])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 - \nimport numpy as np, itertools\nexec(open('/dev/stdin').read()) if False else None\nEOF\necho skip",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "af964f42eebc51b4aae0e75d38b1a85df122d2d34297674871e378650a45bba8",
+     "lines": 2,
+     "code": "import numpy as np, itertools\nexec(open('/dev/stdin').read()) if False else None\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "skip",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq)); Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={(i,k,j,l):Gcoef(i,k,j,l) for i,k,j,l in itertools.product(range(5),repeat=4)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef sector(states, Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9; F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]; val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            key=tuple(l)\n            if key in idx: H[idx[key],n]+=v*s1*s2*s3*s4\n    return H\n# spin-orbital: even=up, odd=down\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nS32=[tuple(sorted(s)) for s in itertools.combinations(up,3)]\nS12=[tuple(sorted(a+b)) for a in itertools.combinations(up,2) for b in dn]\ndef spectra(Dq,B,C):\n    e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))\n    e12=np.linalg.eigvalsh(sector(S12,Dq,B,C))\n    return e32,e12\ndef levels(Dq,B,C):\n    e32,e12=spectra(Dq,B,C)\n    # quartets from Ms=3/2\n    q=np.unique(np.round(e32,4))\n    # doublet = e12 minus quartet ones\n    d=list(e12)\n    for qe in e32:\n        j=np.argmin(np.abs(np.array(d)-qe))\n        if abs(d[j]-qe)<1e-4: d.pop(j)\n    return e32,np.array(sorted(d))\ne32,d=levels(1000,600,3000)\nprint(\"quartets\", np.round(e32,1))\nprint(\"doublets\", np.round(d,1))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "1bb27444fef11675b2241d835127cee33e2a4d32a5a150bf3ae51879d3452330",
+     "lines": 77,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq)); Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={(i,k,j,l):Gcoef(i,k,j,l) for i,k,j,l in itertools.product(range(5),repeat=4)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef sector(states, Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9; F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]; val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            key=tuple(l)\n            if key in idx: H[idx[key],n]+=v*s1*s2*s3*s4\n    return H\n# spin-orbital: even=up, odd=down\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nS32=[tuple(sorted(s)) for s in itertools.combinations(up,3)]\nS12=[tuple(sorted(a+b)) for a in itertools.combinations(up,2) for b in dn]\ndef spectra(Dq,B,C):\n    e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))\n    e12=np.linalg.eigvalsh(sector(S12,Dq,B,C))\n    return e32,e12\ndef levels(Dq,B,C):\n    e32,e12=spectra(Dq,B,C)\n    # quartets from Ms=3/2\n    q=np.unique(np.round(e32,4))\n    # doublet = e12 minus quartet ones\n    d=list(e12)\n    for qe in e32:\n        j=np.argmin(np.abs(np.array(d)-qe))\n        if abs(d[j]-qe)<1e-4: d.pop(j)\n    return e32,np.array(sorted(d))\ne32,d=levels(1000,600,3000)\nprint(\"quartets\", np.round(e32,1))\nprint(\"doublets\", np.round(d,1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"<stdin>\", line 60, in <module>\nTypeError: can only concatenate tuple (not \"int\") to tuple",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 44,
+     "method": "matrix",
+     "text": "H[n,n]+=sum(h[o] for o in s)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 63,
+     "method": "eigen_solver",
+     "text": "e12=np.linalg.eigvalsh(sector(S12,Dq,B,C))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /dev/null\nEOF\ncat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq)); Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={(i,k,j,l):Gcoef(i,k,j,l) for i,k,j,l in itertools.product(range(5),repeat=4)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef sector(states, Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9; F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]; val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            key=tuple(l)\n            if key in idx: H[idx[key],n]+=v*s1*s2*s3*s4\n    return H\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nS32=[tuple(sorted(s)) for s in itertools.combinations(up,3)]\nS12=[tuple(sorted(a+(b,))) for a in itertools.combinations(up,2) for b in dn]\ndef levels(Dq,B,C):\n    e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))\n    e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))\n    for qe in e32:\n        j=int(np.argmin(np.abs(np.array(e12)-qe)))\n        if abs(e12[j]-qe)<1e-4: e12.pop(j)\n    return e32,np.array(sorted(e12))\ne32,d=levels(1000,600,3000)\nprint(\"quartets\", np.round(e32,1))\nprint(\"doublets\", np.round(d,1))\nimport pickle\n# save functions via repl-free approach: print\ndef model(p):\n    Dq,B,C=p\n    e32,d=levels(Dq,B,C)\n    q=np.unique(np.round(e32,3))\n    g=q[0]\n    # quartet levels distinct, sorted: A2, T2, T1F, T1P\n    T2=q[1]; T1F=q[2]; T1P=q[3]\n    # doublet: lowest\n    E2=d[0]\n    return np.array([T2-g, T1F-g, T1P-g, E2-g])\nobs=np.array([17430,25000,39000,15410.])\ndef res(p):\n    return (model(p)-obs)/obs*100\nsol=least_squares(res,[1700,700,3000],x_scale=[1000,500,2000])\nprint(sol.x, res(sol.x), model(sol.x))\nEOF",
+   "scripts": [
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "26df34a6cd846dfa49ab7631ad45fc7a63ef0c62d3bd0eaf78f11d456755b740",
+     "lines": 85,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq)); Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={(i,k,j,l):Gcoef(i,k,j,l) for i,k,j,l in itertools.product(range(5),repeat=4)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef sector(states, Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9; F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]; val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            key=tuple(l)\n            if key in idx: H[idx[key],n]+=v*s1*s2*s3*s4\n    return H\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nS32=[tuple(sorted(s)) for s in itertools.combinations(up,3)]\nS12=[tuple(sorted(a+(b,))) for a in itertools.combinations(up,2) for b in dn]\ndef levels(Dq,B,C):\n    e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))\n    e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))\n    for qe in e32:\n        j=int(np.argmin(np.abs(np.array(e12)-qe)))\n        if abs(e12[j]-qe)<1e-4: e12.pop(j)\n    return e32,np.array(sorted(e12))\ne32,d=levels(1000,600,3000)\nprint(\"quartets\", np.round(e32,1))\nprint(\"doublets\", np.round(d,1))\nimport pickle\n# save functions via repl-free approach: print\ndef model(p):\n    Dq,B,C=p\n    e32,d=levels(Dq,B,C)\n    q=np.unique(np.round(e32,3))\n    g=q[0]\n    # quartet levels distinct, sorted: A2, T2, T1F, T1P\n    T2=q[1]; T1F=q[2]; T1P=q[3]\n    # doublet: lowest\n    E2=d[0]\n    return np.array([T2-g, T1F-g, T1P-g, E2-g])\nobs=np.array([17430,25000,39000,15410.])\ndef res(p):\n    return (model(p)-obs)/obs*100\nsol=least_squares(res,[1700,700,3000],x_scale=[1000,500,2000])\nprint(sol.x, res(sol.x), model(sol.x))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nquartets [-33600. -23600. -23600. -23600. -18372. -18372. -18372.  -9828.  -9828.\n  -9828.]\ndoublets [-20336.9 -20336.9 -19796.2 -19796.2 -19796.2 -14654.5 -14654.5 -14654.5\n -12200.  -10418.1 -10418.1 -10418.1  -9936.3  -9936.3  -9936.3  -8360.\n  -8360.   -6180.7  -6180.7  -6180.7  -1795.4  -1795.4  -1795.4   -244.7\n   -244.7   -244.7   -200.    2023.3   2023.3   2023.3   4613.8   4613.8\n   6157.9   6157.9   6157.9  19483.1  19483.1  20044.7  20044.7  20044.7]\nTraceback (most recent call last):\n  File \"<stdin>\", line 84, in <module>\nNameError: name 'least_squares' is not defined",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 41,
+     "method": "matrix",
+     "text": "idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "H[n,n]+=sum(h[o] for o in s)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 60,
+     "method": "eigen_solver",
+     "text": "e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 61,
+     "method": "eigen_solver",
+     "text": "e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 84,
+     "method": "least_squares",
+     "text": "sol=least_squares(res,[1700,700,3000],x_scale=[1000,500,2000])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq)); Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={(i,k,j,l):Gcoef(i,k,j,l) for i,k,j,l in itertools.product(range(5),repeat=4)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef sector(states, Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9; F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]; val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            key=tuple(l)\n            if key in idx: H[idx[key],n]+=v*s1*s2*s3*s4\n    return H\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nS32=[tuple(sorted(s)) for s in itertools.combinations(up,3)]\nS12=[tuple(sorted(a+(b,))) for a in itertools.combinations(up,2) for b in dn]\ndef levels(Dq,B,C):\n    e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))\n    e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))\n    for qe in e32:\n        j=int(np.argmin(np.abs(np.array(e12)-qe)))\n        if abs(e12[j]-qe)<1e-4: e12.pop(j)\n    return e32,np.array(sorted(e12))\ndef model(p):\n    Dq,B,C=p\n    e32,d=levels(Dq,B,C)\n    q=np.unique(np.round(e32,3))\n    g=q[0]\n    return np.array([q[1]-g, q[2]-g, q[3]-g, d[0]-g])\nobs=np.array([17430,25000,39000,15410.])\ndef res(p): return (model(p)-obs)\nsol=least_squares(res,[1740,700,3000],x_scale=[1000,500,2000])\nprint(\"Dq,B,C=\",sol.x, \"resid\",res(sol.x))\nprint(\"model\",model(sol.x))\nprint(\"ratio C/B\", sol.x[2]/sol.x[1])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "fa6c761134cdf406086bf1835f51fc904dd6a583fe6c7a11f9874321ade8b4c8",
+     "lines": 78,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq)); Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={(i,k,j,l):Gcoef(i,k,j,l) for i,k,j,l in itertools.product(range(5),repeat=4)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef sector(states, Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9; F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]; val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            key=tuple(l)\n            if key in idx: H[idx[key],n]+=v*s1*s2*s3*s4\n    return H\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nS32=[tuple(sorted(s)) for s in itertools.combinations(up,3)]\nS12=[tuple(sorted(a+(b,))) for a in itertools.combinations(up,2) for b in dn]\ndef levels(Dq,B,C):\n    e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))\n    e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))\n    for qe in e32:\n        j=int(np.argmin(np.abs(np.array(e12)-qe)))\n        if abs(e12[j]-qe)<1e-4: e12.pop(j)\n    return e32,np.array(sorted(e12))\ndef model(p):\n    Dq,B,C=p\n    e32,d=levels(Dq,B,C)\n    q=np.unique(np.round(e32,3))\n    g=q[0]\n    return np.array([q[1]-g, q[2]-g, q[3]-g, d[0]-g])\nobs=np.array([17430,25000,39000,15410.])\ndef res(p): return (model(p)-obs)\nsol=least_squares(res,[1740,700,3000],x_scale=[1000,500,2000])\nprint(\"Dq,B,C=\",sol.x, \"resid\",res(sol.x))\nprint(\"model\",model(sol.x))\nprint(\"ratio C/B\", sol.x[2]/sol.x[1])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Dq,B,C= [1739.99999605  699.99999927 2999.99998181] resid [  -30.          -610.065       -689.935      -1252.75891488]\nmodel [17400.         24389.935      38310.065      14157.24108512]\nratio C/B 4.285714264179376",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 44,
+     "method": "matrix",
+     "text": "H[n,n]+=sum(h[o] for o in s)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 61,
+     "method": "eigen_solver",
+     "text": "e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 75,
+     "method": "least_squares",
+     "text": "sol=least_squares(res,[1740,700,3000],x_scale=[1000,500,2000])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares, minimize\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq)); Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={(i,k,j,l):Gcoef(i,k,j,l) for i,k,j,l in itertools.product(range(5),repeat=4)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef sector(states, Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9; F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]; val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            key=tuple(l)\n            if key in idx: H[idx[key],n]+=v*s1*s2*s3*s4\n    return H\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nS32=[tuple(sorted(s)) for s in itertools.combinations(up,3)]\nS12=[tuple(sorted(a+(b,))) for a in itertools.combinations(up,2) for b in dn]\ndef levels(Dq,B,C):\n    e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))\n    e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))\n    for qe in e32:\n        j=int(np.argmin(np.abs(np.array(e12)-qe)))\n        if abs(e12[j]-qe)<1e-4: e12.pop(j)\n    return e32,np.array(sorted(e12))\ndef model(Dq,B,C):\n    e32,d=levels(Dq,B,C)\n    q=np.unique(np.round(e32,3)); g=q[0]\n    return np.array([q[1]-g, q[2]-g, q[3]-g, d[0]-g])\n# scan B,C at Dq=1743\nDq=1743.\nobs=np.array([17430,25000,39000,15410.])\nbest=None\nfor B in np.arange(550,900,25):\n  for C in np.arange(2500,5000,100):\n    m=model(Dq,B,C); r=np.sum(((m-obs)/obs)**2)\n    if best is None or r<best[0]: best=(r,B,C,m)\nprint(best)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "25113b4da2f0f0782cbbfd5df6fa6f3d117e5a6970c922c1deb6fcd2429628a1",
+     "lines": 79,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares, minimize\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq)); Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={(i,k,j,l):Gcoef(i,k,j,l) for i,k,j,l in itertools.product(range(5),repeat=4)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef sector(states, Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9; F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]; val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            key=tuple(l)\n            if key in idx: H[idx[key],n]+=v*s1*s2*s3*s4\n    return H\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nS32=[tuple(sorted(s)) for s in itertools.combinations(up,3)]\nS12=[tuple(sorted(a+(b,))) for a in itertools.combinations(up,2) for b in dn]\ndef levels(Dq,B,C):\n    e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))\n    e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))\n    for qe in e32:\n        j=int(np.argmin(np.abs(np.array(e12)-qe)))\n        if abs(e12[j]-qe)<1e-4: e12.pop(j)\n    return e32,np.array(sorted(e12))\ndef model(Dq,B,C):\n    e32,d=levels(Dq,B,C)\n    q=np.unique(np.round(e32,3)); g=q[0]\n    return np.array([q[1]-g, q[2]-g, q[3]-g, d[0]-g])\n# scan B,C at Dq=1743\nDq=1743.\nobs=np.array([17430,25000,39000,15410.])\nbest=None\nfor B in np.arange(550,900,25):\n  for C in np.arange(2500,5000,100):\n    m=model(Dq,B,C); r=np.sum(((m-obs)/obs)**2)\n    if best is None or r<best[0]: best=(r,B,C,m)\nprint(best)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(np.float64(4.4354234299191474e-05), np.int64(800), np.int64(3200), array([17430.        , 25130.499     , 39159.501     , 15400.50014386]))",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares, minimize"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 44,
+     "method": "matrix",
+     "text": "H[n,n]+=sum(h[o] for o in s)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 61,
+     "method": "eigen_solver",
+     "text": "e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' | python3 -\nimport numpy as np, itertools\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq)); Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={(i,k,j,l):Gcoef(i,k,j,l) for i,k,j,l in itertools.product(range(5),repeat=4)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef sector(states, Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9; F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]; val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            key=tuple(l)\n            if key in idx: H[idx[key],n]+=v*s1*s2*s3*s4\n    return H\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nS32=[tuple(sorted(s)) for s in itertools.combinations(up,3)]\nS12=[tuple(sorted(a+(b,))) for a in itertools.combinations(up,2) for b in dn]\ndef levels(Dq,B,C):\n    e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))\n    e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))\n    for qe in e32:\n        j=int(np.argmin(np.abs(np.array(e12)-qe)))\n        if abs(e12[j]-qe)<1e-4: e12.pop(j)\n    return e32,np.array(sorted(e12))\ndef model(Dq,B,C):\n    e32,d=levels(Dq,B,C)\n    q=np.unique(np.round(e32,4)); g=q[0]\n    return np.array([q[1]-g, q[2]-g, q[3]-g, d[0]-g])\nobs=np.array([17430,25000,39000,15410.])\ndef res(p):\n    Dq,B,C=p\n    return (model(Dq,B,C)-obs)\nsol=least_squares(res,[1743,780,3200],diff_step=1e-4)\nprint(sol.x, res(sol.x))\n# also check 2E isn't mis-identified: print doublet levels\ne32,d=levels(*sol.x); print(np.round(d[:8],1))\nprint(\"C/B\", sol.x[2]/sol.x[1])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "669a2b407d689ac462114d6d6e4863c351b3abdae993f3a6087b437a6a7450aa",
+     "lines": 79,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares\nnt, nph = 30, 60\nx, w = np.polynomial.legendre.leggauss(nt)\nth = np.arccos(x); ph = np.linspace(0,2*np.pi,nph,endpoint=False)\nTH, PH = np.meshgrid(th, ph, indexing='ij')\nW = np.outer(w, np.ones(nph))*(2*np.pi/nph)\nX = np.sin(TH)*np.cos(PH); Y = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nc = np.sqrt(15/(4*np.pi))\norbs = [c*X*Y, c*Y*Z, c*Z*X, c/2*(X**2-Y**2), np.sqrt(5/(16*np.pi))*(3*Z**2-1)]\norbs = [f/np.sqrt(np.sum(W*f*f)) for f in orbs]\ndef Gcoef(i,k,j,l):\n    out={}\n    for K in (0,2,4):\n        s=0\n        for q in range(-K,K+1):\n            Ykq = sph_harm_y(K,q,TH,PH)\n            A=np.sum(W*orbs[i]*orbs[k]*np.conj(Ykq)); Bv=np.sum(W*orbs[j]*orbs[l]*Ykq)\n            s+=A*Bv\n        out[K]=(4*np.pi/(2*K+1))*s.real\n    return out\nN=10\nG={(i,k,j,l):Gcoef(i,k,j,l) for i,k,j,l in itertools.product(range(5),repeat=4)}\ndef ann(lst,x):\n    if x not in lst: return None,0\n    p=lst.index(x); return lst[:p]+lst[p+1:], (-1)**p\ndef cre(lst,x):\n    if x in lst: return None,0\n    p=sum(1 for y in lst if y<x); return sorted(lst+[x]), (-1)**p\ndef sector(states, Dq,B,C):\n    F4=441*C/35; F2=(441*B+5*F4)/9; F={0:0.0,2:F2,4:F4}\n    h=np.zeros(N)\n    for o in range(5):\n        for s in range(2): h[2*o+s]= -4*Dq if o<3 else 6*Dq\n    terms=[]\n    for p,q,r,t in itertools.product(range(N),repeat=4):\n        ip,sp=divmod(p,2); iq,sq=divmod(q,2); ir,sr=divmod(r,2); it,st_=divmod(t,2)\n        if sp!=sr or sq!=st_: continue\n        gg=G[(ip,ir,iq,it)]; val=sum(gg[K]*F[K] for K in (0,2,4))\n        if abs(val)>1e-12: terms.append((p,q,r,t,0.5*val))\n    idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))\n    for n,s in enumerate(states):\n        H[n,n]+=sum(h[o] for o in s)\n        for p,q,r,t,v in terms:\n            l,s1=ann(list(s),r)\n            if l is None: continue\n            l,s2=ann(l,t)\n            if l is None: continue\n            l,s3=cre(l,q)\n            if l is None: continue\n            l,s4=cre(l,p)\n            if l is None: continue\n            key=tuple(l)\n            if key in idx: H[idx[key],n]+=v*s1*s2*s3*s4\n    return H\nup=[2*o for o in range(5)]; dn=[2*o+1 for o in range(5)]\nS32=[tuple(sorted(s)) for s in itertools.combinations(up,3)]\nS12=[tuple(sorted(a+(b,))) for a in itertools.combinations(up,2) for b in dn]\ndef levels(Dq,B,C):\n    e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))\n    e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))\n    for qe in e32:\n        j=int(np.argmin(np.abs(np.array(e12)-qe)))\n        if abs(e12[j]-qe)<1e-4: e12.pop(j)\n    return e32,np.array(sorted(e12))\ndef model(Dq,B,C):\n    e32,d=levels(Dq,B,C)\n    q=np.unique(np.round(e32,4)); g=q[0]\n    return np.array([q[1]-g, q[2]-g, q[3]-g, d[0]-g])\nobs=np.array([17430,25000,39000,15410.])\ndef res(p):\n    Dq,B,C=p\n    return (model(Dq,B,C)-obs)\nsol=least_squares(res,[1743,780,3200],diff_step=1e-4)\nprint(sol.x, res(sol.x))\n# also check 2E isn't mis-identified: print doublet levels\ne32,d=levels(*sol.x); print(np.round(d[:8],1))\nprint(\"C/B\", sol.x[2]/sol.x[1])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[1742.99800425  780.67014934 3242.70818156] [-1.9900000e-02 -4.5800000e-02  3.8300000e-02  2.4217592e-05]\n[-30835.4 -30835.4 -30116.2 -30116.2 -30116.2 -23179.7 -23179.7 -23179.7]\nC/B 4.153749421935482",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "idx={s:n for n,s in enumerate(states)}; M=len(states); H=np.zeros((M,M))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 44,
+     "method": "matrix",
+     "text": "H[n,n]+=sum(h[o] for o in s)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 61,
+     "method": "eigen_solver",
+     "text": "e32=np.linalg.eigvalsh(sector(S32,Dq,B,C))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "e12=list(np.linalg.eigvalsh(sector(S12,Dq,B,C)))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 75,
+     "method": "least_squares",
+     "text": "sol=least_squares(res,[1743,780,3200],diff_step=1e-4)"
+    }
+   ],
+   "produces": [
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1743.0,
+   "weak": false,
+   "steps": [
+    6,
+    8
+   ],
+   "typed_in_steps": [
+    6,
+    8
+   ],
+   "source_step": null
+  },
+  {
+   "path": "B",
+   "value": 781.0,
+   "weak": false,
+   "steps": [
+    8
+   ],
+   "typed_in_steps": [
+    8
+   ],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 3243.0,
+   "weak": false,
+   "steps": [
+    8
+   ],
+   "typed_in_steps": [],
+   "source_step": 8
+  }
+ ],
+ "summary": {
+  "n_steps": 9,
+  "n_scripts": 9,
+  "n_failed_steps": 3,
+  "n_values": 3,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   8
+  ],
+  "methods": [
+   "least_squares",
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

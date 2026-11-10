@@ -1,0 +1,1 @@
+ls -la /dev/shm/ ; ls /dev/shm/d5 2>&1

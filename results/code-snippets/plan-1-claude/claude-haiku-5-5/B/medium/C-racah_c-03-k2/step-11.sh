@@ -1,0 +1,1 @@
+sed -i 's/def group(v,tol=0.5)/def group(v,tol=1e-6)/' fit.py && python3 fit.py

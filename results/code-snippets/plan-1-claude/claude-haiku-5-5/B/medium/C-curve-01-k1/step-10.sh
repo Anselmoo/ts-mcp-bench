@@ -1,0 +1,1 @@
+sed -i "s/\"C2'\":rot((1,0,0),np.pi)/\"C2'\":rot((1,1,0),np.pi)/" run.py && sed -i "s/n=np.array(axis,float); n\/=np.linalg.norm(n)/n=np.array(axis,float); n\/=np.linalg.norm(n)/" d4.py && sed -i "s/if abs(n)>1e-6: dec\[name\]=round(n.real)/if abs(n)>1e-6: dec[name]=round(n.real\/(2*S+1),3)/" run.py && python3 run.py

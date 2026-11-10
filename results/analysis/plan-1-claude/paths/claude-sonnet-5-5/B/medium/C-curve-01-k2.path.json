@@ -1,0 +1,466 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-sonnet-5-5/B/medium/C-curve-01-k2.jsonl",
+ "transcript_sha256": "67ccc69c508184f14c9f788699fa391bdd5087e188e376f3b1dda4faeca53249",
+ "answer": {
+  "points": [
+   {
+    "dq_over_b": 0.9,
+    "term": "5T2g",
+    "e_over_b": 9.0
+   },
+   {
+    "dq_over_b": 0.9,
+    "term": "3T1g",
+    "e_over_b": 16.25
+   },
+   {
+    "dq_over_b": 0.9,
+    "term": "3T2g/3A1g+3Eg (next triplet states)",
+    "e_over_b": 22.59
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "3T1g",
+    "e_over_b": 4.84
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "1T2g",
+    "e_over_b": 17.07
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "1Eg",
+    "e_over_b": 18.43
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "5Eg",
+    "e_over_b": 6.68
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "1T2g",
+    "e_over_b": 12.69
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "1Eg",
+    "e_over_b": 14.09
+   }
+  ],
+  "reason": "I diagonalised the full d4 Slater-determinant Hamiltonian (B=821, C=3657 cm⁻¹, so C/B≈4.45) with the octahedral field added, and I took the terms from the degeneracies and ⟨S²⟩. The ground term is 5Eg at Dq/B=0.90 and 2.15 and 3T1g at 3.35, and the energies are measured from it. The 3T1g label at 0.90 is a degeneracy-based assignment, and the third level there is a 6-fold triplet, which I labelled as the 3A1g+3Eg pair."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "pip list 2>/dev/null | grep -i -E \"sympy|numpy\"; cat > /tmp/a.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nB=821.;C=3657.\ndef run(N,Dq,B=821.,C=3657.):\n    F4=C/35;F2=B+5*F4;Fs={0:0,2:49*F2,4:441*F4}\n    # c^k(l m, l m') = sqrt(4pi/(2k+1)) * ... use <Y_lm|Y_kq|Y_lm'> gaunt\n    ms=[-2,-1,0,1,2]\n    def ck(m1,m2,k):  # <2 m1|C^k_{m1-m2}|2 m2>\n        q=m1-m2\n        if abs(q)>k: return 0.\n        return float((-1)**m1*np.sqrt((2*k+1)/(4*np.pi))*0+0) if False else float(gaunt(2,k,2,-m1,q,m2)*(-1)**m1*np.sqrt(4*np.pi/(2*k+1))*(1))\n    # <ab|g|cd> spatial = sum_k c^k(a,c)c^k(d,b)F^k, q = ma-mc\n    def g(a,b,c,d):\n        if a+b!=c+d: return 0.\n        s=0\n        for k in (0,2,4):\n            s+=ck(a,c,k)*ck(d,b,k)*Fs[k]/(1 if k==0 else (49 if k==2 else 441))*(1 if k==0 else 1)\n        return s\n    # use Slater F^k directly: Fs already F^k? we defined Fs=D*F_k = Slater; divide above wrongly. fix:\n    def g(a,b,c,d):\n        if a+b!=c+d: return 0.\n        return sum(ck(a,c,k)*ck(d,b,k)*Fs[k] for k in (2,4))\n    # one-body\n    idx={m:i for i,m in enumerate(ms)}\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[idx[m]]=c\n        return v\n    s=2**-.5\n    eg=[vec({0:1}),vec({2:s,-2:s})]\n    t2=[vec({2:s,-2:-s}),vec({1:1}),vec({-1:1})]\n    h=sum(-6*Dq*np.outer(v,v.conj()) for v in eg)+sum(4*Dq*np.outer(v,v.conj()) for v in t2)\n    so=[(m,s_) for s_ in (0,1) for m in ms]\n    n=10\n    H1=np.zeros((n,n),complex);\n    for i,(m,s_) in enumerate(so):\n        for j,(m2,s2) in enumerate(so):\n            if s_==s2:H1[i,j]=h[idx[m],idx[m2]]\n    G=np.zeros((n,n,n,n))\n    for a,(ma,sa) in enumerate(so):\n     for b,(mb,sb) in enumerate(so):\n      for c,(mc,sc) in enumerate(so):\n       for d,(md,sd) in enumerate(so):\n        if sa==sc and sb==sd: G[a,b,c,d]=g(ma,mb,mc,md)\n    # H = sum h_ij a†i aj + 1/2 sum G_abcd a†a a†b b_d a_c ... <ab|g|cd>: a†a a†b a_d a_c\n    dets=list(itertools.combinations(range(n),N));di={d:i for i,d in enumerate(dets)}\n    def ap(op,det,create):\n        l=list(det)\n        if create:\n            if op in l:return None\n            pos=sum(1 for x in l if x<op);l.insert(pos,op);return tuple(l),(-1)**pos\n        if op not in l:return None\n        pos=l.index(op);l.pop(pos);return tuple(l),(-1)**pos\n    H=np.zeros((len(dets),len(dets)),complex)\n    for j,dt in enumerate(dets):\n        for p in range(n):\n         for q in range(n):\n            if abs(H1[p,q])<1e-12:continue\n            r=ap(q,dt,False)\n            if r is None:continue\n            r2=ap(p,r[0],True)\n            if r2 is None:continue\n            H[di[r2[0]],j]+=H1[p,q]*r[1]*r2[1]\n        for c in range(n):\n         for d in range(n):\n          r=ap(c,dt,False)\n          if r is None:continue\n          r1=ap(d,r[0],False)\n          if r1 is None:continue\n          sg=r[1]*r1[1]\n          # order: a†a a†b a_d a_c -> apply a_c first then a_d\n          for a in range(n):\n           for b in range(n):\n            gv=G[a,b,c,d]\n            if abs(gv)<1e-12:continue\n            r2=ap(b,r1[0],True)\n            if r2 is None:continue\n            r3=ap(a,r2[0],True)\n            if r3 is None:continue\n            H[di[r3[0]],j]+=0.5*gv*sg*r2[1]*r3[1]\n    return H,dets\nimport sys\nH,d=run(2,0.0);e=np.linalg.eigvalsh(H);e=np.round(e-e[0],1);print(sorted(set(e))[:4],B)\nfor x in (0.90,2.15,3.35):\n    H,d=run(4,x*B);\n    # spin: compute Sz and S2? use degeneracies instead\n    w=np.linalg.eigvalsh(H);w=w-w[0]\n    # group levels\n    lv=[];\n    for v in w:\n        if not lv or abs(v-lv[-1][0])>1e-3: lv.append([v,1])\n        else: lv[-1][1]+=1\n    print(x,[(round(v/B,3),k) for v,k in lv[:8]])\nE\npython3 /tmp/a.py",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "f94be371b0f645fd38c99b62bc78747a28c36b4e9aa0943806f3dc147b569fa9",
+     "lines": 93,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nB=821.;C=3657.\ndef run(N,Dq,B=821.,C=3657.):\n    F4=C/35;F2=B+5*F4;Fs={0:0,2:49*F2,4:441*F4}\n    # c^k(l m, l m') = sqrt(4pi/(2k+1)) * ... use <Y_lm|Y_kq|Y_lm'> gaunt\n    ms=[-2,-1,0,1,2]\n    def ck(m1,m2,k):  # <2 m1|C^k_{m1-m2}|2 m2>\n        q=m1-m2\n        if abs(q)>k: return 0.\n        return float((-1)**m1*np.sqrt((2*k+1)/(4*np.pi))*0+0) if False else float(gaunt(2,k,2,-m1,q,m2)*(-1)**m1*np.sqrt(4*np.pi/(2*k+1))*(1))\n    # <ab|g|cd> spatial = sum_k c^k(a,c)c^k(d,b)F^k, q = ma-mc\n    def g(a,b,c,d):\n        if a+b!=c+d: return 0.\n        s=0\n        for k in (0,2,4):\n            s+=ck(a,c,k)*ck(d,b,k)*Fs[k]/(1 if k==0 else (49 if k==2 else 441))*(1 if k==0 else 1)\n        return s\n    # use Slater F^k directly: Fs already F^k? we defined Fs=D*F_k = Slater; divide above wrongly. fix:\n    def g(a,b,c,d):\n        if a+b!=c+d: return 0.\n        return sum(ck(a,c,k)*ck(d,b,k)*Fs[k] for k in (2,4))\n    # one-body\n    idx={m:i for i,m in enumerate(ms)}\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[idx[m]]=c\n        return v\n    s=2**-.5\n    eg=[vec({0:1}),vec({2:s,-2:s})]\n    t2=[vec({2:s,-2:-s}),vec({1:1}),vec({-1:1})]\n    h=sum(-6*Dq*np.outer(v,v.conj()) for v in eg)+sum(4*Dq*np.outer(v,v.conj()) for v in t2)\n    so=[(m,s_) for s_ in (0,1) for m in ms]\n    n=10\n    H1=np.zeros((n,n),complex);\n    for i,(m,s_) in enumerate(so):\n        for j,(m2,s2) in enumerate(so):\n            if s_==s2:H1[i,j]=h[idx[m],idx[m2]]\n    G=np.zeros((n,n,n,n))\n    for a,(ma,sa) in enumerate(so):\n     for b,(mb,sb) in enumerate(so):\n      for c,(mc,sc) in enumerate(so):\n       for d,(md,sd) in enumerate(so):\n        if sa==sc and sb==sd: G[a,b,c,d]=g(ma,mb,mc,md)\n    # H = sum h_ij a†i aj + 1/2 sum G_abcd a†a a†b b_d a_c ... <ab|g|cd>: a†a a†b a_d a_c\n    dets=list(itertools.combinations(range(n),N));di={d:i for i,d in enumerate(dets)}\n    def ap(op,det,create):\n        l=list(det)\n        if create:\n            if op in l:return None\n            pos=sum(1 for x in l if x<op);l.insert(pos,op);return tuple(l),(-1)**pos\n        if op not in l:return None\n        pos=l.index(op);l.pop(pos);return tuple(l),(-1)**pos\n    H=np.zeros((len(dets),len(dets)),complex)\n    for j,dt in enumerate(dets):\n        for p in range(n):\n         for q in range(n):\n            if abs(H1[p,q])<1e-12:continue\n            r=ap(q,dt,False)\n            if r is None:continue\n            r2=ap(p,r[0],True)\n            if r2 is None:continue\n            H[di[r2[0]],j]+=H1[p,q]*r[1]*r2[1]\n        for c in range(n):\n         for d in range(n):\n          r=ap(c,dt,False)\n          if r is None:continue\n          r1=ap(d,r[0],False)\n          if r1 is None:continue\n          sg=r[1]*r1[1]\n          # order: a†a a†b a_d a_c -> apply a_c first then a_d\n          for a in range(n):\n           for b in range(n):\n            gv=G[a,b,c,d]\n            if abs(gv)<1e-12:continue\n            r2=ap(b,r1[0],True)\n            if r2 is None:continue\n            r3=ap(a,r2[0],True)\n            if r3 is None:continue\n            H[di[r3[0]],j]+=0.5*gv*sg*r2[1]*r3[1]\n    return H,dets\nimport sys\nH,d=run(2,0.0);e=np.linalg.eigvalsh(H);e=np.round(e-e[0],1);print(sorted(set(e))[:4],B)\nfor x in (0.90,2.15,3.35):\n    H,d=run(4,x*B);\n    # spin: compute Sz and S2? use degeneracies instead\n    w=np.linalg.eigvalsh(H);w=w-w[0]\n    # group levels\n    lv=[];\n    for v in w:\n        if not lv or abs(v-lv[-1][0])>1e-3: lv.append([v,1])\n        else: lv[-1][1]+=1\n    print(x,[(round(v/B,3),k) for v,k in lv[:8]])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 0
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 96: /tmp/a.py: Read-only file system\npython3: can't open file '/tmp/a.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 35,
+     "method": "matrix",
+     "text": "H1=np.zeros((n,n),complex);"
+    },
+    {
+     "script": "a.py",
+     "line": 39,
+     "method": "matrix",
+     "text": "G=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "a.py",
+     "line": 83,
+     "method": "eigen_solver",
+     "text": "H,d=run(2,0.0);e=np.linalg.eigvalsh(H);e=np.round(e-e[0],1);print(sorted(set(e))[:4],B)"
+    },
+    {
+     "script": "a.py",
+     "line": 87,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(H);w=w-w[0]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "echo $TMPDIR; cd ~ && pwd && touch x && echo ok; python3 -c \"import sympy,numpy;print(1)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "<SANDBOX_TMP>\n/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 'x': Read-only file system\n1\nShell cwd was reset to /tmp/tsbench-run-mbkxypzd",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "touch $TMPDIR/x && echo ok",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > $TMPDIR/a.py <<'E'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nB=821.;C=3657.\ndef run(N,Dq):\n    F4=C/35;F2=B+5*F4;Fs={2:49*F2,4:441*F4}\n    ms=[-2,-1,0,1,2]\n    def ck(m1,m2,k):\n        q=m1-m2\n        if abs(q)>k: return 0.\n        return float(gaunt(2,k,2,-m1,q,m2)*(-1)**m1*np.sqrt(4*np.pi/(2*k+1)))\n    def g(a,b,c,d):\n        if a+b!=c+d: return 0.\n        return sum(ck(a,c,k)*ck(d,b,k)*Fs[k] for k in (2,4))\n    idx={m:i for i,m in enumerate(ms)}\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[idx[m]]=c\n        return v\n    s=2**-.5\n    eg=[vec({0:1}),vec({2:s,-2:s})]\n    t2=[vec({2:s,-2:-s}),vec({1:1}),vec({-1:1})]\n    h=sum(-6*Dq*np.outer(v,v.conj()) for v in eg)+sum(4*Dq*np.outer(v,v.conj()) for v in t2)\n    so=[(m,s_) for s_ in (0,1) for m in ms]\n    n=10\n    H1=np.zeros((n,n),complex)\n    for i,(m,s_) in enumerate(so):\n        for j,(m2,s2) in enumerate(so):\n            if s_==s2:H1[i,j]=h[idx[m],idx[m2]]\n    G=np.zeros((n,n,n,n))\n    for a,(ma,sa) in enumerate(so):\n     for b,(mb,sb) in enumerate(so):\n      for c,(mc,sc) in enumerate(so):\n       for d,(md,sd) in enumerate(so):\n        if sa==sc and sb==sd: G[a,b,c,d]=g(ma,mb,mc,md)\n    dets=list(itertools.combinations(range(n),N));di={d:i for i,d in enumerate(dets)}\n    def ap(op,det,create):\n        l=list(det)\n        if create:\n            if op in l:return None\n            pos=sum(1 for x in l if x<op);l.insert(pos,op);return tuple(l),(-1)**pos\n        if op not in l:return None\n        pos=l.index(op);l.pop(pos);return tuple(l),(-1)**pos\n    H=np.zeros((len(dets),len(dets)),complex)\n    S2=np.zeros_like(H)\n    for j,dt in enumerate(dets):\n        for p in range(n):\n         for q in range(n):\n            if abs(H1[p,q])<1e-12:continue\n            r=ap(q,dt,False)\n            if r is None:continue\n            r2=ap(p,r[0],True)\n            if r2 is None:continue\n            H[di[r2[0]],j]+=H1[p,q]*r[1]*r2[1]\n        for c in range(n):\n         for d in range(n):\n          r=ap(c,dt,False)\n          if r is None:continue\n          r1=ap(d,r[0],False)\n          if r1 is None:continue\n          sg=r[1]*r1[1]\n          for a in range(n):\n           for b in range(n):\n            gv=G[a,b,c,d]\n            if abs(gv)<1e-12:continue\n            r2=ap(b,r1[0],True)\n            if r2 is None:continue\n            r3=ap(a,r2[0],True)\n            if r3 is None:continue\n            H[di[r3[0]],j]+=0.5*gv*sg*r2[1]*r3[1]\n        # S2 = S-S+ + Sz^2+Sz ; S+ = sum a†(m,up) a(m,down) ; up index 5+\n        nu=sum(1 for x in dt if x>=5);nd=N-nu;sz=(nu-nd)/2\n        S2[j,j]+=sz*sz+sz\n        for m in range(5):\n            r=ap(m,dt,False)   # annihilate down(m)\n            if r is None:continue\n            r2=ap(5+m,r[0],True)\n            if r2 is None:continue\n            d1=r2[0];ph=r[1]*r2[1]\n            # apply S-: a†(down m') a(up m')\n            for m2 in range(5):\n                t=ap(5+m2,d1,False)\n                if t is None:continue\n                t2_=ap(m2,t[0],True)\n                if t2_ is None:continue\n                S2[di[t2_[0]],j]+=ph*t[1]*t2_[1]\n    return H,S2\nH,S2=run(2,0.0);e=np.linalg.eigvalsh(H);print(sorted(set(np.round(e-e[0],1)))[:4],B)\nfor x in (0.90,2.15,3.35):\n    H,S2=run(4,x*B)\n    w,v=np.linalg.eigh(H+1e-3*S2)\n    sp=np.einsum('ij,ik,kj->j',v.conj(),S2,v).real\n    w=np.einsum('ij,ik,kj->j',v.conj(),H,v).real\n    w=w-w.min()\n    lv=[]\n    for a,b in zip(w,sp):\n        if not lv or abs(a-lv[-1][0])>1e-2 or abs(b-lv[-1][1])>.1: lv.append([a,b,1])\n        else: lv[-1][2]+=1\n    print(x,[(round(a/B,3),round(2*(0.5+(1+4*b)**.5/2-0.5)),k) for a,b,k in lv[:8]])\nE\npython3 $TMPDIR/a.py",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "6eb25d6e704f99d7ce767c01b78d0fb15bbb04eb9739643dfe1f3b5a35d92e43",
+     "lines": 98,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nB=821.;C=3657.\ndef run(N,Dq):\n    F4=C/35;F2=B+5*F4;Fs={2:49*F2,4:441*F4}\n    ms=[-2,-1,0,1,2]\n    def ck(m1,m2,k):\n        q=m1-m2\n        if abs(q)>k: return 0.\n        return float(gaunt(2,k,2,-m1,q,m2)*(-1)**m1*np.sqrt(4*np.pi/(2*k+1)))\n    def g(a,b,c,d):\n        if a+b!=c+d: return 0.\n        return sum(ck(a,c,k)*ck(d,b,k)*Fs[k] for k in (2,4))\n    idx={m:i for i,m in enumerate(ms)}\n    def vec(d):\n        v=np.zeros(5,complex)\n        for m,c in d.items(): v[idx[m]]=c\n        return v\n    s=2**-.5\n    eg=[vec({0:1}),vec({2:s,-2:s})]\n    t2=[vec({2:s,-2:-s}),vec({1:1}),vec({-1:1})]\n    h=sum(-6*Dq*np.outer(v,v.conj()) for v in eg)+sum(4*Dq*np.outer(v,v.conj()) for v in t2)\n    so=[(m,s_) for s_ in (0,1) for m in ms]\n    n=10\n    H1=np.zeros((n,n),complex)\n    for i,(m,s_) in enumerate(so):\n        for j,(m2,s2) in enumerate(so):\n            if s_==s2:H1[i,j]=h[idx[m],idx[m2]]\n    G=np.zeros((n,n,n,n))\n    for a,(ma,sa) in enumerate(so):\n     for b,(mb,sb) in enumerate(so):\n      for c,(mc,sc) in enumerate(so):\n       for d,(md,sd) in enumerate(so):\n        if sa==sc and sb==sd: G[a,b,c,d]=g(ma,mb,mc,md)\n    dets=list(itertools.combinations(range(n),N));di={d:i for i,d in enumerate(dets)}\n    def ap(op,det,create):\n        l=list(det)\n        if create:\n            if op in l:return None\n            pos=sum(1 for x in l if x<op);l.insert(pos,op);return tuple(l),(-1)**pos\n        if op not in l:return None\n        pos=l.index(op);l.pop(pos);return tuple(l),(-1)**pos\n    H=np.zeros((len(dets),len(dets)),complex)\n    S2=np.zeros_like(H)\n    for j,dt in enumerate(dets):\n        for p in range(n):\n         for q in range(n):\n            if abs(H1[p,q])<1e-12:continue\n            r=ap(q,dt,False)\n            if r is None:continue\n            r2=ap(p,r[0],True)\n            if r2 is None:continue\n            H[di[r2[0]],j]+=H1[p,q]*r[1]*r2[1]\n        for c in range(n):\n         for d in range(n):\n          r=ap(c,dt,False)\n          if r is None:continue\n          r1=ap(d,r[0],False)\n          if r1 is None:continue\n          sg=r[1]*r1[1]\n          for a in range(n):\n           for b in range(n):\n            gv=G[a,b,c,d]\n            if abs(gv)<1e-12:continue\n            r2=ap(b,r1[0],True)\n            if r2 is None:continue\n            r3=ap(a,r2[0],True)\n            if r3 is None:continue\n            H[di[r3[0]],j]+=0.5*gv*sg*r2[1]*r3[1]\n        # S2 = S-S+ + Sz^2+Sz ; S+ = sum a†(m,up) a(m,down) ; up index 5+\n        nu=sum(1 for x in dt if x>=5);nd=N-nu;sz=(nu-nd)/2\n        S2[j,j]+=sz*sz+sz\n        for m in range(5):\n            r=ap(m,dt,False)   # annihilate down(m)\n            if r is None:continue\n            r2=ap(5+m,r[0],True)\n            if r2 is None:continue\n            d1=r2[0];ph=r[1]*r2[1]\n            # apply S-: a†(down m') a(up m')\n            for m2 in range(5):\n                t=ap(5+m2,d1,False)\n                if t is None:continue\n                t2_=ap(m2,t[0],True)\n                if t2_ is None:continue\n                S2[di[t2_[0]],j]+=ph*t[1]*t2_[1]\n    return H,S2\nH,S2=run(2,0.0);e=np.linalg.eigvalsh(H);print(sorted(set(np.round(e-e[0],1)))[:4],B)\nfor x in (0.90,2.15,3.35):\n    H,S2=run(4,x*B)\n    w,v=np.linalg.eigh(H+1e-3*S2)\n    sp=np.einsum('ij,ik,kj->j',v.conj(),S2,v).real\n    w=np.einsum('ij,ik,kj->j',v.conj(),H,v).real\n    w=w-w.min()\n    lv=[]\n    for a,b in zip(w,sp):\n        if not lv or abs(a-lv[-1][0])>1e-2 or abs(b-lv[-1][1])>.1: lv.append([a,b,1])\n        else: lv[-1][2]+=1\n    print(x,[(round(a/B,3),round(2*(0.5+(1+4*b)**.5/2-0.5)),k) for a,b,k in lv[:8]])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[np.float64(0.0), np.float64(11419.0), np.float64(12315.0), np.float64(17166.0)] 821.0\n0.9 [(np.float64(0.0), 5, 15), (np.float64(9.0), 5, 10), (np.float64(15.55), 3, 9), (np.float64(18.394), 1, 1), (np.float64(19.114), 3, 9), (np.float64(22.926), 3, 9), (np.float64(24.784), 3, 9), (np.float64(25.524), 1, 3)]\n2.15 [(np.float64(0.0), 1, 1), (np.float64(5.342), 5, 15), (np.float64(9.261), 3, 9), (np.float64(14.973), 3, 9), (np.float64(18.945), 1, 3), (np.float64(26.842), 5, 10), (np.float64(28.311), 3, 9), (np.float64(29.76), 3, 9)]\n3.35 [(np.float64(0.0), 1, 1), (np.float64(21.054), 3, 9), (np.float64(27.57), 3, 9), (np.float64(28.709), 5, 15), (np.float64(30.582), 1, 3), (np.float64(43.792), 1, 3), (np.float64(51.703), 3, 9), (np.float64(53.069), 3, 9)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 25,
+     "method": "matrix",
+     "text": "H1=np.zeros((n,n),complex)"
+    },
+    {
+     "script": "a.py",
+     "line": 29,
+     "method": "matrix",
+     "text": "G=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "a.py",
+     "line": 72,
+     "method": "matrix",
+     "text": "S2[j,j]+=sz*sz+sz"
+    },
+    {
+     "script": "a.py",
+     "line": 87,
+     "method": "eigen_solver",
+     "text": "H,S2=run(2,0.0);e=np.linalg.eigvalsh(H);print(sorted(set(np.round(e-e[0],1)))[:4],B)"
+    },
+    {
+     "script": "a.py",
+     "line": 90,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H+1e-3*S2)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd $TMPDIR && sed -i 's/h=sum(-6\\*Dq/h=sum(6*Dq/; s/+sum(4\\*Dq/+sum(-4*Dq/' a.py && python3 a.py",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[np.float64(0.0), np.float64(11419.0), np.float64(12315.0), np.float64(17166.0)] 821.0\n0.9 [(np.float64(0.0), 5, 10), (np.float64(9.0), 5, 15), (np.float64(16.254), 3, 9), (np.float64(22.592), 3, 6), (np.float64(23.972), 3, 9), (np.float64(24.597), 3, 9), (np.float64(26.422), 3, 3), (np.float64(26.817), 3, 3)]\n2.15 [(np.float64(0.0), 5, 10), (np.float64(4.84), 3, 9), (np.float64(17.074), 1, 3), (np.float64(18.425), 1, 2), (np.float64(21.5), 5, 15), (np.float64(22.813), 3, 6), (np.float64(24.008), 3, 9), (np.float64(25.028), 3, 9)]\n3.35 [(np.float64(0.0), 3, 9), (np.float64(6.675), 5, 10), (np.float64(12.692), 1, 3), (np.float64(14.087), 1, 2), (np.float64(26.812), 1, 1), (np.float64(29.563), 3, 6), (np.float64(30.713), 3, 9), (np.float64(31.843), 3, 9)]\nShell cwd was reset to /tmp/tsbench-run-mbkxypzd",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": [
+    "points[0].dq_over_b",
+    "points[1].dq_over_b",
+    "points[1].e_over_b",
+    "points[2].dq_over_b",
+    "points[2].e_over_b",
+    "points[3].dq_over_b",
+    "points[3].e_over_b",
+    "points[4].dq_over_b",
+    "points[4].e_over_b",
+    "points[5].dq_over_b",
+    "points[5].e_over_b",
+    "points[6].dq_over_b",
+    "points[6].e_over_b",
+    "points[7].dq_over_b",
+    "points[7].e_over_b",
+    "points[8].dq_over_b",
+    "points[8].e_over_b"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "points[0].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[0].e_over_b",
+   "value": 9.0,
+   "weak": true,
+   "steps": [
+    1,
+    3,
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[1].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[1].e_over_b",
+   "value": 16.25,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[2].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[2].e_over_b",
+   "value": 22.59,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[3].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[3].e_over_b",
+   "value": 4.84,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[4].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[4].e_over_b",
+   "value": 17.07,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[5].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[5].e_over_b",
+   "value": 18.43,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[6].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[6].e_over_b",
+   "value": 6.68,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[7].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[7].e_over_b",
+   "value": 12.69,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "points[8].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    3,
+    4
+   ],
+   "typed_in_steps": [
+    3
+   ],
+   "source_step": 4
+  },
+  {
+   "path": "points[8].e_over_b",
+   "value": 14.09,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  }
+ ],
+ "summary": {
+  "n_steps": 5,
+  "n_scripts": 2,
+  "n_failed_steps": 1,
+  "n_values": 18,
+  "n_linked": 17,
+  "n_weak": 1,
+  "source_steps": [
+   4
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": true
+ }
+}

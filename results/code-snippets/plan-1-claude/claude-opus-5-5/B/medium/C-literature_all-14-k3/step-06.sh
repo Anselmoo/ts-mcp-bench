@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>/tmp.nBljsux1Am && sed -i 's/out.append((round(w\[i\]-w\[0\],1)/out.append((w[i]-w[0]/' fit2.py && sed -i 's/r=least_squares(res,\[900,950,C0\])/r=least_squares(res,[900,950,C0],diff_step=1e-4)/' fit2.py && python fit2.py

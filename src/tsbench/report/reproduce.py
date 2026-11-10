@@ -2,7 +2,9 @@
 
 `commands(run)` returns plain text with the calls that redo one run: the task, model, condition and effort of its
 transcript path `<run set>/<model>/<cond>/<effort>/<task>-k<i>.jsonl`, the gateway and budget of the MANIFEST.json
-above it. The block holds `tsbench plan build ...`, `tsbench run --plan ...` and `tsbench explain <transcript>`. Only
+above it. The block holds `tsbench plan build ...`, `tsbench run --plan ...` and `tsbench explain <transcript>`. The
+split is the one the manifest records (pilot when it records none); a confirmatory run is planned with the DOI of
+`args.preregistered`, or the placeholder `<DOI>` when the manifest has none. Only
 names of environment variables ever appear, never a key value, and no absolute path of the machine that built the page.
 Nothing here runs anything.
 
@@ -110,7 +112,10 @@ def argvs(run: dict, manifest: dict | None = None) -> dict:
         out["env"] = [f"ANTHROPIC_BASE_URL={gateway_url(manifest)}", 'ANTHROPIC_AUTH_TOKEN="$GWDG_API_KEY"']
     s = slug(run["task"], run["model"], run["cond"], run["effort"], f"k{run['k']}")
     plan = f"{REPRO_DIR}/{s}/plan.jsonl"   # plan.sha256 / plan.md land beside it: one directory per cell
-    out["plan"] = ["tsbench", "plan", "build", "--split", "pilot", "--task-ids", run["task"],
+    args = _manifest_args(manifest)
+    split = str(manifest.get("split") or args.get("split") or "pilot")
+    prereg = ["--i-have-preregistered", str(args.get("preregistered") or "<DOI>")] if split == "confirmatory" else []
+    out["plan"] = ["tsbench", "plan", "build", "--split", split, *prereg, "--task-ids", run["task"],
                    "--models", run["model"], "--conditions", run["cond"], "--effort", str(run["effort"]), "--k", "1",
                    "--budget-usd", str(budget)] + (["--gateway"] if gw else []) + ["--out-plan", plan]
     out["runner"] = ["tsbench", "run", "--plan", plan, "--out", f"{REPRO_DIR}/{s}"] + (["--gateway"] if gw else [])

@@ -1,0 +1,1 @@
+python3 -c "import sympy;print(sympy.__version__)"

@@ -86,7 +86,7 @@ def _build(runs: Sequence[dict]) -> _Node:
 
 
 def run_map(runs: Sequence[dict], categories: Sequence[tuple[str, str]], unit: str, nd: int = 2, *,
-            width: float = base.FULL_W) -> str:
+            width: float = base.FULL_W, height: float | None = None, raised: bool = False) -> str:
     """Treemap of runs nested condition > class > task; tile area = value, tile colour = outcome.
 
     runs: `[{"cond": "A", "class": "closed_form", "task": "P-closed_form-01", "value": 0.034, "outcome": key}]`;
@@ -94,7 +94,9 @@ def run_map(runs: Sequence[dict], categories: Sequence[tuple[str, str]], unit: s
     zero or less has no area and is counted in the note under the figure. categories: `[(key, label)]`, the first is
     "correct" (class `ok`), the others take `e1` .. `e8` by kind. `nd` is the
     number of decimals printed. Each condition has a header with its total and the part of it spent on correct runs.
-    Empty input returns ""."""
+    `height` is the height of the map (default by the width): the maps of several models at heights in proportion to
+    their totals show area on one scale; `raised` says in the note that this map stands higher than that scale. Empty
+    input returns ""."""
     if not runs or not categories:
         return ""
     drawn = [r for r in runs if float(r["value"]) > 0]
@@ -104,7 +106,7 @@ def run_map(runs: Sequence[dict], categories: Sequence[tuple[str, str]], unit: s
     label_of = dict(categories)
     correct_key = categories[0][0]
     w_total = float(width)
-    h_total = 520.0 if w_total >= 900 else 440.0
+    h_total = height or (520.0 if w_total >= 900 else 440.0)
     root = _build(drawn)
     leaves, boxes = _lay(root, (0.0, 0.0, w_total, h_total))
     tiles: list[str] = []
@@ -140,6 +142,8 @@ def run_map(runs: Sequence[dict], categories: Sequence[tuple[str, str]], unit: s
     skipped = len(runs) - len(drawn)
     parts = [base.plural(len(drawn), "run"), f"{base.number(root.value, nd)} {unit}",
              f"tile area proportional to {unit}"]
+    if raised:
+        parts.append("height raised to stay readable, area not to the scale of the other maps")
     if skipped:
         parts.append(f"{base.plural(skipped, 'run')} without a value, not drawn")
     lines = _note_lines(parts, w_total)

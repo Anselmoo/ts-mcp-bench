@@ -1,0 +1,540 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-curve-04-k1.jsonl",
+ "transcript_sha256": "b8a7082849098353ee657190e563542ecb9a8ebf763937b9941a6bf09b2f79ac",
+ "answer": {
+  "points": [
+   {
+    "dq_over_b": 1.45,
+    "term": "4T1g",
+    "e_over_b": 20.46
+   },
+   {
+    "dq_over_b": 1.45,
+    "term": "2T2g",
+    "e_over_b": 25.0
+   },
+   {
+    "dq_over_b": 1.45,
+    "term": "4T2g",
+    "e_over_b": 26.25
+   },
+   {
+    "dq_over_b": 2.55,
+    "term": "2T2g",
+    "e_over_b": 4.11
+   },
+   {
+    "dq_over_b": 2.55,
+    "term": "4T1g",
+    "e_over_b": 9.8
+   },
+   {
+    "dq_over_b": 2.55,
+    "term": "4T2g",
+    "e_over_b": 16.78
+   },
+   {
+    "dq_over_b": 3.25,
+    "term": "6A1g",
+    "e_over_b": 9.45
+   },
+   {
+    "dq_over_b": 3.25,
+    "term": "4T1g",
+    "e_over_b": 12.37
+   },
+   {
+    "dq_over_b": 3.25,
+    "term": "4T2g",
+    "e_over_b": 19.64
+   }
+  ],
+  "reason": "I diagonalised the full d5 Hamiltonian numerically (Slater-determinant basis, Ms=1/2 block, 100 determinants, with F2=49B+7C and F4=63C/5 at C/B=4.34, eg at +6Dq and t2g at -4Dq). Term labels were assigned from S² and octahedral characters. At Dq/B=1.45 and 2.55 the ground term is 6A1g, so E/B is measured from it. At Dq/B=3.25 the ground term has become 2T2g (E/B=0), and the 6A1g term is listed as an excited term above it."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy and scipy availability",
+   "command": "python3 -c \"import numpy, scipy; print(numpy.__version__, scipy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "2.5.4 1.18.1",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d5 Hamiltonian and diagonalize at given Dq values",
+   "command": "mkdir -p /w && cat > /w/d5.py << 'EOF'\nimport numpy as np, itertools\nimport scipy.sparse as sp\nfrom numpy.polynomial import legendre as L\n\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=63*C/5.0; F0=0.0\nFk={0:F0,2:F2,4:F4}\n\n# real orthonormal traceless symmetric basis (Frobenius): t2g xy,yz,zx ; eg x2-y2, 3z2-r2\ndef E(i,j):\n    M=np.zeros((3,3)); M[i,j]=1; M[j,i]=1; return M/np.sqrt(2)\nBs=[E(0,1),E(1,2),E(0,2),np.diag([1,-1,0])/np.sqrt(2),np.diag([-1,-1,2])/np.sqrt(6)]\neps=np.array([-4,-4,-4,6,6],float)   # in units of Dq (multiply later)\nBs=[np.array(b) for b in Bs]\nfor i in range(5):\n    for j in range(5):\n        assert abs(np.sum(Bs[i]*Bs[j])-(i==j))<1e-12\n\n# quadrature on sphere\nnt,npf=24,48\nxg,wg=L.leggauss(nt)\nth=np.arccos(xg); ph=np.arange(npf)*2*np.pi/npf\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=np.outer(wg,np.ones(npf))*(2*np.pi/npf)\nU=np.stack([np.sin(TH)*np.cos(PH),np.sin(TH)*np.sin(PH),np.cos(TH)],-1).reshape(-1,3)\nW=W.reshape(-1)\n# orbital functions\nf=np.array([np.einsum('pi,ij,pj->p',U,b,U) for b in Bs])  # 5 x npts\nnrm=np.sqrt(np.einsum('ip,p,ip->i',f,W,f)); \nf=f/nrm[:,None]\n# orthonormality check\nG=np.einsum('ip,p,jp->ij',f,W,f); assert np.allclose(G,np.eye(5),atol=1e-10)\ncosg=U@U.T\n# V_k[(a,c),(b,d)] = sum_ij w_i w_j g_ac(i) g_bd(j) P_k(cos)\npairs=[(a,c) for a in range(5) for c in range(5)]\ng=np.array([f[a]*f[c] for a,c in pairs])*W[None,:]   # 25 x npts\nVk={}\nfor k in (0,2,4):\n    Pk=L.legval(cosg,[0]*k+[1])\n    Vk[k]=g@Pk@g.T\n# full V_{abcd}, index (a,c) and (b,d)\nV=np.zeros((5,5,5,5))\nfor k in (0,2,4):\n    M=Vk[k]*Fk[k]\n    for ia,(a,c) in enumerate(pairs):\n        for ib,(b,d) in enumerate(pairs):\n            V[a,b,c,d]+=M[ia,ib]\n\n# Fock space N=5 of 20 spin-orbitals (i=2*orb+spin, spin 0=up,1=down)\nNS=20\nstates=[sum(1<<i for i in c) for c in itertools.combinations(range(NS),5)]\nstates.sort()\nidx={s:n for n,s in enumerate(states)}\nD=len(states)\ndef cdag_c(i,j,m):\n    # c^dag_i c_j |m>\n    if not (m>>j)&1: return None,0\n    s=(-1)**bin(m&((1<<j)-1)).count('1')\n    m1=m^(1<<j)\n    if (m1>>i)&1: return None,0\n    s*=(-1)**bin(m1&((1<<i)-1)).count('1')\n    return m1|(1<<i), s\ndef onebody(i,j):\n    rows=[];cols=[];vals=[]\n    for n,m in enumerate(states):\n        mm,s=cdag_c(i,j,m)\n        if mm is None: continue\n        rows.append(idx[mm]); cols.append(n); vals.append(s)\n    return sp.csr_matrix((vals,(rows,cols)),shape=(D,D))\nEorb={}\nfor a in range(5):\n    for c in range(5):\n        Eorb[(a,c)]=sum(onebody(2*a+s,2*c+s) for s in (0,1))\nEorb={k:v.tocsr() for k,v in Eorb.items()}\nHee=sp.csr_matrix((D,D))\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    v=V[a,b,c,d]\n    if abs(v)>1e-14:\n        Hee=Hee+0.5*v*(Eorb[(a,c)]@Eorb[(b,d)])\n    if b==c and abs(v)>1e-14:\n        Hee=Hee-0.5*v*Eorb[(a,d)]\nHee=Hee.tocsr()\n# S^2\nSp=sum(onebody(2*p,2*p+1) for p in range(10))\nSm=Sp.T.tocsr()\nNup=np.array([sum((m>>(2*p))&1 for p in range(10)) for m in states])\nNdn=np.array([sum((m>>(2*p+1))&1 for p in range(10)) for m in states])\nSz=(Nup-Ndn)/2.0\nS2=(Sm@Sp)+sp.diags(Sz**2+Sz)\nblk=np.where(Nup==3)[0]   # Ms=1/2\nHb=Hee[blk][:,blk].toarray()\nS2b=S2[blk][:,blk].toarray()\nprint(\"block dim\",len(blk), \"hermitian err\", np.abs(Hb-Hb.T).max())\n\n# many-body rotation operators\ndef rot(axis,ang):\n    axis=np.array(axis,float); axis/=np.linalg.norm(axis)\n    K=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])\n    return np.eye(3)+np.sin(ang)*K+(1-np.cos(ang))*K@K\ndef manybody(R):\n    Dm=np.array([[np.sum(Bs[bb]*(R@Bs[a]@R.T)) for a in range(5)] for bb in range(5)])  # D[b,a]\n    # build U on block\n    pos={s:n for n,s in enumerate(states)}\n    rowsU=[];colsU=[];valsU=[]\n    for n in blk:\n        m=states[n]\n        occ=[i for i in range(NS) if (m>>i)&1]\n        ket={0:1.0}\n        for i in reversed(occ):\n            a=i//2; sg=i%2\n            new={}\n            for mm,cf in ket.items():\n                for b in range(5):\n                    if abs(Dm[b,a])<1e-14: continue\n                    j=2*b+sg\n                    if (mm>>j)&1: continue\n                    s=(-1)**bin(mm&((1<<j)-1)).count('1')\n                    m2=mm|(1<<j)\n                    new[m2]=new.get(m2,0)+cf*Dm[b,a]*s\n            ket=new\n        for mm,cf in ket.items():\n            if abs(cf)>1e-14:\n                rowsU.append(np.searchsorted(blk,pos[mm])); colsU.append(np.searchsorted(blk,n)); valsU.append(cf)\n    Ub=sp.csr_matrix((valsU,(rowsU,colsU)),shape=(len(blk),len(blk))).toarray()\n    return Ub\nclasses={'E':np.eye(3),'C3':rot([1,1,1],2*np.pi/3),'C2':rot([0,0,1],np.pi),'C4':rot([0,0,1],np.pi/2),\"C2'\":rot([1,1,0],np.pi)}\nUmats={k:manybody(R) for k,R in classes.items()}\n# check commutation with Hb for one class\nirr={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\nordc=['E','C3','C2','C4',\"C2'\"]\ndef label(chi):\n    # chi: characters on classes ordc; class sizes 1,8,3,6,6\n    sz=np.array([1,8,3,6,6])\n    out=[]\n    for k,v in irr.items():\n        mult=np.sum(sz*np.array(v)*chi)/24\n        if abs(mult-1)<1e-6: out.append(k)\n    return out\n\ndef analyze(Dq):\n    Hd=Hb+np.diag(np.array([0]*0) if False else np.zeros(len(blk)))\n    # diagonal ligand field: sum_a eps_a * E_aa\n    Hlf=sum(eps[a]*Eorb[(a,a)] for a in range(5))*Dq\n    Hfull=(Hee+Hlf.tocsr())[blk][:,blk].toarray()\n    w,v=np.linalg.eigh(Hfull)\n    # clusters\n    clusters=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n        clusters.append((i,j)); i=j+1\n    res=[]\n    for (i,j) in clusters:\n        vv=v[:,i:j+1]\n        # spin\n        S2m=vv.T@S2b@vv\n        S2v=np.trace(S2m)/(j-i+1)\n        S=(-1+np.sqrt(1+4*S2v))/2\n        chi=[np.trace(vv.T@Umats[k]@vv) for k in ordc]\n        chi=np.real(np.array(chi))\n        res.append(dict(E=w[i],dim=j-i+1,S=round(S*2)/2,mult=int(round(2*S+1)),irr=label(chi),chi=chi))\n    return res\nif __name__==\"__main__\":\n    import sys\n    for Dq in [1.45,2.55,3.25]:\n        res=analyze(Dq)\n        g=res[0]\n        print(\"Dq/B=\",Dq,\" nclusters\",len(res))\n        for r in res[:14]:\n            print(f\"  E={r['E']-g['E']:.5f} dim={r['dim']} mult={r['mult']} S={r['S']} irr={r['irr']} chi={np.round(r['chi'],3)}\")\nEOF\ncd /w && time python3 d5.py",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "47fa45e922a81df8085f8934e18be6b50a650f237f4d670ecaa0317b1b9a7139",
+     "lines": 169,
+     "code": "import numpy as np, itertools\nimport scipy.sparse as sp\nfrom numpy.polynomial import legendre as L\n\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=63*C/5.0; F0=0.0\nFk={0:F0,2:F2,4:F4}\n\n# real orthonormal traceless symmetric basis (Frobenius): t2g xy,yz,zx ; eg x2-y2, 3z2-r2\ndef E(i,j):\n    M=np.zeros((3,3)); M[i,j]=1; M[j,i]=1; return M/np.sqrt(2)\nBs=[E(0,1),E(1,2),E(0,2),np.diag([1,-1,0])/np.sqrt(2),np.diag([-1,-1,2])/np.sqrt(6)]\neps=np.array([-4,-4,-4,6,6],float)   # in units of Dq (multiply later)\nBs=[np.array(b) for b in Bs]\nfor i in range(5):\n    for j in range(5):\n        assert abs(np.sum(Bs[i]*Bs[j])-(i==j))<1e-12\n\n# quadrature on sphere\nnt,npf=24,48\nxg,wg=L.leggauss(nt)\nth=np.arccos(xg); ph=np.arange(npf)*2*np.pi/npf\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=np.outer(wg,np.ones(npf))*(2*np.pi/npf)\nU=np.stack([np.sin(TH)*np.cos(PH),np.sin(TH)*np.sin(PH),np.cos(TH)],-1).reshape(-1,3)\nW=W.reshape(-1)\n# orbital functions\nf=np.array([np.einsum('pi,ij,pj->p',U,b,U) for b in Bs])  # 5 x npts\nnrm=np.sqrt(np.einsum('ip,p,ip->i',f,W,f)); \nf=f/nrm[:,None]\n# orthonormality check\nG=np.einsum('ip,p,jp->ij',f,W,f); assert np.allclose(G,np.eye(5),atol=1e-10)\ncosg=U@U.T\n# V_k[(a,c),(b,d)] = sum_ij w_i w_j g_ac(i) g_bd(j) P_k(cos)\npairs=[(a,c) for a in range(5) for c in range(5)]\ng=np.array([f[a]*f[c] for a,c in pairs])*W[None,:]   # 25 x npts\nVk={}\nfor k in (0,2,4):\n    Pk=L.legval(cosg,[0]*k+[1])\n    Vk[k]=g@Pk@g.T\n# full V_{abcd}, index (a,c) and (b,d)\nV=np.zeros((5,5,5,5))\nfor k in (0,2,4):\n    M=Vk[k]*Fk[k]\n    for ia,(a,c) in enumerate(pairs):\n        for ib,(b,d) in enumerate(pairs):\n            V[a,b,c,d]+=M[ia,ib]\n\n# Fock space N=5 of 20 spin-orbitals (i=2*orb+spin, spin 0=up,1=down)\nNS=20\nstates=[sum(1<<i for i in c) for c in itertools.combinations(range(NS),5)]\nstates.sort()\nidx={s:n for n,s in enumerate(states)}\nD=len(states)\ndef cdag_c(i,j,m):\n    # c^dag_i c_j |m>\n    if not (m>>j)&1: return None,0\n    s=(-1)**bin(m&((1<<j)-1)).count('1')\n    m1=m^(1<<j)\n    if (m1>>i)&1: return None,0\n    s*=(-1)**bin(m1&((1<<i)-1)).count('1')\n    return m1|(1<<i), s\ndef onebody(i,j):\n    rows=[];cols=[];vals=[]\n    for n,m in enumerate(states):\n        mm,s=cdag_c(i,j,m)\n        if mm is None: continue\n        rows.append(idx[mm]); cols.append(n); vals.append(s)\n    return sp.csr_matrix((vals,(rows,cols)),shape=(D,D))\nEorb={}\nfor a in range(5):\n    for c in range(5):\n        Eorb[(a,c)]=sum(onebody(2*a+s,2*c+s) for s in (0,1))\nEorb={k:v.tocsr() for k,v in Eorb.items()}\nHee=sp.csr_matrix((D,D))\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    v=V[a,b,c,d]\n    if abs(v)>1e-14:\n        Hee=Hee+0.5*v*(Eorb[(a,c)]@Eorb[(b,d)])\n    if b==c and abs(v)>1e-14:\n        Hee=Hee-0.5*v*Eorb[(a,d)]\nHee=Hee.tocsr()\n# S^2\nSp=sum(onebody(2*p,2*p+1) for p in range(10))\nSm=Sp.T.tocsr()\nNup=np.array([sum((m>>(2*p))&1 for p in range(10)) for m in states])\nNdn=np.array([sum((m>>(2*p+1))&1 for p in range(10)) for m in states])\nSz=(Nup-Ndn)/2.0\nS2=(Sm@Sp)+sp.diags(Sz**2+Sz)\nblk=np.where(Nup==3)[0]   # Ms=1/2\nHb=Hee[blk][:,blk].toarray()\nS2b=S2[blk][:,blk].toarray()\nprint(\"block dim\",len(blk), \"hermitian err\", np.abs(Hb-Hb.T).max())\n\n# many-body rotation operators\ndef rot(axis,ang):\n    axis=np.array(axis,float); axis/=np.linalg.norm(axis)\n    K=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])\n    return np.eye(3)+np.sin(ang)*K+(1-np.cos(ang))*K@K\ndef manybody(R):\n    Dm=np.array([[np.sum(Bs[bb]*(R@Bs[a]@R.T)) for a in range(5)] for bb in range(5)])  # D[b,a]\n    # build U on block\n    pos={s:n for n,s in enumerate(states)}\n    rowsU=[];colsU=[];valsU=[]\n    for n in blk:\n        m=states[n]\n        occ=[i for i in range(NS) if (m>>i)&1]\n        ket={0:1.0}\n        for i in reversed(occ):\n            a=i//2; sg=i%2\n            new={}\n            for mm,cf in ket.items():\n                for b in range(5):\n                    if abs(Dm[b,a])<1e-14: continue\n                    j=2*b+sg\n                    if (mm>>j)&1: continue\n                    s=(-1)**bin(mm&((1<<j)-1)).count('1')\n                    m2=mm|(1<<j)\n                    new[m2]=new.get(m2,0)+cf*Dm[b,a]*s\n            ket=new\n        for mm,cf in ket.items():\n            if abs(cf)>1e-14:\n                rowsU.append(np.searchsorted(blk,pos[mm])); colsU.append(np.searchsorted(blk,n)); valsU.append(cf)\n    Ub=sp.csr_matrix((valsU,(rowsU,colsU)),shape=(len(blk),len(blk))).toarray()\n    return Ub\nclasses={'E':np.eye(3),'C3':rot([1,1,1],2*np.pi/3),'C2':rot([0,0,1],np.pi),'C4':rot([0,0,1],np.pi/2),\"C2'\":rot([1,1,0],np.pi)}\nUmats={k:manybody(R) for k,R in classes.items()}\n# check commutation with Hb for one class\nirr={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\nordc=['E','C3','C2','C4',\"C2'\"]\ndef label(chi):\n    # chi: characters on classes ordc; class sizes 1,8,3,6,6\n    sz=np.array([1,8,3,6,6])\n    out=[]\n    for k,v in irr.items():\n        mult=np.sum(sz*np.array(v)*chi)/24\n        if abs(mult-1)<1e-6: out.append(k)\n    return out\n\ndef analyze(Dq):\n    Hd=Hb+np.diag(np.array([0]*0) if False else np.zeros(len(blk)))\n    # diagonal ligand field: sum_a eps_a * E_aa\n    Hlf=sum(eps[a]*Eorb[(a,a)] for a in range(5))*Dq\n    Hfull=(Hee+Hlf.tocsr())[blk][:,blk].toarray()\n    w,v=np.linalg.eigh(Hfull)\n    # clusters\n    clusters=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n        clusters.append((i,j)); i=j+1\n    res=[]\n    for (i,j) in clusters:\n        vv=v[:,i:j+1]\n        # spin\n        S2m=vv.T@S2b@vv\n        S2v=np.trace(S2m)/(j-i+1)\n        S=(-1+np.sqrt(1+4*S2v))/2\n        chi=[np.trace(vv.T@Umats[k]@vv) for k in ordc]\n        chi=np.real(np.array(chi))\n        res.append(dict(E=w[i],dim=j-i+1,S=round(S*2)/2,mult=int(round(2*S+1)),irr=label(chi),chi=chi))\n    return res\nif __name__==\"__main__\":\n    import sys\n    for Dq in [1.45,2.55,3.25]:\n        res=analyze(Dq)\n        g=res[0]\n        print(\"Dq/B=\",Dq,\" nclusters\",len(res))\n        for r in res[:14]:\n            print(f\"  E={r['E']-g['E']:.5f} dim={r['dim']} mult={r['mult']} S={r['S']} irr={r['irr']} chi={np.round(r['chi'],3)}\")\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d5.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 343: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "M=np.zeros((3,3)); M[i,j]=1; M[j,i]=1; return M/np.sqrt(2)"
+    },
+    {
+     "script": "d5.py",
+     "line": 41,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d5.py",
+     "line": 97,
+     "method": "matrix",
+     "text": "K=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])"
+    },
+    {
+     "script": "d5.py",
+     "line": 100,
+     "method": "matrix",
+     "text": "Dm=np.array([[np.sum(Bs[bb]*(R@Bs[a]@R.T)) for a in range(5)] for bb in range(5)])  # D[b,a]"
+    },
+    {
+     "script": "d5.py",
+     "line": 144,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(Hfull)"
+    },
+    {
+     "script": "d5.py",
+     "line": 164,
+     "method": "typed_table",
+     "text": "for Dq in [1.45,2.55,3.25]:"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Create writable working directory",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && echo ok",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find a writable location",
+   "command": "cd ~ 2>/dev/null && pwd; touch ./x_test 2>&1; echo $HOME; df -h . | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch './x_test': Read-only file system\n/tmp/tsbench-home-xehwqch9\n/dev/vda1       158G   87G   65G  58% /\nShell cwd was reset to /tmp/tsbench-run-2tcd79us",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Test Python execution and write access in home",
+   "command": "cd /tmp/tsbench-home-xehwqch9 2>/dev/null; python3 -c \"print('py ok')\"; echo test > /tmp/tsbench-home-xehwqch9/t.txt && echo writable || echo notwritable",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "py ok\n/bin/bash: line 1: /tmp/tsbench-home-xehwqch9/t.txt: Read-only file system\nnotwritable\nShell cwd was reset to /tmp/tsbench-run-2tcd79us",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Run d5 ligand-field diagonalization from stdin",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nimport scipy.sparse as sp\nfrom numpy.polynomial import legendre as L\n\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=63*C/5.0\nFk={0:0.0,2:F2,4:F4}\n\ndef E(i,j):\n    M=np.zeros((3,3)); M[i,j]=1; M[j,i]=1; return M/np.sqrt(2)\nBs=[E(0,1),E(1,2),E(0,2),np.diag([1,-1,0])/np.sqrt(2),np.diag([-1,-1,2])/np.sqrt(6)]\neps=np.array([-4,-4,-4,6,6],float)\nfor i in range(5):\n    for j in range(5):\n        assert abs(np.sum(Bs[i]*Bs[j])-(i==j))<1e-12\n\nnt,npf=24,48\nxg,wg=L.leggauss(nt)\nth=np.arccos(xg); ph=np.arange(npf)*2*np.pi/npf\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=(np.outer(wg,np.ones(npf))*(2*np.pi/npf)).reshape(-1)\nU=np.stack([np.sin(TH)*np.cos(PH),np.sin(TH)*np.sin(PH),np.cos(TH)],-1).reshape(-1,3)\nf=np.array([np.einsum('pi,ij,pj->p',U,b,U) for b in Bs])\nnrm=np.sqrt(np.einsum('ip,p,ip->i',f,W,f)); f=f/nrm[:,None]\nG=np.einsum('ip,p,jp->ij',f,W,f); assert np.allclose(G,np.eye(5),atol=1e-10)\ncosg=U@U.T\npairs=[(a,c) for a in range(5) for c in range(5)]\ng=np.array([f[a]*f[c] for a,c in pairs])*W[None,:]\nVk={k:g@L.legval(cosg,[0]*k+[1])@g.T for k in (0,2,4)}\nV=np.zeros((5,5,5,5))\nfor k in (0,2,4):\n    M=Vk[k]*Fk[k]\n    for ia,(a,c) in enumerate(pairs):\n        for ib,(b,d) in enumerate(pairs):\n            V[a,b,c,d]+=M[ia,ib]\n\nNS=20\nstates=sorted(sum(1<<i for i in c) for c in itertools.combinations(range(NS),5))\nidx={s:n for n,s in enumerate(states)}\nD=len(states)\ndef cdag_c(i,j,m):\n    if not (m>>j)&1: return None,0\n    s=(-1)**bin(m&((1<<j)-1)).count('1')\n    m1=m^(1<<j)\n    if (m1>>i)&1: return None,0\n    s*=(-1)**bin(m1&((1<<i)-1)).count('1')\n    return m1|(1<<i), s\ndef onebody(i,j):\n    rows=[];cols=[];vals=[]\n    for n,m in enumerate(states):\n        mm,s=cdag_c(i,j,m)\n        if mm is None: continue\n        rows.append(idx[mm]); cols.append(n); vals.append(s)\n    return sp.csr_matrix((vals,(rows,cols)),shape=(D,D))\nEorb={(a,c):(onebody(2*a,2*c)+onebody(2*a+1,2*c+1)).tocsr() for a in range(5) for c in range(5)}\nHee=sp.csr_matrix((D,D))\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    v=V[a,b,c,d]\n    if abs(v)>1e-14:\n        Hee=Hee+0.5*v*(Eorb[(a,c)]@Eorb[(b,d)])\n        if b==c: Hee=Hee-0.5*v*Eorb[(a,d)]\nHee=Hee.tocsr()\nSp=sum(onebody(2*p,2*p+1) for p in range(10)).tocsr()\nSm=Sp.T.tocsr()\nNup=np.array([sum((m>>(2*p))&1 for p in range(10)) for m in states])\nNdn=np.array([sum((m>>(2*p+1))&1 for p in range(10)) for m in states])\nSz=(Nup-Ndn)/2.0\nS2=(Sm@Sp)+sp.diags(Sz**2+Sz)\nblk=np.where(Nup==3)[0]\nHb=Hee[blk][:,blk].toarray()\nS2b=S2[blk][:,blk].toarray()\nprint(\"block dim\",len(blk),\"herm err\",np.abs(Hb-Hb.T).max())\n\ndef rot(axis,ang):\n    axis=np.array(axis,float); axis/=np.linalg.norm(axis)\n    K=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])\n    return np.eye(3)+np.sin(ang)*K+(1-np.cos(ang))*K@K\nblkpos={n:k for k,n in enumerate(blk)}\ndef manybody(R):\n    Dm=np.array([[np.sum(Bs[bb]*(R@Bs[a]@R.T)) for a in range(5)] for bb in range(5)])\n    rows=[];cols=[];vals=[]\n    for n in blk:\n        m=states[n]\n        occ=[i for i in range(NS) if (m>>i)&1]\n        ket={0:1.0}\n        for i in reversed(occ):\n            a=i//2; sg=i%2\n            new={}\n            for mm,cf in ket.items():\n                for b in range(5):\n                    if abs(Dm[b,a])<1e-14: continue\n                    j=2*b+sg\n                    if (mm>>j)&1: continue\n                    s=(-1)**bin(mm&((1<<j)-1)).count('1')\n                    m2=mm|(1<<j)\n                    new[m2]=new.get(m2,0)+cf*Dm[b,a]*s\n            ket=new\n        for mm,cf in ket.items():\n            if abs(cf)>1e-14:\n                rows.append(blkpos[idx[mm]]); cols.append(blkpos[n]); vals.append(cf)\n    return sp.csr_matrix((vals,(rows,cols)),shape=(len(blk),len(blk))).toarray()\nclasses={'E':np.eye(3),'C3':rot([1,1,1],2*np.pi/3),'C2':rot([0,0,1],np.pi),'C4':rot([0,0,1],np.pi/2),\"C2'\":rot([1,1,0],np.pi)}\nUmats={k:manybody(R) for k,R in classes.items()}\nirr={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\nordc=['E','C3','C2','C4',\"C2'\"]\nsz=np.array([1,8,3,6,6])\ndef label(chi):\n    return [k for k,v in irr.items() if abs(np.sum(sz*np.array(v)*chi)/24-1)<1e-6]\n# check U is a representation-compatible: commutes with Hb at Dq=1\nHlf=sum(eps[a]*Eorb[(a,a)] for a in range(5))\nHfull=(Hee+1.45*Hlf).tocsr()[blk][:,blk].toarray()\nprint(\"commutator check\", max(np.abs(Umats[k]@Hfull-Hfull@Umats[k]).max() for k in classes))\n\ndef analyze(Dq):\n    Hf=(Hee+Dq*Hlf).tocsr()[blk][:,blk].toarray()\n    w,v=np.linalg.eigh(Hf)\n    clusters=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n        clusters.append((i,j)); i=j+1\n    res=[]\n    for (i,j) in clusters:\n        vv=v[:,i:j+1]\n        S2v=np.trace(vv.T@S2b@vv)/(j-i+1)\n        S=(-1+np.sqrt(1+4*S2v))/2\n        chi=np.real(np.array([np.trace(vv.T@Umats[k]@vv) for k in ordc]))\n        res.append(dict(E=w[i],dim=j-i+1,mult=int(round(2*S+1)),irr=label(chi),chi=chi))\n    return res\nfor Dq in [1.45,2.55,3.25]:\n    res=analyze(Dq)\n    g=res[0]\n    print(\"Dq/B=\",Dq,\"clusters\",len(res),\"ground:\",g['mult'],g['irr'],round(g['E'],5))\n    for r in res[:12]:\n        print(f\"  E/B={r['E']-g['E']:.4f} dim={r['dim']} mult={r['mult']} irr={r['irr']} chi={np.round(r['chi'],2)}\")\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "65eaa10feb30b935931d5c3844e1d237bc5c2326aced8c28b4774bdc61a76edf",
+     "lines": 134,
+     "code": "import numpy as np, itertools\nimport scipy.sparse as sp\nfrom numpy.polynomial import legendre as L\n\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=63*C/5.0\nFk={0:0.0,2:F2,4:F4}\n\ndef E(i,j):\n    M=np.zeros((3,3)); M[i,j]=1; M[j,i]=1; return M/np.sqrt(2)\nBs=[E(0,1),E(1,2),E(0,2),np.diag([1,-1,0])/np.sqrt(2),np.diag([-1,-1,2])/np.sqrt(6)]\neps=np.array([-4,-4,-4,6,6],float)\nfor i in range(5):\n    for j in range(5):\n        assert abs(np.sum(Bs[i]*Bs[j])-(i==j))<1e-12\n\nnt,npf=24,48\nxg,wg=L.leggauss(nt)\nth=np.arccos(xg); ph=np.arange(npf)*2*np.pi/npf\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=(np.outer(wg,np.ones(npf))*(2*np.pi/npf)).reshape(-1)\nU=np.stack([np.sin(TH)*np.cos(PH),np.sin(TH)*np.sin(PH),np.cos(TH)],-1).reshape(-1,3)\nf=np.array([np.einsum('pi,ij,pj->p',U,b,U) for b in Bs])\nnrm=np.sqrt(np.einsum('ip,p,ip->i',f,W,f)); f=f/nrm[:,None]\nG=np.einsum('ip,p,jp->ij',f,W,f); assert np.allclose(G,np.eye(5),atol=1e-10)\ncosg=U@U.T\npairs=[(a,c) for a in range(5) for c in range(5)]\ng=np.array([f[a]*f[c] for a,c in pairs])*W[None,:]\nVk={k:g@L.legval(cosg,[0]*k+[1])@g.T for k in (0,2,4)}\nV=np.zeros((5,5,5,5))\nfor k in (0,2,4):\n    M=Vk[k]*Fk[k]\n    for ia,(a,c) in enumerate(pairs):\n        for ib,(b,d) in enumerate(pairs):\n            V[a,b,c,d]+=M[ia,ib]\n\nNS=20\nstates=sorted(sum(1<<i for i in c) for c in itertools.combinations(range(NS),5))\nidx={s:n for n,s in enumerate(states)}\nD=len(states)\ndef cdag_c(i,j,m):\n    if not (m>>j)&1: return None,0\n    s=(-1)**bin(m&((1<<j)-1)).count('1')\n    m1=m^(1<<j)\n    if (m1>>i)&1: return None,0\n    s*=(-1)**bin(m1&((1<<i)-1)).count('1')\n    return m1|(1<<i), s\ndef onebody(i,j):\n    rows=[];cols=[];vals=[]\n    for n,m in enumerate(states):\n        mm,s=cdag_c(i,j,m)\n        if mm is None: continue\n        rows.append(idx[mm]); cols.append(n); vals.append(s)\n    return sp.csr_matrix((vals,(rows,cols)),shape=(D,D))\nEorb={(a,c):(onebody(2*a,2*c)+onebody(2*a+1,2*c+1)).tocsr() for a in range(5) for c in range(5)}\nHee=sp.csr_matrix((D,D))\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    v=V[a,b,c,d]\n    if abs(v)>1e-14:\n        Hee=Hee+0.5*v*(Eorb[(a,c)]@Eorb[(b,d)])\n        if b==c: Hee=Hee-0.5*v*Eorb[(a,d)]\nHee=Hee.tocsr()\nSp=sum(onebody(2*p,2*p+1) for p in range(10)).tocsr()\nSm=Sp.T.tocsr()\nNup=np.array([sum((m>>(2*p))&1 for p in range(10)) for m in states])\nNdn=np.array([sum((m>>(2*p+1))&1 for p in range(10)) for m in states])\nSz=(Nup-Ndn)/2.0\nS2=(Sm@Sp)+sp.diags(Sz**2+Sz)\nblk=np.where(Nup==3)[0]\nHb=Hee[blk][:,blk].toarray()\nS2b=S2[blk][:,blk].toarray()\nprint(\"block dim\",len(blk),\"herm err\",np.abs(Hb-Hb.T).max())\n\ndef rot(axis,ang):\n    axis=np.array(axis,float); axis/=np.linalg.norm(axis)\n    K=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])\n    return np.eye(3)+np.sin(ang)*K+(1-np.cos(ang))*K@K\nblkpos={n:k for k,n in enumerate(blk)}\ndef manybody(R):\n    Dm=np.array([[np.sum(Bs[bb]*(R@Bs[a]@R.T)) for a in range(5)] for bb in range(5)])\n    rows=[];cols=[];vals=[]\n    for n in blk:\n        m=states[n]\n        occ=[i for i in range(NS) if (m>>i)&1]\n        ket={0:1.0}\n        for i in reversed(occ):\n            a=i//2; sg=i%2\n            new={}\n            for mm,cf in ket.items():\n                for b in range(5):\n                    if abs(Dm[b,a])<1e-14: continue\n                    j=2*b+sg\n                    if (mm>>j)&1: continue\n                    s=(-1)**bin(mm&((1<<j)-1)).count('1')\n                    m2=mm|(1<<j)\n                    new[m2]=new.get(m2,0)+cf*Dm[b,a]*s\n            ket=new\n        for mm,cf in ket.items():\n            if abs(cf)>1e-14:\n                rows.append(blkpos[idx[mm]]); cols.append(blkpos[n]); vals.append(cf)\n    return sp.csr_matrix((vals,(rows,cols)),shape=(len(blk),len(blk))).toarray()\nclasses={'E':np.eye(3),'C3':rot([1,1,1],2*np.pi/3),'C2':rot([0,0,1],np.pi),'C4':rot([0,0,1],np.pi/2),\"C2'\":rot([1,1,0],np.pi)}\nUmats={k:manybody(R) for k,R in classes.items()}\nirr={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\nordc=['E','C3','C2','C4',\"C2'\"]\nsz=np.array([1,8,3,6,6])\ndef label(chi):\n    return [k for k,v in irr.items() if abs(np.sum(sz*np.array(v)*chi)/24-1)<1e-6]\n# check U is a representation-compatible: commutes with Hb at Dq=1\nHlf=sum(eps[a]*Eorb[(a,a)] for a in range(5))\nHfull=(Hee+1.45*Hlf).tocsr()[blk][:,blk].toarray()\nprint(\"commutator check\", max(np.abs(Umats[k]@Hfull-Hfull@Umats[k]).max() for k in classes))\n\ndef analyze(Dq):\n    Hf=(Hee+Dq*Hlf).tocsr()[blk][:,blk].toarray()\n    w,v=np.linalg.eigh(Hf)\n    clusters=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n        clusters.append((i,j)); i=j+1\n    res=[]\n    for (i,j) in clusters:\n        vv=v[:,i:j+1]\n        S2v=np.trace(vv.T@S2b@vv)/(j-i+1)\n        S=(-1+np.sqrt(1+4*S2v))/2\n        chi=np.real(np.array([np.trace(vv.T@Umats[k]@vv) for k in ordc]))\n        res.append(dict(E=w[i],dim=j-i+1,mult=int(round(2*S+1)),irr=label(chi),chi=chi))\n    return res\nfor Dq in [1.45,2.55,3.25]:\n    res=analyze(Dq)\n    g=res[0]\n    print(\"Dq/B=\",Dq,\"clusters\",len(res),\"ground:\",g['mult'],g['irr'],round(g['E'],5))\n    for r in res[:12]:\n        print(f\"  E/B={r['E']-g['E']:.4f} dim={r['dim']} mult={r['mult']} irr={r['irr']} chi={np.round(r['chi'],2)}\")\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nblock dim 5400 herm err 8.881784197001252e-15\nTraceback (most recent call last):\n  File \"<stdin>\", line 102, in <module>\n  File \"<stdin>\", line 90, in manybody\nIndexError: index 5 is out of bounds for axis 1 with size 5",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "M=np.zeros((3,3)); M[i,j]=1; M[j,i]=1; return M/np.sqrt(2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 29,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 75,
+     "method": "matrix",
+     "text": "K=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 79,
+     "method": "matrix",
+     "text": "Dm=np.array([[np.sum(Bs[bb]*(R@Bs[a]@R.T)) for a in range(5)] for bb in range(5)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 115,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(Hf)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 129,
+     "method": "typed_table",
+     "text": "for Dq in [1.45,2.55,3.25]:"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Rerun d5 diagonalization with corrected 5-orbital Fock space",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nimport scipy.sparse as sp\nfrom numpy.polynomial import legendre as L\n\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=63*C/5.0\nFk={0:0.0,2:F2,4:F4}\n\ndef E(i,j):\n    M=np.zeros((3,3)); M[i,j]=1; M[j,i]=1; return M/np.sqrt(2)\nBs=[E(0,1),E(1,2),E(0,2),np.diag([1,-1,0])/np.sqrt(2),np.diag([-1,-1,2])/np.sqrt(6)]\neps=np.array([-4,-4,-4,6,6],float)\n\nnt,npf=24,48\nxg,wg=L.leggauss(nt)\nth=np.arccos(xg); ph=np.arange(npf)*2*np.pi/npf\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=(np.outer(wg,np.ones(npf))*(2*np.pi/npf)).reshape(-1)\nU=np.stack([np.sin(TH)*np.cos(PH),np.sin(TH)*np.sin(PH),np.cos(TH)],-1).reshape(-1,3)\nf=np.array([np.einsum('pi,ij,pj->p',U,b,U) for b in Bs])\nnrm=np.sqrt(np.einsum('ip,p,ip->i',f,W,f)); f=f/nrm[:,None]\nassert np.allclose(np.einsum('ip,p,jp->ij',f,W,f),np.eye(5),atol=1e-10)\ncosg=U@U.T\npairs=[(a,c) for a in range(5) for c in range(5)]\ng=np.array([f[a]*f[c] for a,c in pairs])*W[None,:]\nVk={k:g@L.legval(cosg,[0]*k+[1])@g.T for k in (0,2,4)}\nV=np.zeros((5,5,5,5))\nfor k in (0,2,4):\n    M=Vk[k]*Fk[k]\n    for ia,(a,c) in enumerate(pairs):\n        for ib,(b,d) in enumerate(pairs):\n            V[a,b,c,d]+=M[ia,ib]\n\nNS=10\nstates=sorted(sum(1<<i for i in c) for c in itertools.combinations(range(NS),5))\nidx={s:n for n,s in enumerate(states)}\nD=len(states)\ndef cdag_c(i,j,m):\n    if not (m>>j)&1: return None,0\n    s=(-1)**bin(m&((1<<j)-1)).count('1')\n    m1=m^(1<<j)\n    if (m1>>i)&1: return None,0\n    s*=(-1)**bin(m1&((1<<i)-1)).count('1')\n    return m1|(1<<i), s\ndef onebody(i,j):\n    rows=[];cols=[];vals=[]\n    for n,m in enumerate(states):\n        mm,s=cdag_c(i,j,m)\n        if mm is None: continue\n        rows.append(idx[mm]); cols.append(n); vals.append(s)\n    return sp.csr_matrix((vals,(rows,cols)),shape=(D,D))\nEorb={(a,c):(onebody(2*a,2*c)+onebody(2*a+1,2*c+1)).tocsr() for a in range(5) for c in range(5)}\nHee=sp.csr_matrix((D,D))\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    v=V[a,b,c,d]\n    if abs(v)>1e-14:\n        Hee=Hee+0.5*v*(Eorb[(a,c)]@Eorb[(b,d)])\n        if b==c: Hee=Hee-0.5*v*Eorb[(a,d)]\nHee=Hee.tocsr()\nSp=sum(onebody(2*p,2*p+1) for p in range(5)).tocsr()\nSm=Sp.T.tocsr()\nNup=np.array([sum((m>>(2*p))&1 for p in range(5)) for m in states])\nNdn=np.array([sum((m>>(2*p+1))&1 for p in range(5)) for m in states])\nSz=(Nup-Ndn)/2.0\nS2=(Sm@Sp)+sp.diags(Sz**2+Sz)\nblk=np.where(Nup==3)[0]\nHb=Hee[blk][:,blk].toarray()\nS2b=S2[blk][:,blk].toarray()\nprint(\"block dim\",len(blk),\"herm err\",np.abs(Hb-Hb.T).max())\n# check Ee-only: E_ab sanity: trace of total number\nHlf=sum(eps[a]*Eorb[(a,a)] for a in range(5))\n\ndef rot(axis,ang):\n    axis=np.array(axis,float); axis/=np.linalg.norm(axis)\n    K=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])\n    return np.eye(3)+np.sin(ang)*K+(1-np.cos(ang))*K@K\nblkpos={n:k for k,n in enumerate(blk)}\ndef manybody(R):\n    Dm=np.array([[np.sum(Bs[bb]*(R@Bs[a]@R.T)) for a in range(5)] for bb in range(5)])\n    rows=[];cols=[];vals=[]\n    for n in blk:\n        m=states[n]\n        occ=[i for i in range(NS) if (m>>i)&1]\n        ket={0:1.0}\n        for i in reversed(occ):\n            a=i//2; sg=i%2\n            new={}\n            for mm,cf in ket.items():\n                for b in range(5):\n                    if abs(Dm[b,a])<1e-14: continue\n                    j=2*b+sg\n                    if (mm>>j)&1: continue\n                    s=(-1)**bin(mm&((1<<j)-1)).count('1')\n                    m2=mm|(1<<j)\n                    new[m2]=new.get(m2,0)+cf*Dm[b,a]*s\n            ket=new\n        for mm,cf in ket.items():\n            if abs(cf)>1e-14:\n                rows.append(blkpos[idx[mm]]); cols.append(blkpos[n]); vals.append(cf)\n    return sp.csr_matrix((vals,(rows,cols)),shape=(len(blk),len(blk))).toarray()\nclasses={'E':np.eye(3),'C3':rot([1,1,1],2*np.pi/3),'C2':rot([0,0,1],np.pi),'C4':rot([0,0,1],np.pi/2),\"C2'\":rot([1,1,0],np.pi)}\nUmats={k:manybody(R) for k,R in classes.items()}\nirr={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\nordc=['E','C3','C2','C4',\"C2'\"]\nsz=np.array([1,8,3,6,6])\ndef label(chi):\n    return [k for k,v in irr.items() if abs(np.sum(sz*np.array(v)*chi)/24-1)<1e-6]\nHfull=(Hee+1.45*Hlf).tocsr()[blk][:,blk].toarray()\nprint(\"commutator check\", max(np.abs(Umats[k]@Hfull-Hfull@Umats[k]).max() for k in classes))\nprint(\"U^T U check\", max(np.abs(Umats[k].T@Umats[k]-np.eye(len(blk))).max() for k in classes))\n\ndef analyze(Dq):\n    Hf=(Hee+Dq*Hlf).tocsr()[blk][:,blk].toarray()\n    w,v=np.linalg.eigh(Hf)\n    clusters=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n        clusters.append((i,j)); i=j+1\n    res=[]\n    for (i,j) in clusters:\n        vv=v[:,i:j+1]\n        S2v=np.trace(vv.T@S2b@vv)/(j-i+1)\n        S=(-1+np.sqrt(1+4*S2v))/2\n        chi=np.real(np.array([np.trace(vv.T@Umats[k]@vv) for k in ordc]))\n        res.append(dict(E=w[i],dim=j-i+1,S2=S2v,mult=int(round(2*S+1)),irr=label(chi),chi=chi))\n    return res\nfor Dq in [0.0,1.45,2.55,3.25]:\n    res=analyze(Dq)\n    g=res[0]\n    print(\"Dq/B=\",Dq,\"clusters\",len(res),\"ground:\",g['mult'],g['irr'],round(g['E'],5))\n    for r in res[:14]:\n        print(f\"  E/B={r['E']-g['E']:.4f} dim={r['dim']} S(S+1)={r['S2']:.3f} mult={r['mult']} irr={r['irr']} chi={np.round(r['chi'],2)}\")\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "cb5716064f25fbedf3f89c169cbf657efe17b10c510c2f8ffd1e22fe49e5e59b",
+     "lines": 132,
+     "code": "import numpy as np, itertools\nimport scipy.sparse as sp\nfrom numpy.polynomial import legendre as L\n\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=63*C/5.0\nFk={0:0.0,2:F2,4:F4}\n\ndef E(i,j):\n    M=np.zeros((3,3)); M[i,j]=1; M[j,i]=1; return M/np.sqrt(2)\nBs=[E(0,1),E(1,2),E(0,2),np.diag([1,-1,0])/np.sqrt(2),np.diag([-1,-1,2])/np.sqrt(6)]\neps=np.array([-4,-4,-4,6,6],float)\n\nnt,npf=24,48\nxg,wg=L.leggauss(nt)\nth=np.arccos(xg); ph=np.arange(npf)*2*np.pi/npf\nTH,PH=np.meshgrid(th,ph,indexing='ij'); W=(np.outer(wg,np.ones(npf))*(2*np.pi/npf)).reshape(-1)\nU=np.stack([np.sin(TH)*np.cos(PH),np.sin(TH)*np.sin(PH),np.cos(TH)],-1).reshape(-1,3)\nf=np.array([np.einsum('pi,ij,pj->p',U,b,U) for b in Bs])\nnrm=np.sqrt(np.einsum('ip,p,ip->i',f,W,f)); f=f/nrm[:,None]\nassert np.allclose(np.einsum('ip,p,jp->ij',f,W,f),np.eye(5),atol=1e-10)\ncosg=U@U.T\npairs=[(a,c) for a in range(5) for c in range(5)]\ng=np.array([f[a]*f[c] for a,c in pairs])*W[None,:]\nVk={k:g@L.legval(cosg,[0]*k+[1])@g.T for k in (0,2,4)}\nV=np.zeros((5,5,5,5))\nfor k in (0,2,4):\n    M=Vk[k]*Fk[k]\n    for ia,(a,c) in enumerate(pairs):\n        for ib,(b,d) in enumerate(pairs):\n            V[a,b,c,d]+=M[ia,ib]\n\nNS=10\nstates=sorted(sum(1<<i for i in c) for c in itertools.combinations(range(NS),5))\nidx={s:n for n,s in enumerate(states)}\nD=len(states)\ndef cdag_c(i,j,m):\n    if not (m>>j)&1: return None,0\n    s=(-1)**bin(m&((1<<j)-1)).count('1')\n    m1=m^(1<<j)\n    if (m1>>i)&1: return None,0\n    s*=(-1)**bin(m1&((1<<i)-1)).count('1')\n    return m1|(1<<i), s\ndef onebody(i,j):\n    rows=[];cols=[];vals=[]\n    for n,m in enumerate(states):\n        mm,s=cdag_c(i,j,m)\n        if mm is None: continue\n        rows.append(idx[mm]); cols.append(n); vals.append(s)\n    return sp.csr_matrix((vals,(rows,cols)),shape=(D,D))\nEorb={(a,c):(onebody(2*a,2*c)+onebody(2*a+1,2*c+1)).tocsr() for a in range(5) for c in range(5)}\nHee=sp.csr_matrix((D,D))\nfor a,b,c,d in itertools.product(range(5),repeat=4):\n    v=V[a,b,c,d]\n    if abs(v)>1e-14:\n        Hee=Hee+0.5*v*(Eorb[(a,c)]@Eorb[(b,d)])\n        if b==c: Hee=Hee-0.5*v*Eorb[(a,d)]\nHee=Hee.tocsr()\nSp=sum(onebody(2*p,2*p+1) for p in range(5)).tocsr()\nSm=Sp.T.tocsr()\nNup=np.array([sum((m>>(2*p))&1 for p in range(5)) for m in states])\nNdn=np.array([sum((m>>(2*p+1))&1 for p in range(5)) for m in states])\nSz=(Nup-Ndn)/2.0\nS2=(Sm@Sp)+sp.diags(Sz**2+Sz)\nblk=np.where(Nup==3)[0]\nHb=Hee[blk][:,blk].toarray()\nS2b=S2[blk][:,blk].toarray()\nprint(\"block dim\",len(blk),\"herm err\",np.abs(Hb-Hb.T).max())\n# check Ee-only: E_ab sanity: trace of total number\nHlf=sum(eps[a]*Eorb[(a,a)] for a in range(5))\n\ndef rot(axis,ang):\n    axis=np.array(axis,float); axis/=np.linalg.norm(axis)\n    K=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])\n    return np.eye(3)+np.sin(ang)*K+(1-np.cos(ang))*K@K\nblkpos={n:k for k,n in enumerate(blk)}\ndef manybody(R):\n    Dm=np.array([[np.sum(Bs[bb]*(R@Bs[a]@R.T)) for a in range(5)] for bb in range(5)])\n    rows=[];cols=[];vals=[]\n    for n in blk:\n        m=states[n]\n        occ=[i for i in range(NS) if (m>>i)&1]\n        ket={0:1.0}\n        for i in reversed(occ):\n            a=i//2; sg=i%2\n            new={}\n            for mm,cf in ket.items():\n                for b in range(5):\n                    if abs(Dm[b,a])<1e-14: continue\n                    j=2*b+sg\n                    if (mm>>j)&1: continue\n                    s=(-1)**bin(mm&((1<<j)-1)).count('1')\n                    m2=mm|(1<<j)\n                    new[m2]=new.get(m2,0)+cf*Dm[b,a]*s\n            ket=new\n        for mm,cf in ket.items():\n            if abs(cf)>1e-14:\n                rows.append(blkpos[idx[mm]]); cols.append(blkpos[n]); vals.append(cf)\n    return sp.csr_matrix((vals,(rows,cols)),shape=(len(blk),len(blk))).toarray()\nclasses={'E':np.eye(3),'C3':rot([1,1,1],2*np.pi/3),'C2':rot([0,0,1],np.pi),'C4':rot([0,0,1],np.pi/2),\"C2'\":rot([1,1,0],np.pi)}\nUmats={k:manybody(R) for k,R in classes.items()}\nirr={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\nordc=['E','C3','C2','C4',\"C2'\"]\nsz=np.array([1,8,3,6,6])\ndef label(chi):\n    return [k for k,v in irr.items() if abs(np.sum(sz*np.array(v)*chi)/24-1)<1e-6]\nHfull=(Hee+1.45*Hlf).tocsr()[blk][:,blk].toarray()\nprint(\"commutator check\", max(np.abs(Umats[k]@Hfull-Hfull@Umats[k]).max() for k in classes))\nprint(\"U^T U check\", max(np.abs(Umats[k].T@Umats[k]-np.eye(len(blk))).max() for k in classes))\n\ndef analyze(Dq):\n    Hf=(Hee+Dq*Hlf).tocsr()[blk][:,blk].toarray()\n    w,v=np.linalg.eigh(Hf)\n    clusters=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n        clusters.append((i,j)); i=j+1\n    res=[]\n    for (i,j) in clusters:\n        vv=v[:,i:j+1]\n        S2v=np.trace(vv.T@S2b@vv)/(j-i+1)\n        S=(-1+np.sqrt(1+4*S2v))/2\n        chi=np.real(np.array([np.trace(vv.T@Umats[k]@vv) for k in ordc]))\n        res.append(dict(E=w[i],dim=j-i+1,S2=S2v,mult=int(round(2*S+1)),irr=label(chi),chi=chi))\n    return res\nfor Dq in [0.0,1.45,2.55,3.25]:\n    res=analyze(Dq)\n    g=res[0]\n    print(\"Dq/B=\",Dq,\"clusters\",len(res),\"ground:\",g['mult'],g['irr'],round(g['E'],5))\n    for r in res[:14]:\n        print(f\"  E/B={r['E']-g['E']:.4f} dim={r['dim']} S(S+1)={r['S2']:.3f} mult={r['mult']} irr={r['irr']} chi={np.round(r['chi'],2)}\")\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "block dim 100 herm err 8.881784197001252e-15\ncommutator check 3.232969447708456e-13\nU^T U check 7.105427357601002e-15\nDq/B= 0.0 clusters 16 ground: 6 ['A1'] -95.7775\n  E/B=0.0000 dim=1 S(S+1)=8.750 mult=6 irr=['A1'] chi=[1. 1. 1. 1. 1.]\n  E/B=31.7062 dim=9 S(S+1)=3.750 mult=4 irr=['A1', 'E', 'T1', 'T2'] chi=[9. 0. 1. 1. 1.]\n  E/B=37.3887 dim=3 S(S+1)=3.750 mult=4 irr=['T1'] chi=[ 3. -0. -1.  1. -1.]\n  E/B=38.7062 dim=5 S(S+1)=3.750 mult=4 irr=['E', 'T2'] chi=[ 5. -1.  1. -1.  1.]\n  E/B=45.7300 dim=13 S(S+1)=0.750 mult=2 irr=['A1', 'A2', 'E', 'T1'] chi=[13.  1.  1. -1.  1.]\n  E/B=52.1719 dim=5 S(S+1)=0.750 mult=2 irr=['E', 'T2'] chi=[ 5. -1.  1. -1.  1.]\n  E/B=52.3887 dim=7 S(S+1)=3.750 mult=4 irr=['A2', 'T1', 'T2'] chi=[ 7.  1. -1. -1. -1.]\n  E/B=53.4125 dim=7 S(S+1)=0.750 mult=2 irr=['A2', 'T1', 'T2'] chi=[ 7.  1. -1. -1. -1.]\n  E/B=56.4125 dim=11 S(S+1)=0.750 mult=2 irr=['E', 'T2'] chi=[11. -1. -1.  1. -1.]\n  E/B=56.7300 dim=9 S(S+1)=0.750 mult=2 irr=['A1', 'E', 'T1', 'T2'] chi=[ 9. -0.  1.  1.  1.]\n  E/B=60.7300 dim=7 S(S+1)=0.750 mult=2 irr=['A2', 'T1', 'T2'] chi=[ 7.  1. -1. -1. -1.]\n  E/B=66.7300 dim=1 S(S+1)=0.750 mult=2 irr=['A1'] chi=[1. 1. 1. 1. 1.]\n  E/B=74.4125 dim=5 S(S+1)=0.750 mult=2 irr=['E', 'T2'] chi=[ 5. -1.  1. -1.  1.]\n  E/B=81.4125 dim=9 S(S+1)=0.750 mult=2 irr=['A1', 'E', 'T1', 'T2'] chi=[ 9. -0.  1.  1.  1.]\nDq/B= 1.45 clusters 42 ground: 6 ['A1'] -95.7775\n  E/B=0.0000 dim=1 S(S+1)=8.750 mult=6 irr=['A1'] chi=[1. 1. 1. 1. 1.]\n  E/B=20.4560 dim=3 S(S+1)=3.750 mult=4 irr=['T1'] chi=[ 3. -0. -1.  1. -1.]\n  E/B=25.0022 dim=3 S(S+1)=0.750 mult=2 irr=['T2'] chi=[ 3.  0. -1. -1.  1.]\n  E/B=26.2456 dim=3 S(S+1)=3.750 mult=4 irr=['T2'] chi=[ 3. -0. -1. -1.  1.]\n  E/B=31.7062 dim=3 S(S+1)=3.750 mult=4 irr=['A1', 'E'] chi=[ 3. -0.  3.  1.  1.]\n  E/B=35.4264 dim=1 S(S+1)=0.750 mult=2 irr=['A2'] chi=[ 1.  1.  1. -1. -1.]\n  E/B=35.6640 dim=3 S(S+1)=3.750 mult=4 irr=['T2'] chi=[ 3.  0. -1. -1.  1.]\n  E/B=35.7439 dim=3 S(S+1)=0.750 mult=2 irr=['T1'] chi=[ 3.  0. -1.  1. -1.]\n  E/B=37.5154 dim=3 S(S+1)=0.750 mult=2 irr=['T2'] chi=[ 3.  0. -1. -1.  1.]\n  E/B=38.7062 dim=2 S(S+1)=3.750 mult=4 irr=['E'] chi=[ 2. -1.  2. -0. -0.]\n  E/B=39.6554 dim=2 S(S+1)=0.750 mult=2 irr=['E'] chi=[ 2. -1.  2.  0.  0.]\n  E/B=45.2488 dim=1 S(S+1)=0.750 mult=2 irr=['A1'] chi=[1. 1. 1. 1. 1.]\n  E/B=45.5395 dim=3 S(S+1)=0.750 mult=2 irr=['T1'] chi=[ 3. -0. -1.  1. -1.]\n  E/B=45.6902 dim=3 S(S+1)=3.750 mult=4 irr=['T1'] chi=[ 3.  0. -1.  1. -1.]\nDq/B= 2.55 clusters 42 ground: 6 ['A1'] -95.7775\n  E/B=0.0000 dim=1 S(S+1)=8.750 mult=6 irr=['A1'] chi=[1. 1. 1. 1. 1.]\n  E/B=4.1059 dim=3 S(S+1)=0.750 mult=2 irr=['T2'] chi=[ 3.  0. -1. -1.  1.]\n  E/B=9.7984 dim=3 S(S+1)=3.750 mult=4 irr=['T1'] chi=[ 3.  0. -1.  1. -1.]\n  E/B=16.7773 dim=3 S(S+1)=3.750 mult=4 irr=['T2'] chi=[ 3. -0. -1. -1.  1.]\n  E/B=24.8605 dim=1 S(S+1)=0.750 mult=2 irr=['A2'] chi=[ 1.  1.  1. -1. -1.]\n  E/B=25.2015 dim=3 S(S+1)=0.750 mult=2 irr=['T1'] chi=[ 3. -0. -1.  1. -1.]\n  E/B=27.4821 dim=3 S(S+1)=0.750 mult=2 irr=['T2'] chi=[ 3.  0. -1. -1.  1.]\n  E/B=29.8300 dim=2 S(S+1)=0.750 mult=2 irr=['E'] chi=[ 2. -1.  2. -0. -0.]\n  E/B=31.7062 dim=3 S(S+1)=3.750 mult=4 irr=['A1', 'E'] chi=[3. 0. 3. 1. 1.]\n  E/B=35.0324 dim=3 S(S+1)=3.750 mult=4 irr=['T2'] chi=[ 3. -0. -1. -1.  1.]\n  E/B=36.2320 dim=3 S(S+1)=0.750 mult=2 irr=['T1'] chi=[ 3.  0. -1.  1. -1.]\n  E/B=38.7062 dim=2 S(S+1)=3.750 mult=4 irr=['E'] chi=[ 2. -1.  2.  0.  0.]\n  E/B=39.8019 dim=3 S(S+1)=0.750 mult=2 irr=['T2'] chi=[ 3.  0. -1. -1.  1.]\n  E/B=41.3243 dim=1 S(S+1)=0.750 mult=2 irr=['A1'] chi=[1. 1. 1. 1. 1.]\nDq/B= 3.25 clusters 42 ground: 2 ['T2'] -105.22632\n  E/B=0.0000 dim=3 S(S+1)=0.750 mult=2 irr=['T2'] chi=[ 3. -0. -1. -1.  1.]\n  E/B=9.4488 dim=1 S(S+1)=8.750 mult=6 irr=['A1'] chi=[1. 1. 1. 1. 1.]\n  E/B=12.3693 dim=3 S(S+1)=3.750 mult=4 irr=['T1'] chi=[ 3.  0. -1.  1. -1.]\n  E/B=19.6366 dim=3 S(S+1)=3.750 mult=4 irr=['T2'] chi=[ 3. -0. -1. -1.  1.]\n  E/B=27.4471 dim=1 S(S+1)=0.750 mult=2 irr=['A2'] chi=[ 1.  1.  1. -1. -1.]\n  E/B=27.7923 dim=3 S(S+1)=0.750 mult=2 irr=['T1'] chi=[ 3.  0. -1.  1. -1.]\n  E/B=30.2743 dim=3 S(S+1)=0.750 mult=2 irr=['T2'] chi=[ 3.  0. -1. -1.  1.]\n  E/B=32.6280 dim=2 S(S+1)=0.750 mult=2 irr=['E'] chi=[ 2. -1.  2.  0.  0.]\n  E/B=39.3778 dim=3 S(S+1)=0.750 mult=2 irr=['T1'] chi=[ 3. -0. -1.  1. -1.]\n  E/B=41.1551 dim=3 S(S+1)=3.750 mult=4 irr=['A1', 'E'] chi=[ 3. -0.  3.  1.  1.]\n  E/B=42.7318 dim=3 S(S+1)=0.750 mult=2 irr=['T2'] chi=[ 3.  0. -1. -1.  1.]\n  E/B=44.3563 dim=3 S(S+1)=3.750 mult=4 irr=['T2'] chi=[ 3. -0. -1. -1.  1.]\n  E/B=45.1565 dim=1 S(S+1)=0.750 mult=2 irr=['A1'] chi=[1. 1. 1. 1. 1.]\n  E/B=48.1551 dim=2 S(S+1)=3.750 mult=4 irr=['E'] chi=[ 2. -1.  2. -0. -0.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "M=np.zeros((3,3)); M[i,j]=1; M[j,i]=1; return M/np.sqrt(2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 74,
+     "method": "matrix",
+     "text": "K=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "Dm=np.array([[np.sum(Bs[bb]*(R@Bs[a]@R.T)) for a in range(5)] for bb in range(5)])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 113,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(Hf)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 127,
+     "method": "typed_table",
+     "text": "for Dq in [0.0,1.45,2.55,3.25]:"
+    }
+   ],
+   "produces": [
+    "points[0].e_over_b",
+    "points[2].e_over_b",
+    "points[3].e_over_b",
+    "points[4].e_over_b",
+    "points[5].e_over_b",
+    "points[6].e_over_b",
+    "points[7].e_over_b",
+    "points[8].e_over_b"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "points[0].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[0].e_over_b",
+   "value": 20.46,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  },
+  {
+   "path": "points[1].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[1].e_over_b",
+   "value": 25.0,
+   "weak": true,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[2].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[2].e_over_b",
+   "value": 26.25,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  },
+  {
+   "path": "points[3].dq_over_b",
+   "value": 2.55,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[3].e_over_b",
+   "value": 4.11,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  },
+  {
+   "path": "points[4].dq_over_b",
+   "value": 2.55,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[4].e_over_b",
+   "value": 9.8,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  },
+  {
+   "path": "points[5].dq_over_b",
+   "value": 2.55,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[5].e_over_b",
+   "value": 16.78,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  },
+  {
+   "path": "points[6].dq_over_b",
+   "value": 3.25,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[6].e_over_b",
+   "value": 9.45,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  },
+  {
+   "path": "points[7].dq_over_b",
+   "value": 3.25,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[7].e_over_b",
+   "value": 12.37,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  },
+  {
+   "path": "points[8].dq_over_b",
+   "value": 3.25,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[8].e_over_b",
+   "value": 19.64,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  }
+ ],
+ "summary": {
+  "n_steps": 7,
+  "n_scripts": 3,
+  "n_failed_steps": 3,
+  "n_values": 18,
+  "n_linked": 8,
+  "n_weak": 1,
+  "source_steps": [
+   6
+  ],
+  "methods": [
+   "eigen_solver",
+   "typed_table"
+  ],
+  "edits_in_place": false
+ }
+}

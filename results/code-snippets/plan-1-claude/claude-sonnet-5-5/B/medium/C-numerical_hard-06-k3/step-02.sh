@@ -1,0 +1,1 @@
+python3 -c "import numpy" ; pip install numpy sympy 2>&1 | tail -1

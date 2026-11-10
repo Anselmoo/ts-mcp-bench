@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-ysj0scg6 2>/dev/null && pwd; touch x.txt && echo writable_here; ls -la | head

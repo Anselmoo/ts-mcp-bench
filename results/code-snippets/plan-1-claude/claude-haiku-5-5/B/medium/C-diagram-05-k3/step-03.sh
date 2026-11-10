@@ -1,0 +1,1 @@
+cd ~ && pwd && touch x && echo ok && rm x; df -h /tmp | tail -1; echo $HOME

@@ -1,0 +1,2 @@
+
+pip list 2>/dev/null | grep -i -E "numpy|scipy|sympy"

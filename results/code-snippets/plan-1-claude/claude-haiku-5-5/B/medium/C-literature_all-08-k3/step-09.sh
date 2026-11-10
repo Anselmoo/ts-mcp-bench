@@ -1,0 +1,1 @@
+sed -i 's/if (-m+q)!=mp: continue/if (m-q)!=mp: continue/g' d5.py && grep -n "m-q)!=mp" d5.py && python3 d5.py

@@ -1,0 +1,1 @@
+echo $HOME; touch $HOME/x && echo homeok; df -h /tmp 2>&1 | head -3

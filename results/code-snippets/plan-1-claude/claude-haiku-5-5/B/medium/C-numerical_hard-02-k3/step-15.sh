@@ -1,0 +1,1 @@
+cd . && sed -i 's/t1=\[v for v,dg,c in L if dg==9 and c>2\]\[0\]/t1=[v for v,dg,c in L if dg==9 and c>2 and v>1e-6][0]/' refine.py && python3 refine.py

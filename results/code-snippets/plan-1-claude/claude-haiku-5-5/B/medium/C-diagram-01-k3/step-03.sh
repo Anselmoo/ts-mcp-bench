@@ -1,0 +1,1 @@
+python3 -m pip install numpy scipy matplotlib 2>&1 | tail -2

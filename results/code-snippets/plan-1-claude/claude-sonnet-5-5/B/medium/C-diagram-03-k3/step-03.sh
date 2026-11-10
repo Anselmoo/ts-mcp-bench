@@ -1,0 +1,1 @@
+sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y/; s/sph_harm(m,2,ph,th)/sph_harm_y(2,m,th,ph)/' t.py && python3 t.py

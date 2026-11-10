@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; touch ~/x 2>&1 && echo home-writable; df -h | head -5

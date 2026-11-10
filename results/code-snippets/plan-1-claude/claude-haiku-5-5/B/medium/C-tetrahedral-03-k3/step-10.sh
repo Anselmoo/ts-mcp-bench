@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>/w && sed -i '1i import numpy as np' fit2.py && sed -i 's/^lv=levels(500,800,3200)/if __name__=="__main__":\n    lv=levels(500,800,3200)/; s/^for x,n in lv: print/    for x,n in lv: print/' fit.py && python3 fit2.py 2>&1 | grep -v Shell | tail -5

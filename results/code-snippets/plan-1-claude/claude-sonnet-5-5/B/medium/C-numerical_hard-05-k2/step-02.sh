@@ -1,0 +1,1 @@
+pip install numpy 2>&1 | tail -1; python3 -V

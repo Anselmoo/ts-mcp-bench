@@ -1,0 +1,162 @@
+cd /dev/shm && cat > ts.py <<'EOF'
+import numpy as np, itertools
+from sympy.physics.wigner import wigner_3j
+from functools import lru_cache
+l=2
+ms=[-2,-1,0,1,2]
+@lru_cache(None)
+def w3(a,b,c,d,e,f): return float(wigner_3j(a,b,c,d,e,f))
+def ang(k,m,q,mp):
+    if abs(q)>k or abs(m)>l or abs(mp)>l: return 0.0
+    return (-1)**(l-m)*w3(l,k,l,-m,q,mp)*(-1)**l*(2*l+1)*w3(l,k,l,0,0,0)
+def g(k,m1,m2,m3,m4):
+    return sum((-1)**q*ang(k,m1,-q,m3)*ang(k,m2,q,m4) for q in range(-k,k+1))
+def Vspat(F):
+    V=np.zeros((5,5,5,5))
+    for a,b,c,d in itertools.product(range(5),repeat=4):
+        m1,m2,m3,m4=ms[a],ms[b],ms[c],ms[d]
+        if m1+m2!=m3+m4: continue
+        V[a,b,c,d]=sum(Fk*g(k,m1,m2,m3,m4) for k,Fk in ((2,F[2]),(4,F[4])))
+    return V
+def hspat(Dq):
+    idx={m:i for i,m in enumerate(ms)}
+    v=np.zeros(5); v[idx[2]]=1/np.sqrt(2); v[idx[-2]]=1/np.sqrt(2)
+    u=np.zeros(5); u[idx[2]]=1/np.sqrt(2); u[idx[-2]]=-1/np.sqrt(2)
+    e0=np.zeros(5); e0[idx[0]]=1
+    e1=np.zeros(5); e1[idx[1]]=1
+    em1=np.zeros(5); em1[idx[-1]]=1
+    Peg=np.outer(e0,e0)+np.outer(v,v)
+    Pt2g=np.outer(e1,e1)+np.outer(em1,em1)+np.outer(u,u)
+    return -4*Dq*Pt2g+6*Dq*Peg
+states=[sum(1<<i for i in c) for c in itertools.combinations(range(10),6)]
+sidx={s:i for i,s in enumerate(states)}
+so=[(i//2, i%2) for i in range(10)]
+def apply_ops(st, ops):
+    s=st; sign=1
+    for (i,dag) in ops:
+        occ=(s>>i)&1
+        if dag and occ: return None
+        if (not dag) and (not occ): return None
+        if bin(s & ((1<<i)-1)).count('1')%2: sign=-sign
+        s ^= (1<<i)
+    return sign,s
+def build(Dq,B,C):
+    F={2:49*B+5*C,4:9*C}
+    V=Vspat(F); h=hspat(Dq)
+    N=len(states); H=np.zeros((N,N))
+    for col,st in enumerate(states):
+        for i in range(10):
+            for j in range(10):
+                if so[i][1]!=so[j][1]: continue
+                hv=h[so[i][0],so[j][0]]
+                if abs(hv)<1e-14: continue
+                r=apply_ops(st,[(j,False),(i,True)])
+                if r is None: continue
+                H[sidx[r[1]],col]+=r[0]*hv
+        for a in range(10):
+          for b in range(10):
+            if a==b: continue
+            for c in range(10):
+              for d in range(10):
+                if c==d: continue
+                if so[a][1]!=so[c][1] or so[b][1]!=so[d][1]: continue
+                v=V[so[a][0],so[b][0],so[c][0],so[d][0]]
+                if abs(v)<1e-14: continue
+                r=apply_ops(st,[(c,False),(d,False),(b,True),(a,True)])
+                if r is None: continue
+                H[sidx[r[1]],col]+=0.5*r[0]*v
+    return H
+def S2():
+    Sz=np.zeros((210,210)); Sp=np.zeros((210,210))
+    for col,st in enumerate(states):
+        sz=0
+        for o in range(5):
+            sz+=0.5*(((st>>(2*o))&1)-((st>>(2*o+1))&1))
+        Sz[col,col]=sz
+        for o in range(5):
+            r=apply_ops(st,[(2*o+1,False),(2*o,True)])
+            if r is None: continue
+            Sp[sidx[r[1]],col]+=r[0]
+    Sm=Sp.T
+    return Sm@Sp+Sz@Sz+Sz
+S2m=S2()
+EOF
+cat > sym.py <<'EOF'
+from ts import *
+from scipy.linalg import expm, null_space
+from scipy.spatial.transform import Rotation as Rot
+import itertools as it
+from collections import Counter
+L=2
+Jz=np.diag([float(m) for m in ms]).astype(complex)
+Jp=np.zeros((5,5),complex)
+for i,m in enumerate(ms[:-1]):
+    Jp[i+1,i]=np.sqrt(L*(L+1)-m*(m+1))
+Jm=Jp.conj().T
+Jx=(Jp+Jm)/2; Jy=(Jp-Jm)/(2j)
+Og=[]
+for perm in it.permutations(range(3)):
+    for signs in it.product([1,-1],repeat=3):
+        M=np.zeros((3,3))
+        for i,p in enumerate(perm): M[i,p]=signs[i]
+        if np.linalg.det(M)>0: Og.append(M)
+def Dl(R):
+    rv=Rot.from_matrix(R).as_rotvec()
+    th=np.linalg.norm(rv)
+    if th<1e-12: return np.eye(5,dtype=complex)
+    n=rv/th
+    return expm(-1j*th*(n[0]*Jx+n[1]*Jy+n[2]*Jz))
+occs=[[i for i in range(10) if (s>>i)&1] for s in states]
+def fock_rep(U):
+    M=np.zeros((210,210),complex)
+    for J,oj in enumerate(occs):
+        for I,oi in enumerate(occs):
+            M[I,J]=np.linalg.det(U[np.ix_(oi,oj)])
+    return M
+def Lam(R):
+    return fock_rep(np.kron(Dl(R),np.eye(2)))
+EOF
+cat > run.py <<'EOF'
+from sym import *
+Vs=null_space(S2m)
+cls=[]
+for R in Og:
+    rv=Rot.from_matrix(R).as_rotvec(); th=np.linalg.norm(rv)
+    if th<1e-9: c='E'
+    elif abs(th-2*np.pi/3)<1e-6: c='C3'
+    elif abs(th-np.pi/2)<1e-6: c='C4'
+    else:
+        n=np.abs(rv/th)
+        c='C2' if np.sum(n>0.5)==1 else "C2p"
+    cls.append(c)
+print(Counter(cls), 'singlet dim', Vs.shape[1])
+chars={
+ 'A1':{'E':1,'C4':1,'C2':1,'C3':1,'C2p':1},
+ 'A2':{'E':1,'C4':-1,'C2':1,'C3':1,'C2p':-1},
+ 'E': {'E':2,'C4':0,'C2':2,'C3':-1,'C2p':0},
+ 'T1':{'E':3,'C4':1,'C2':-1,'C3':0,'C2p':-1},
+ 'T2':{'E':3,'C4':-1,'C2':-1,'C3':0,'C2p':1},
+}
+Lams=[Lam(R) for R in Og]
+Pr={}
+for k in chars:
+    P=sum(chars[k][c]*L_ for c,L_ in zip(cls,Lams))
+    Pr[k]=chars[k]['E']/24*P
+Pss={k:Vs.conj().T@Pr[k]@Vs for k in chars}
+def analyze(Dq,B,C=None):
+    if C is None: C=4*B
+    H=build(Dq,B,C)
+    Hs=Vs.conj().T@H@Vs
+    w,U=np.linalg.eigh(Hs)
+    out=[]; i=0
+    while i<len(w):
+        j=i
+        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1
+        Ucl=U[:,i:j+1]
+        mult={k:round(float(np.real(np.trace(Ucl.conj().T@Pss[k]@Ucl))),3) for k in chars}
+        out.append((w[i],{k:v for k,v in mult.items() if abs(v)>1e-6}))
+        i=j+1
+    return out
+for e,m in analyze(2.0,1.0): print(round(e,4),m)
+EOF
+python3 run.py

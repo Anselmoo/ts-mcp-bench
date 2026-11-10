@@ -1,0 +1,1 @@
+python3 d3_energies.py

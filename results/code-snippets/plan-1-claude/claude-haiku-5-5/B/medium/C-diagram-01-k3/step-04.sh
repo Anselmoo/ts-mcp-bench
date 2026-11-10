@@ -1,0 +1,1 @@
+ls <HOME>/.cache/tsbench/ 2>/dev/null; which -a python3 python; python3 -c "import numpy, scipy; print(numpy.__version__, scipy.__version__)"; ls /usr/bin | grep -i python

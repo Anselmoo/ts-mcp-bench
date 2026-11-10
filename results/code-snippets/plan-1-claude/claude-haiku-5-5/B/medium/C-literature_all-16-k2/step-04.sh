@@ -1,0 +1,1 @@
+cd $HOME && touch t && echo ok; python3 -c "import sympy,scipy;print('ok')"

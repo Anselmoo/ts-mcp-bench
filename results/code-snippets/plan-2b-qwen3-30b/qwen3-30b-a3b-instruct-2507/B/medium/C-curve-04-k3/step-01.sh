@@ -1,0 +1,1 @@
+echo 'Processing d5 octahedral system with B=800 cm⁻¹, C=3473 cm⁻¹, and Dq/B values of 1.45, 2.55, 3.25. Calculating energies of the three lowest excited terms at each Dq/B value.'

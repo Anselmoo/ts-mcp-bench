@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> && sed -i 's#Fk={2:F2/49,4:F4/441}#Fk={2:F2,4:F4}#' a.py && python3 a.py

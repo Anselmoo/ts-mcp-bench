@@ -1,0 +1,1 @@
+python -c "import os; print(os.listdir('<B_VENV>/lib/python3.14/site-packages'))"

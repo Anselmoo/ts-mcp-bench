@@ -1,0 +1,245 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-crossover-01-k2.jsonl",
+ "transcript_sha256": "f80a20c4c3890b05b2de811ce9b1b8cfe575252f1f89fc3396829b1a0896707e",
+ "answer": {
+  "Dq": 1675.0,
+  "B": 706.0,
+  "C": 2734.0,
+  "out_of_scope": false,
+  "reason": "Crossover where the lowest triplet (3T1g) energy equals the high-spin 5Eg ground state, from a full d4 Slater-determinant calculation with Racah B and C."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "pip list 2>/dev/null | grep -i -E \"sympy|numpy\" ; cat << 'EOF' > /tmp/d4.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j, gaunt\nfrom scipy.optimize import brentq\nl=2\nms=list(range(-2,3))\n# spin orbitals: (m, s) index\nso=[(m,s) for m in ms for s in (1,-1)]\ndef C_me(m,k,q,mp):\n    # <l m| C^k_q | l mp>, C^k_q = sqrt(4pi/(2k+1)) Y_kq ; Gaunt-based\n    if m!=mp+q: return 0.0\n    # <l m|C^k_q|l m'> = (-1)^(l-m) (l k l; -m q m') * (-1)^l (2l+1) (l k l;0 0 0)  [reduced element convention]\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*(-1)**l*(2*l+1)*wigner_3j(l,k,l,0,0,0))\ndef ang(k,a,c,b,d):\n    # sum_q (-1)^q <a|C^k_q|c><b|C^k_-q|d>, a,b,c,d are m values\n    tot=0.0\n    for q in range(-k,k+1):\n        tot+=(-1)**q*C_me(a,k,q,c)*C_me(b,k,-q,d)\n    return tot\n# Coulomb: V(a,b,c,d)= sum_k F^k ang  (spin-orbitals: spin delta on a-c, b-d)\ndef V(i,j,k_,l_,F):\n    (ma,sa),(mb,sb),(mc,sc),(md,sd)=so[i],so[j],so[k_],so[l_]\n    if sa!=sc or sb!=sd: return 0.0\n    return sum(F[k]*ang(k,ma,mc,mb,md) for k in (0,2,4))\n# one-electron cubic field: real orbitals in complex basis\n# t2g: xy, yz, xz ; eg: z2, x2-y2 expressed in |m> basis\nr2=np.sqrt(2)\nh1=np.zeros((10,10),complex)\n# Build cubic field one-particle operator in complex m basis: Dq*(-4 on t2g, +6 on eg)\n# Use Y_2m: xz,yz etc. Represent via orbital vectors over m=-2..2\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\n# real orbitals in complex basis (Condon-Shortley real combos)\norb={\n 'z2': vec({0:1}),\n 'x2y2': vec({2:1/r2,-2:1/r2}),\n 'xy': vec({2:-1j/r2,-2:1j/r2}),\n 'xz': vec({1:-1/r2,-1:1/r2}),\n 'yz': vec({1:-1j/r2,-1:-1j/r2}),\n}\n# Cubic field matrix: -4Dq on t2g, +6Dq on eg (in units of Dq)\nP=np.zeros((5,5),complex)\nfor name,w in [('xy',-4),('xz',-4),('yz',-4),('z2',6),('x2y2',6)]:\n    v=orb[name]; P+=w*np.outer(v,v.conj())\ndef build(Dq,B,C):\n    F4=441*C/35.0\n    F2=(441*B+5*F4)/9.0\n    F={0:0.0,2:F2,4:F4}\n    # one-electron in spin-orbital basis\n    H1=np.zeros((10,10),complex)\n    for i,(m1,s1) in enumerate(so):\n        for j,(m2,s2) in enumerate(so):\n            if s1==s2: H1[i,j]=Dq*P[m1+2,m2+2]\n    # 2-body\n    Vt=np.zeros((10,10,10,10))\n    for i,j,k_,l_ in itertools.product(range(10),repeat=4):\n        Vt[i,j,k_,l_]=V(i,j,k_,l_,F).real if True else 0\n    # build full Hamiltonian in Slater determinant basis of 4 electrons\n    dets=list(itertools.combinations(range(10),4))\n    idx={d:n for n,d in enumerate(dets)}\n    N=len(dets); H=np.zeros((N,N))\n    def sgn_apply(state,p):\n        # annihilate orbital p from sorted tuple; return (sign, newstate) or None\n        if p not in state: return None\n        pos=state.index(p)\n        return ((-1)**pos, tuple(x for x in state if x!=p))\n    def create(state,p):\n        if p in state: return None\n        pos=sum(1 for x in state if x<p)\n        new=tuple(sorted(state+(p,)))\n        return ((-1)**pos,new)\n    for n,d in enumerate(dets):\n        # one-body\n        for i in range(10):\n            for j in range(10):\n                if abs(H1[i,j])<1e-14: continue\n                r=sgn_apply(d,j)\n                if r is None: continue\n                s1,st=r\n                r2_=create(st,i)\n                if r2_ is None: continue\n                s2,st2=r2_\n                H[idx[st2],n]+=s1*s2*H1[i,j].real\n        # two-body: 1/2 sum V_{ijkl} c+_i c+_j c_l c_k ; V_{ijkl}=<ij|kl>\n        for i,j,k_,l_ in itertools.product(range(10),repeat=4):\n            v=Vt[i,j,k_,l_]\n            if abs(v)<1e-12: continue\n            # apply c_k then c_l (annihilate l first then k)\n            r=sgn_apply(d,l_)\n            if r is None: continue\n            sa,st=r\n            r=sgn_apply(st,k_)\n            if r is None: continue\n            sb,st=r\n            r=create(st,j)\n            if r is None: continue\n            sc,st=r\n            r=create(st,i)\n            if r is None: continue\n            sd,st=r\n            H[idx[st],n]+=0.5*v*sa*sb*sc*sd\n    # Sz, S2 for triplet selection: use total spin S^2\n    Sz=np.array([sum(0.5*so[p][1] for p in d) for d in dets])\n    return dets,H,Sz\nEOF\ncd /tmp && python3 -c \"\nimport d4,numpy as np\ndets,H,Sz=d4.build(0.0,706,2734)\nprint(H.shape, np.allclose(H,H.T))\n\"",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "fef02a82e8674b18ae28636d7f25d4198adfc723d4c44cdf5a986d0c85b96af0",
+     "lines": 105,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j, gaunt\nfrom scipy.optimize import brentq\nl=2\nms=list(range(-2,3))\n# spin orbitals: (m, s) index\nso=[(m,s) for m in ms for s in (1,-1)]\ndef C_me(m,k,q,mp):\n    # <l m| C^k_q | l mp>, C^k_q = sqrt(4pi/(2k+1)) Y_kq ; Gaunt-based\n    if m!=mp+q: return 0.0\n    # <l m|C^k_q|l m'> = (-1)^(l-m) (l k l; -m q m') * (-1)^l (2l+1) (l k l;0 0 0)  [reduced element convention]\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*(-1)**l*(2*l+1)*wigner_3j(l,k,l,0,0,0))\ndef ang(k,a,c,b,d):\n    # sum_q (-1)^q <a|C^k_q|c><b|C^k_-q|d>, a,b,c,d are m values\n    tot=0.0\n    for q in range(-k,k+1):\n        tot+=(-1)**q*C_me(a,k,q,c)*C_me(b,k,-q,d)\n    return tot\n# Coulomb: V(a,b,c,d)= sum_k F^k ang  (spin-orbitals: spin delta on a-c, b-d)\ndef V(i,j,k_,l_,F):\n    (ma,sa),(mb,sb),(mc,sc),(md,sd)=so[i],so[j],so[k_],so[l_]\n    if sa!=sc or sb!=sd: return 0.0\n    return sum(F[k]*ang(k,ma,mc,mb,md) for k in (0,2,4))\n# one-electron cubic field: real orbitals in complex basis\n# t2g: xy, yz, xz ; eg: z2, x2-y2 expressed in |m> basis\nr2=np.sqrt(2)\nh1=np.zeros((10,10),complex)\n# Build cubic field one-particle operator in complex m basis: Dq*(-4 on t2g, +6 on eg)\n# Use Y_2m: xz,yz etc. Represent via orbital vectors over m=-2..2\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\n# real orbitals in complex basis (Condon-Shortley real combos)\norb={\n 'z2': vec({0:1}),\n 'x2y2': vec({2:1/r2,-2:1/r2}),\n 'xy': vec({2:-1j/r2,-2:1j/r2}),\n 'xz': vec({1:-1/r2,-1:1/r2}),\n 'yz': vec({1:-1j/r2,-1:-1j/r2}),\n}\n# Cubic field matrix: -4Dq on t2g, +6Dq on eg (in units of Dq)\nP=np.zeros((5,5),complex)\nfor name,w in [('xy',-4),('xz',-4),('yz',-4),('z2',6),('x2y2',6)]:\n    v=orb[name]; P+=w*np.outer(v,v.conj())\ndef build(Dq,B,C):\n    F4=441*C/35.0\n    F2=(441*B+5*F4)/9.0\n    F={0:0.0,2:F2,4:F4}\n    # one-electron in spin-orbital basis\n    H1=np.zeros((10,10),complex)\n    for i,(m1,s1) in enumerate(so):\n        for j,(m2,s2) in enumerate(so):\n            if s1==s2: H1[i,j]=Dq*P[m1+2,m2+2]\n    # 2-body\n    Vt=np.zeros((10,10,10,10))\n    for i,j,k_,l_ in itertools.product(range(10),repeat=4):\n        Vt[i,j,k_,l_]=V(i,j,k_,l_,F).real if True else 0\n    # build full Hamiltonian in Slater determinant basis of 4 electrons\n    dets=list(itertools.combinations(range(10),4))\n    idx={d:n for n,d in enumerate(dets)}\n    N=len(dets); H=np.zeros((N,N))\n    def sgn_apply(state,p):\n        # annihilate orbital p from sorted tuple; return (sign, newstate) or None\n        if p not in state: return None\n        pos=state.index(p)\n        return ((-1)**pos, tuple(x for x in state if x!=p))\n    def create(state,p):\n        if p in state: return None\n        pos=sum(1 for x in state if x<p)\n        new=tuple(sorted(state+(p,)))\n        return ((-1)**pos,new)\n    for n,d in enumerate(dets):\n        # one-body\n        for i in range(10):\n            for j in range(10):\n                if abs(H1[i,j])<1e-14: continue\n                r=sgn_apply(d,j)\n                if r is None: continue\n                s1,st=r\n                r2_=create(st,i)\n                if r2_ is None: continue\n                s2,st2=r2_\n                H[idx[st2],n]+=s1*s2*H1[i,j].real\n        # two-body: 1/2 sum V_{ijkl} c+_i c+_j c_l c_k ; V_{ijkl}=<ij|kl>\n        for i,j,k_,l_ in itertools.product(range(10),repeat=4):\n            v=Vt[i,j,k_,l_]\n            if abs(v)<1e-12: continue\n            # apply c_k then c_l (annihilate l first then k)\n            r=sgn_apply(d,l_)\n            if r is None: continue\n            sa,st=r\n            r=sgn_apply(st,k_)\n            if r is None: continue\n            sb,st=r\n            r=create(st,j)\n            if r is None: continue\n            sc,st=r\n            r=create(st,i)\n            if r is None: continue\n            sd,st=r\n            H[idx[st],n]+=0.5*v*sa*sb*sc*sd\n    # Sz, S2 for triplet selection: use total spin S^2\n    Sz=np.array([sum(0.5*so[p][1] for p in d) for d in dets])\n    return dets,H,Sz\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 112: /tmp/d4.py: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    import d4,numpy as np\nModuleNotFoundError: No module named 'd4'",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "h1=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 51,
+     "method": "matrix",
+     "text": "H1=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 56,
+     "method": "matrix",
+     "text": "Vt=np.zeros((10,10,10,10))"
+    },
+    {
+     "script": "d4.py",
+     "line": 62,
+     "method": "matrix",
+     "text": "N=len(dets); H=np.zeros((N,N))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ && pwd && python3 -c \"import sympy, numpy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\nok\nShell cwd was reset to /tmp/tsbench-run-nl2xci60",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p ~/d4work && cd ~/d4work && cat << 'EOF' > d4.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq\nl=2; ms=list(range(-2,3))\nso=[(m,s) for m in ms for s in (1,-1)]\ndef C_me(m,k,q,mp):\n    if m!=mp+q: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*(-1)**l*(2*l+1)*wigner_3j(l,k,l,0,0,0))\ndef ang(k,a,c,b,d):\n    return sum((-1)**q*C_me(a,k,q,c)*C_me(b,k,-q,d) for q in range(-k,k+1))\ndef Vel(i,j,k_,l_,F):\n    (ma,sa),(mb,sb),(mc,sc),(md,sd)=so[i],so[j],so[k_],so[l_]\n    if sa!=sc or sb!=sd: return 0.0\n    return sum(F[k]*ang(k,ma,mc,mb,md) for k in (2,4))\nr2=np.sqrt(2)\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\norb={'z2':vec({0:1}),'x2y2':vec({2:1/r2,-2:1/r2}),'xy':vec({2:-1j/r2,-2:1j/r2}),\n     'xz':vec({1:-1/r2,-1:1/r2}),'yz':vec({1:-1j/r2,-1:-1j/r2})}\nP=np.zeros((5,5),complex)\nfor name,w in [('xy',-4),('xz',-4),('yz',-4),('z2',6),('x2y2',6)]:\n    v=orb[name]; P+=w*np.outer(v,v.conj())\ndets=list(itertools.combinations(range(10),4)); idx={d:n for n,d in enumerate(dets)}; N=len(dets)\ndef apply_ann(st,p):\n    if p not in st: return None\n    pos=st.index(p); return ((-1)**pos, tuple(x for x in st if x!=p))\ndef apply_cre(st,p):\n    if p in st: return None\n    pos=sum(1 for x in st if x<p); return ((-1)**pos, tuple(sorted(st+(p,))))\ndef op_matrix(terms):\n    # terms: list of (coef, [(create i), ...], [(annih j)...]) generic: list of ops applied right-to-left\n    M=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        for coef,ops in terms:\n            st=d; sign=1; ok=True\n            for typ,p in reversed(ops):\n                r=apply_ann(st,p) if typ=='a' else apply_cre(st,p)\n                if r is None: ok=False;break\n                s,st=r; sign*=s\n            if ok: M[idx[st],n]+=coef*sign\n    return M\ndef build_parts(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0; F={2:F2,4:F4}\n    Hee=np.zeros((N,N))\n    terms=[]\n    for i,j,k_,l_ in itertools.product(range(10),repeat=4):\n        v=Vel(i,j,k_,l_,F)\n        if abs(v)<1e-12: continue\n        # 1/2 V_{ijkl} c+_i c+_j c_l c_k\n        terms.append((0.5*v,[('c',i),('c',j),('a',l_),('a',k_)]))\n    Hee=op_matrix(terms)\n    # one-electron field operator (per unit Dq)\n    t1=[]\n    for i,(m1,s1) in enumerate(so):\n        for j,(m2,s2) in enumerate(so):\n            if s1==s2 and abs(P[m1+2,m2+2])>1e-12:\n                t1.append((P[m1+2,m2+2].real,[('c',i),('a',j)]))\n    Hf=op_matrix(t1)\n    # S+ = sum_m c+_{m,up} c_{m,dn}\n    Sp=op_matrix([(1.0,[('c',so.index((m,1))),('a',so.index((m,-1)))]) for m in ms])\n    Sz=np.diag([sum(0.5*so[p][1] for p in d) for d in dets])\n    S2=Sp.T@Sp+Sz@Sz+Sz  # S- S+ = (S+)^T S+ for real matrices\n    return Hee,Hf,S2\nEOF\npython3 -c \"\nimport d4,numpy as np\nHee,Hf,S2=d4.build_parts(706,2734)\nprint(np.allclose(Hee,Hee.T), np.allclose(Hf,Hf.T))\nprint(np.round(np.linalg.eigvalsh(S2),3)[:3], np.unique(np.round(np.linalg.eigvalsh(S2),3)))\n\"",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "53283d586b36ad04697ad2188bd76b90d95e6bb1b35066e32f763fd7bdd0c5ed",
+     "lines": 65,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import brentq\nl=2; ms=list(range(-2,3))\nso=[(m,s) for m in ms for s in (1,-1)]\ndef C_me(m,k,q,mp):\n    if m!=mp+q: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*(-1)**l*(2*l+1)*wigner_3j(l,k,l,0,0,0))\ndef ang(k,a,c,b,d):\n    return sum((-1)**q*C_me(a,k,q,c)*C_me(b,k,-q,d) for q in range(-k,k+1))\ndef Vel(i,j,k_,l_,F):\n    (ma,sa),(mb,sb),(mc,sc),(md,sd)=so[i],so[j],so[k_],so[l_]\n    if sa!=sc or sb!=sd: return 0.0\n    return sum(F[k]*ang(k,ma,mc,mb,md) for k in (2,4))\nr2=np.sqrt(2)\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\norb={'z2':vec({0:1}),'x2y2':vec({2:1/r2,-2:1/r2}),'xy':vec({2:-1j/r2,-2:1j/r2}),\n     'xz':vec({1:-1/r2,-1:1/r2}),'yz':vec({1:-1j/r2,-1:-1j/r2})}\nP=np.zeros((5,5),complex)\nfor name,w in [('xy',-4),('xz',-4),('yz',-4),('z2',6),('x2y2',6)]:\n    v=orb[name]; P+=w*np.outer(v,v.conj())\ndets=list(itertools.combinations(range(10),4)); idx={d:n for n,d in enumerate(dets)}; N=len(dets)\ndef apply_ann(st,p):\n    if p not in st: return None\n    pos=st.index(p); return ((-1)**pos, tuple(x for x in st if x!=p))\ndef apply_cre(st,p):\n    if p in st: return None\n    pos=sum(1 for x in st if x<p); return ((-1)**pos, tuple(sorted(st+(p,))))\ndef op_matrix(terms):\n    # terms: list of (coef, [(create i), ...], [(annih j)...]) generic: list of ops applied right-to-left\n    M=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        for coef,ops in terms:\n            st=d; sign=1; ok=True\n            for typ,p in reversed(ops):\n                r=apply_ann(st,p) if typ=='a' else apply_cre(st,p)\n                if r is None: ok=False;break\n                s,st=r; sign*=s\n            if ok: M[idx[st],n]+=coef*sign\n    return M\ndef build_parts(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0; F={2:F2,4:F4}\n    Hee=np.zeros((N,N))\n    terms=[]\n    for i,j,k_,l_ in itertools.product(range(10),repeat=4):\n        v=Vel(i,j,k_,l_,F)\n        if abs(v)<1e-12: continue\n        # 1/2 V_{ijkl} c+_i c+_j c_l c_k\n        terms.append((0.5*v,[('c',i),('c',j),('a',l_),('a',k_)]))\n    Hee=op_matrix(terms)\n    # one-electron field operator (per unit Dq)\n    t1=[]\n    for i,(m1,s1) in enumerate(so):\n        for j,(m2,s2) in enumerate(so):\n            if s1==s2 and abs(P[m1+2,m2+2])>1e-12:\n                t1.append((P[m1+2,m2+2].real,[('c',i),('a',j)]))\n    Hf=op_matrix(t1)\n    # S+ = sum_m c+_{m,up} c_{m,dn}\n    Sp=op_matrix([(1.0,[('c',so.index((m,1))),('a',so.index((m,-1)))]) for m in ms])\n    Sz=np.diag([sum(0.5*so[p][1] for p in d) for d in dets])\n    S2=Sp.T@Sp+Sz@Sz+Sz  # S- S+ = (S+)^T S+ for real matrices\n    return Hee,Hf,S2\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/d4work’: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    import d4,numpy as np\nModuleNotFoundError: No module named 'd4'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 22,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 46,
+     "method": "matrix",
+     "text": "Hee=np.zeros((N,N))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp/tsbench-run-nl2xci60 2>/dev/null && pwd && touch x_test && echo writable; ls -ld /tmp /dev/shm 2>/dev/null; touch /dev/shm/t && echo shm_ok",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-run-nl2xci60\nwritable\ndrwxr-xr-x  2 <USER>  <USER>       40 Nov  3 19:43 /dev/shm\ndrwxrwxrwt 32 nobody nogroup 884736 Nov  3 19:42 /tmp\nshm_ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat << 'EOF' > d4.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2; ms=list(range(-2,3))\nso=[(m,s) for m in ms for s in (1,-1)]\ndef C_me(m,k,q,mp):\n    if m!=mp+q: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*(-1)**l*(2*l+1)*wigner_3j(l,k,l,0,0,0))\ndef ang(k,a,c,b,d):\n    return sum((-1)**q*C_me(a,k,q,c)*C_me(b,k,-q,d) for q in range(-k,k+1))\ndef Vel(i,j,k_,l_,F):\n    (ma,sa),(mb,sb),(mc,sc),(md,sd)=so[i],so[j],so[k_],so[l_]\n    if sa!=sc or sb!=sd: return 0.0\n    return sum(F[k]*ang(k,ma,mc,mb,md) for k in (2,4))\nr2=np.sqrt(2)\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\norb={'z2':vec({0:1}),'x2y2':vec({2:1/r2,-2:1/r2}),'xy':vec({2:-1j/r2,-2:1j/r2}),\n     'xz':vec({1:-1/r2,-1:1/r2}),'yz':vec({1:-1j/r2,-1:-1j/r2})}\nP=np.zeros((5,5),complex)\nfor name,w in [('xy',-4),('xz',-4),('yz',-4),('z2',6),('x2y2',6)]:\n    v=orb[name]; P+=w*np.outer(v,v.conj())\ndets=list(itertools.combinations(range(10),4)); idx={d:n for n,d in enumerate(dets)}; N=len(dets)\ndef apply_ann(st,p):\n    if p not in st: return None\n    pos=st.index(p); return ((-1)**pos, tuple(x for x in st if x!=p))\ndef apply_cre(st,p):\n    if p in st: return None\n    pos=sum(1 for x in st if x<p); return ((-1)**pos, tuple(sorted(st+(p,))))\ndef op_matrix(terms):\n    M=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        for coef,ops in terms:\n            st=d; sign=1; ok=True\n            for typ,p in reversed(ops):\n                r=apply_ann(st,p) if typ=='a' else apply_cre(st,p)\n                if r is None: ok=False;break\n                s,st=r; sign*=s\n            if ok: M[idx[st],n]+=coef*sign\n    return M\ndef build_parts(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0; F={2:F2,4:F4}\n    terms=[]\n    for i,j,k_,l_ in itertools.product(range(10),repeat=4):\n        v=Vel(i,j,k_,l_,F)\n        if abs(v)<1e-12: continue\n        terms.append((0.5*v,[('c',i),('c',j),('a',l_),('a',k_)]))\n    Hee=op_matrix(terms)\n    t1=[]\n    for i,(m1,s1) in enumerate(so):\n        for j,(m2,s2) in enumerate(so):\n            if s1==s2 and abs(P[m1+2,m2+2])>1e-12:\n                t1.append((P[m1+2,m2+2].real,[('c',i),('a',j)]))\n    Hf=op_matrix(t1)\n    Sp=op_matrix([(1.0,[('c',so.index((m,1))),('a',so.index((m,-1)))]) for m in ms])\n    Sz=np.diag([sum(0.5*so[p][1] for p in d) for d in dets])\n    S2=Sp.T@Sp+Sz@Sz+Sz\n    return Hee,Hf,S2\nEOF\npython3 -c \"\nimport d4,numpy as np\nHee,Hf,S2=d4.build_parts(706,2734)\nprint(np.allclose(Hee,Hee.T), np.allclose(Hf,Hf.T))\nprint(np.unique(np.round(np.linalg.eigvalsh(S2),3)))\nprint(np.unique(np.round(np.linalg.eigvalsh(Hf),3)))\n\"",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "d858aae53dc6e554f831c1dec9ce676d3d143a2883448f899747962c58150fc7",
+     "lines": 59,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import wigner_3j\nl=2; ms=list(range(-2,3))\nso=[(m,s) for m in ms for s in (1,-1)]\ndef C_me(m,k,q,mp):\n    if m!=mp+q: return 0.0\n    return float((-1)**(l-m)*wigner_3j(l,k,l,-m,q,mp)*(-1)**l*(2*l+1)*wigner_3j(l,k,l,0,0,0))\ndef ang(k,a,c,b,d):\n    return sum((-1)**q*C_me(a,k,q,c)*C_me(b,k,-q,d) for q in range(-k,k+1))\ndef Vel(i,j,k_,l_,F):\n    (ma,sa),(mb,sb),(mc,sc),(md,sd)=so[i],so[j],so[k_],so[l_]\n    if sa!=sc or sb!=sd: return 0.0\n    return sum(F[k]*ang(k,ma,mc,mb,md) for k in (2,4))\nr2=np.sqrt(2)\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\norb={'z2':vec({0:1}),'x2y2':vec({2:1/r2,-2:1/r2}),'xy':vec({2:-1j/r2,-2:1j/r2}),\n     'xz':vec({1:-1/r2,-1:1/r2}),'yz':vec({1:-1j/r2,-1:-1j/r2})}\nP=np.zeros((5,5),complex)\nfor name,w in [('xy',-4),('xz',-4),('yz',-4),('z2',6),('x2y2',6)]:\n    v=orb[name]; P+=w*np.outer(v,v.conj())\ndets=list(itertools.combinations(range(10),4)); idx={d:n for n,d in enumerate(dets)}; N=len(dets)\ndef apply_ann(st,p):\n    if p not in st: return None\n    pos=st.index(p); return ((-1)**pos, tuple(x for x in st if x!=p))\ndef apply_cre(st,p):\n    if p in st: return None\n    pos=sum(1 for x in st if x<p); return ((-1)**pos, tuple(sorted(st+(p,))))\ndef op_matrix(terms):\n    M=np.zeros((N,N))\n    for n,d in enumerate(dets):\n        for coef,ops in terms:\n            st=d; sign=1; ok=True\n            for typ,p in reversed(ops):\n                r=apply_ann(st,p) if typ=='a' else apply_cre(st,p)\n                if r is None: ok=False;break\n                s,st=r; sign*=s\n            if ok: M[idx[st],n]+=coef*sign\n    return M\ndef build_parts(B,C):\n    F4=441*C/35.0; F2=(441*B+5*F4)/9.0; F={2:F2,4:F4}\n    terms=[]\n    for i,j,k_,l_ in itertools.product(range(10),repeat=4):\n        v=Vel(i,j,k_,l_,F)\n        if abs(v)<1e-12: continue\n        terms.append((0.5*v,[('c',i),('c',j),('a',l_),('a',k_)]))\n    Hee=op_matrix(terms)\n    t1=[]\n    for i,(m1,s1) in enumerate(so):\n        for j,(m2,s2) in enumerate(so):\n            if s1==s2 and abs(P[m1+2,m2+2])>1e-12:\n                t1.append((P[m1+2,m2+2].real,[('c',i),('a',j)]))\n    Hf=op_matrix(t1)\n    Sp=op_matrix([(1.0,[('c',so.index((m,1))),('a',so.index((m,-1)))]) for m in ms])\n    Sz=np.diag([sum(0.5*so[p][1] for p in d) for d in dets])\n    S2=Sp.T@Sp+Sz@Sz+Sz\n    return Hee,Hf,S2\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "True True\n[0. 2. 6.]\n[-16.  -6.   4.  14.  24.]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 32,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "python3 -c \"\nimport d4,numpy as np\nfrom scipy.optimize import brentq\nHee,Hf,S2=d4.build_parts(706,2734)\nw,v=np.linalg.eigh(S2)\nTb=v[:,np.abs(w-2)<1e-6]; Qb=v[:,np.abs(w-6)<1e-6]\nprint('dims triplet, quintet', Tb.shape[1], Qb.shape[1])\nHt=Tb.T@(Hee)@Tb; Ft=Tb.T@Hf@Tb\nHq=Qb.T@Hee@Qb; Fq=Qb.T@Hf@Qb\nprint('quintet ee eig', np.round(np.linalg.eigvalsh(Hq),2))\nprint('quintet field eig', np.round(np.linalg.eigvalsh(Fq),2))\ndef trip_low(Dq): return np.linalg.eigvalsh(Ht+Dq*Ft)[0]\ndef quint_low(Dq): return np.linalg.eigvalsh(Hq+Dq*Fq)[0]\ndef diff(Dq): return trip_low(Dq)-quint_low(Dq)\nfor D in [0,500,1000,2000,2500,3000,3500,4000]:\n    print(D, round(trip_low(D),1), round(quint_low(D),1))\nD=brentq(diff,1000,4000); print('crossover Dq',D, 'Dq/B',D/706)\n\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "dims triplet, quintet 135 25\nquintet ee eig [-37791.6 -37791.6 -37791.6 -37791.6 -37791.6 -37791.6 -37791.6 -37791.6\n -37791.6 -37791.6 -37791.6 -37791.6 -37791.6 -37791.6 -37791.6 -37791.6\n -37791.6 -37791.6 -37791.6 -37791.6 -37791.6 -37791.6 -37791.6 -37791.6\n -37791.6]\nquintet field eig [-6. -6. -6. -6. -6. -6. -6. -6. -6. -6.  4.  4.  4.  4.  4.  4.  4.  4.\n  4.  4.  4.  4.  4.  4.  4.]\n0 -24031.6 -37791.6\n500 -29989.7 -40791.6\n1000 -37429.8 -43791.6\n2000 -52912.5 -49791.6\n2500 -60766.6 -52791.6\n3000 -68657.1 -55791.6\n3500 -76572.0 -58791.6\n4000 -84503.8 -61791.6\ncrossover Dq 1675.494523914888 Dq/B 2.373221705261881",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [],
+   "produces": [
+    "Dq"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1675.0,
+   "weak": false,
+   "steps": [
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  },
+  {
+   "path": "B",
+   "value": 706.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 2734.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 6,
+  "n_scripts": 3,
+  "n_failed_steps": 2,
+  "n_values": 3,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   5
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

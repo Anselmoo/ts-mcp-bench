@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> && sed -i 's/^B=1000.;C=4000./B=1000.;C=4610./' a.py && python3 a.py | tail -1

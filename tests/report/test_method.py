@@ -336,6 +336,88 @@ def test_provenance_counts_the_transcripts_and_checks_them_against_the_manifest(
     assert changed["verified"] == "2 of 3 recorded hashes match" and changed["sha256"] != files["sha256"]
 
 
+def _resume(d: pathlib.Path, *stops: dict) -> None:
+    """Earlier sessions of a run set: one `MANIFEST.prev-*.json` per stop."""
+    now = json.loads((d / "MANIFEST.json").read_text(encoding="utf-8"))
+    (d / "MANIFEST.json").write_text(json.dumps({**now, "finished": True, "stop": None, "stopped_by_budget": False,
+                                                 "counts": {"planned": 5, "done": 2, "skipped": 3}}), encoding="utf-8")
+    for i, stop in enumerate(stops):
+        side = {**now, "finished": True, "stop": None, "stopped_by_budget": False,
+                "counts": {"planned": 5, "done": 3, "not_run_budget": 2}, **stop}
+        (d / f"MANIFEST.prev-2026110{i}T000000000000Z.json").write_text(json.dumps(side), encoding="utf-8")
+
+
+def test_a_budget_stop_that_a_resume_made_good_counts_no_run_as_not_started(run_set):
+    _resume(run_set, {"stopped_by_budget": True})
+    m = _facts(run_set)
+    by = {r["item"]: r["value"] for r in m["limits"]}
+    assert by["Run state"] == "finished" and "Runs not started" not in by
+    assert not [r for r in m["exclusions"] if "not started" in r["reason"]]
+    assert by["Stops and resumes"] == "1 stop, 1 resume: the budget 1"
+
+
+def test_the_stops_count_each_reason_of_the_earlier_sessions(run_set):
+    quota = {"reason": "quota_exhausted", "scope": "daily", "after_runs": 1}
+    _resume(run_set, {"stop": quota}, {"stop": quota}, {"stopped_by_budget": True}, {"interrupted": True}, {})
+    row = next(r for r in _facts(run_set)["limits"] if r["item"] == "Stops and resumes")
+    assert row["value"] == "4 stops, 5 resumes: quota exhausted, daily cap 2; the budget 1; interrupted 1"
+    assert row["source"] == "MANIFEST.prev-*.json (stop, stopped_by_budget, interrupted)"
+
+
+def test_a_run_set_of_one_session_has_no_row_of_stops(run_set):
+    assert "Stops and resumes" not in {r["item"] for r in _facts(run_set)["limits"]}
+
+
+def _transcript_row(rows: list[dict]) -> dict:
+    return next(f for r in rows for f in r["files"] if f["path"].endswith("/*/*/*.jsonl"))
+
+
+def _redacted(run_set: pathlib.Path) -> tuple[pathlib.Path, str, str]:
+    """Replace a path in one transcript of the run set as a published copy does. (log file, old sha, new sha)."""
+    t = run_set / "m" / "A" / "medium" / "P-closed_form-01-k1.jsonl"
+    old = _sha(t)
+    t.write_bytes(t.read_bytes() + b'{"cwd": "<HOME>"}\n')
+    return t, old, _sha(t)
+
+
+def _log(path: pathlib.Path, *rows: tuple[str, str]) -> pathlib.Path:
+    lines = ["file,sha256_original,sha256_published,n_b_venv,n_home,n_session_folder"]
+    lines += [f"confirmatory/plan/m/A/medium/x-k{i}.jsonl,{a},{b},0,1,0" for i, (a, b) in enumerate(rows)]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _with_log(d: pathlib.Path, log: pathlib.Path) -> list[dict]:
+    sets = run_sets_in([d])
+    return method.facts(sets, _benches(), None, facts.platform(sets), version=VERSION,
+                        redactions=method.read_redactions(log))["provenance"]
+
+
+def test_a_documented_path_replacement_counts_as_a_match_and_is_stated(run_set, tmp_path):
+    _, old, new = _redacted(run_set)
+    assert _transcript_row(_facts(run_set)["provenance"])["verified"] == "2 of 3 recorded hashes match"
+    row = _transcript_row(_with_log(run_set, _log(tmp_path / "REDACTIONS.csv", (old, new))))
+    assert row["verified"] == "3 of 3 recorded hashes match, 1 through the path replacement of REDACTIONS.csv"
+
+
+def test_a_replacement_needs_both_hashes(run_set, tmp_path):
+    _, old, new = _redacted(run_set)
+    log = _log(tmp_path / "REDACTIONS.csv", ("0" * 64, new), (old, "1" * 64))
+    assert _transcript_row(_with_log(run_set, log))["verified"] == "2 of 3 recorded hashes match"
+
+
+def test_a_log_without_a_hit_changes_nothing_on_the_page(run_set, tmp_path):
+    row = _transcript_row(_with_log(run_set, _log(tmp_path / "REDACTIONS.csv", ("0" * 64, "1" * 64))))
+    assert row["verified"] == "3 of 3 recorded hashes match"
+
+
+def test_a_redaction_log_without_its_columns_is_refused(tmp_path):
+    path = tmp_path / "log.csv"
+    path.write_text("file,sha256\na,b\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="sha256_original"):
+        method.read_redactions(path)
+
+
 def test_provenance_reads_the_package_files_with_their_own_hashes(run_set):
     rows = {r["key"]: r for r in _facts(run_set)["provenance"]}
     paths = {f["path"]: f["sha256"] for r in rows.values() for f in r["files"]}

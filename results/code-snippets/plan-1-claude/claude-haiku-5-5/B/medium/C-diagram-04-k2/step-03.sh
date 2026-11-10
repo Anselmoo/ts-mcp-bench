@@ -1,0 +1,1 @@
+cd ~ && pwd && touch x && echo ok; ls -ld ~ ; df -h . | tail -1

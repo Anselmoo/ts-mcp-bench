@@ -25,10 +25,11 @@ AVAILABILITY = ("The benchmark, its task set, run plans and results follow the F
 
 
 def repository_markdown() -> set[str]:
-    """The markdown files git sees in the working tree: tracked and not deleted, or new and not ignored."""
+    """The markdown files git sees in the working tree: tracked and not deleted, or new and not ignored. Those under
+    results/ are written with the run data, and the release gate checks them."""
     out = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.md"], cwd=ROOT,
                          check=True, capture_output=True, text=True, encoding="utf-8").stdout
-    return {p for p in out.split() if (ROOT / p).is_file()}
+    return {p for p in out.split() if (ROOT / p).is_file() and not p.startswith("results/")}
 
 
 def present_docs() -> list[str]:
@@ -44,6 +45,10 @@ def test_repository_markdown_is_the_allowlist():
     found = repository_markdown()
     expected = DOCS | DATA
     assert found == expected, {"unexpected": sorted(found - expected), "missing": sorted(expected - found)}
+
+
+def test_markdown_under_results_is_run_data_and_stays_out_of_the_allowlist():
+    assert not [p for p in repository_markdown() if p.startswith("results/")]
 
 
 def test_readme_states_the_availability_in_two_sentences():

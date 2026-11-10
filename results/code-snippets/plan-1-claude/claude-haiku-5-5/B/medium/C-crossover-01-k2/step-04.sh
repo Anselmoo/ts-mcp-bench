@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-nl2xci60 2>/dev/null && pwd && touch x_test && echo writable; ls -ld /tmp /dev/shm 2>/dev/null; touch /dev/shm/t && echo shm_ok

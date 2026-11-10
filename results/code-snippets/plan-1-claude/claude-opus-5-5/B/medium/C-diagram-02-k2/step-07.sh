@@ -1,0 +1,1 @@
+cd $TMPDIR && sed -i 's/max(x,1e-7)/max(x,1e-6)/; s/1e-9\*S2/1e-5*S2/; s/w\[i\]<1e-4/w[i]<1e-6/' ts.py && cd /tmp/tsbench-run-4zp8hj0l && MPLCONFIGDIR=$TMPDIR OUT=$PWD python3 $TMPDIR/ts.py && sha256sum diagram.png

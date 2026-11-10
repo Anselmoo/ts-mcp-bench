@@ -1,0 +1,1 @@
+pwd; touch x && echo ok; echo $HOME; df /dev/shm 2>&1|tail -1; touch /dev/shm/x && echo shm

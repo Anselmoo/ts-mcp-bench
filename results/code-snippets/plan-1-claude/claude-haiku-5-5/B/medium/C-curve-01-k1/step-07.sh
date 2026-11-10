@@ -1,0 +1,1 @@
+sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y\ndef sph_harm(m,l,ph,th): return sph_harm_y(l,m,th,ph)/' d4.py && python3 run.py

@@ -1,6 +1,6 @@
 """The layer rule of the package: a stage imports only stages below it, never a sibling in its own layer.
 
-    cli > release > figures, report > stats > run, score > plan > tasks, conditions > core
+    cli > release > analyze > figures, report > stats > run, score > plan > tasks, conditions > core
 
 Read from the source of the installed package with `ast` (function-local imports included), so the rule holds for every
 import, not only the top-level ones. Failure messages name modules.
@@ -18,8 +18,8 @@ import pytest
 import tsbench
 
 ROOT = pathlib.Path(tsbench.__file__).resolve().parent
-LAYERS = [["core"], ["tasks", "conditions"], ["plan"], ["run", "score"], ["stats"], ["figures", "report"], ["release"],
-          ["cli"]]
+LAYERS = [["core"], ["tasks", "conditions"], ["plan"], ["run", "score"], ["stats"], ["figures", "report"], ["analyze"],
+          ["release"], ["cli"]]
 LEVEL = {name: i for i, names in enumerate(LAYERS) for name in names}
 # outside the pipeline: checked only for not being imported (_vendor: see below)
 OUTSIDE = {"_vendor"}
@@ -116,6 +116,7 @@ def test_the_rule_is_not_vacuous():
     [
         ("plan", "run", False), ("run", "plan", True), ("score", "stats", False),
         ("report", "figures", False), ("stats", "score", True), ("tasks", "conditions", False),
+        ("analyze", "report", True), ("report", "analyze", False),
     ],
 )
 def test_layer_order(src, dst, ok):

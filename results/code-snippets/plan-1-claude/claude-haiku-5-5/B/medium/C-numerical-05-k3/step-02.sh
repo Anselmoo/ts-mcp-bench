@@ -1,0 +1,1 @@
+python3 -c "import numpy, scipy, sympy; print('ok')" 2>&1; which python3

@@ -1,0 +1,1 @@
+python3 -c "import numpy, scipy; print(numpy.__version__, scipy.__version__)" 2>&1; pip install numpy scipy 2>&1 | tail -2

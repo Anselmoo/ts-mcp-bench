@@ -1,0 +1,1 @@
+sed -i 's#mkdir.*##' /dev/null; cat > /dev/null; ls; history | tail -0

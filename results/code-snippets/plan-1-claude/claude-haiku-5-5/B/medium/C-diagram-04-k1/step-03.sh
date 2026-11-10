@@ -1,0 +1,1 @@
+mkdir -p ~/ts && cd ~/ts && pwd && ls -ld . && echo ok

@@ -1,0 +1,1 @@
+sudo -E apt-get update && sudo -E apt-get install -y python3-pip

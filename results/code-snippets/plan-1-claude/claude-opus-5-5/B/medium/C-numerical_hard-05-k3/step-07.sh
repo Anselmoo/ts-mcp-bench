@@ -1,0 +1,7 @@
+sed -i 's/F={2:F2,4:F4}/F={2:49*F2,4:441*F4}/' run.py && python3 run.py && python3 - <<'EOF'
+import numpy as np
+H1,HB,HC,S2=np.load('mats.npy')
+w=np.linalg.eigvalsh(HB+4.5*HC); w-=w.min()
+print(np.unique(np.round(w,4)))
+w=np.linalg.eigvalsh(H1); print(np.unique(np.round(w-w.min(),4)))
+EOF

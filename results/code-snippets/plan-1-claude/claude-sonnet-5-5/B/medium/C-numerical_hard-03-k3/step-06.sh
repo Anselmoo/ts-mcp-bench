@@ -1,0 +1,1 @@
+cat > /dev/shm/x 2>/dev/null; echo $?

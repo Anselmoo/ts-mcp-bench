@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> && sed -i "s/\[('a',d),('a',c),('c',bb),('c',a)\]/[('a',c),('a',d),('c',bb),('c',a)]/" a.py && python3 a.py

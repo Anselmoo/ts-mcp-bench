@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null; touch x 2>&1; pwd; ls -ld . ; echo $TMPDIR

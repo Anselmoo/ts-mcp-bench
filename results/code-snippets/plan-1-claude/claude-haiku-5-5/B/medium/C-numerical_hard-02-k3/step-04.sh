@@ -1,0 +1,1 @@
+cd ~ && pwd && touch x && echo homeok; ls -ld /tmp; df -h /tmp | tail -1

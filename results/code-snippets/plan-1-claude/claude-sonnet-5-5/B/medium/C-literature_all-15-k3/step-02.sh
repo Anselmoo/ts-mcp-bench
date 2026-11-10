@@ -1,0 +1,1 @@
+python3 -c "import numpy,scipy,sympy;print(1)"; which python3 pip

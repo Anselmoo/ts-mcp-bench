@@ -1,4 +1,5 @@
-{#- Shared page parts. Import them with {% from "_macros.html.j2" import status_chip, legend_html, fig, link %}.
+{#- Shared page parts. Import them with {% from "_macros.html.j2" import status_chip, legend_html, fig, link,
+prereg_tables %}.
 Every value is escaped by the environment; `icon`, `STATUS`, `STATUS_TEXT` and `SEG_KEYS` are globals of page.ENV. -#}
 
 {#- Icon and text of a status; never colour alone. -#}
@@ -31,4 +32,39 @@ link (another drive) is named without one. -#}
 {% if not item.exists %}<span class="muted">{{ item.text }} (missing)</span>
 {%- elif item.href %}<a href="{{ item.href }}">{{ item.text }}</a>
 {%- else %}{{ item.text }}{% endif %}
+{%- endmacro %}
+
+{#- The preregistered tests of report/prereg.py: per block of `blocks` the primary family, the secondary paired tests
+and the McNemar tests, each a table. `cls`: the class of the tables; with `ids` the tables are tbl-hyp-primary,
+tbl-hyp-secondary, tbl-hyp-mcnemar and tbl-hyp-efficiency (a suffix -2, -3, ... from the second block on); `sub`: the
+heading level; with `efficiency` the descriptive ratios of the block follow the tests. -#}
+{% macro prereg_tables(blocks, cls="", ids=false, sub="h3", efficiency=false) -%}
+{% for b in blocks %}{% set sfx = "" if loop.first else "-" ~ loop.index %}
+{% if blocks | length > 1 %}<p>{{ "Run set" if b.family == "primary" else "Run sets in" }} <code>{{ b.set }}</code></p>
+{% endif %}
+<{{ sub }}>{{ "Primary family" if b.family == "primary" else "Secondary family" }}</{{ sub }}>
+<p class="muted">Holm correction over {{ plural(b.primary | length, "test") }}{% if b.k_layers.primary %} · runs k ≤ {{ b.k_layers.primary }} per task{% endif %}.</p>
+<div class="scroll"><table{% if cls %} class="{{ cls }}"{% endif %}{% if ids %} id="tbl-hyp-primary{{ sfx }}"{% endif %}><thead><tr><th>Test</th><th>Model</th><th>Comparison</th><th class="num">tasks</th><th class="num">mean difference</th><th class="num">95 % interval</th><th class="num">p</th><th class="num">Holm p</th></tr></thead><tbody>
+{% for r in b.primary %}<tr><td>{{ r.test }}</td><td class="nw">{{ r.model }}</td><td>{{ r.comparison }}{% if r.missing %} (cell missing){% endif %}</td><td class="num">{{ r.n }}</td><td class="num">{{ r.diff }}</td><td class="num">{{ r.ci }}</td><td class="num">{{ r.p }}</td><td class="num">{{ r.p_holm }}</td></tr>
+{% endfor %}</tbody></table></div>
+{% if b.secondary or b.mcnemar %}<{{ sub }}>Secondary tests</{{ sub }}>
+<p class="muted">No correction for multiplicity{% if b.k_layers.h1 %} · runs k ≤ {{ b.k_layers.h1 }} per task under A and C{% endif %}.</p>
+{% endif %}
+{% if b.secondary %}<div class="scroll"><table{% if cls %} class="{{ cls }}"{% endif %}{% if ids %} id="tbl-hyp-secondary{{ sfx }}"{% endif %}><thead><tr><th>Test</th><th>Model</th><th>Comparison</th><th class="num">tasks</th><th class="num">mean difference</th><th class="num">95 % interval</th><th class="num">p</th></tr></thead><tbody>
+{% for r in b.secondary %}<tr><td>{{ r.test }}</td><td class="nw">{{ r.model }}</td><td>{{ r.comparison }}</td><td class="num">{{ r.n }}</td><td class="num">{{ r.diff }}</td><td class="num">{{ r.ci }}</td><td class="num">{{ r.p }}</td></tr>
+{% endfor %}</tbody></table></div>
+{% endif %}
+{% if b.mcnemar %}<div class="scroll"><table{% if cls %} class="{{ cls }}"{% endif %}{% if ids %} id="tbl-hyp-mcnemar{{ sfx }}"{% endif %}><thead><tr><th>McNemar</th><th>Model</th><th>Base</th><th class="num">tasks</th><th class="num">solved under the base only</th><th class="num">solved under C only</th><th class="num">exact p</th></tr></thead><tbody>
+{% for r in b.mcnemar %}<tr><td>{{ r.test }}</td><td class="nw">{{ r.model }}</td><td>{{ r.base }}</td><td class="num">{{ r.n }}</td><td class="num">{{ r.only_base }}</td><td class="num">{{ r.only_c }}</td><td class="num">{{ r.p }}</td></tr>
+{% endfor %}</tbody></table></div>
+{% endif %}
+{% if b.other %}<p class="muted">{{ plural(b.other, "other test") }} of the file not shown.</p>
+{% endif %}
+{% if efficiency and b.efficiency %}<{{ sub }}>Efficiency ratios (descriptive)</{{ sub }}>
+<p class="muted">Preregistered as descriptive: no test and no correction. Median over the tasks of the per-task ratio C/A or C/B with its 95 % bootstrap interval, tasks resampled; below 1 C used less. Correct runs: the tasks with a correct run under both conditions.</p>
+<div class="scroll"><table{% if cls %} class="{{ cls }}"{% endif %}{% if ids %} id="tbl-hyp-efficiency{{ sfx }}"{% endif %}><thead><tr><th>Metric</th><th>Model</th><th class="num">C/A, all runs</th><th class="num">C/B, all runs</th><th class="num">C/A, correct runs</th><th class="num">C/B, correct runs</th></tr></thead><tbody>
+{% for r in b.efficiency %}<tr><td class="nw">{{ r.metric }}</td><td class="nw">{{ r.model }}</td>{% for k in ("A", "B", "A_correct", "B_correct") %}<td class="num" title="{{ plural(r.tasks[k], "task") if k in r.tasks else "no row" }}">{{ r.ratios[k] if k in r.ratios else "–" }}</td>{% endfor %}</tr>
+{% endfor %}</tbody></table></div>
+{% endif %}
+{% endfor %}
 {%- endmacro %}

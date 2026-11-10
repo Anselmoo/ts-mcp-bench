@@ -1,0 +1,1 @@
+cd $TMPDIR && cat > /dev/null; sed -n '1p' /dev/null; cp /dev/null . 2>/dev/null; cd /tmp/tsbench-run-qaym6qt4; history | tail -0; echo

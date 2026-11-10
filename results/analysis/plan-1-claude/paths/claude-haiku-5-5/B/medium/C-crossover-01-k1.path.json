@@ -1,0 +1,576 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-crossover-01-k1.jsonl",
+ "transcript_sha256": "83677c99852f918a760bd66cb88a3a379003d11672152f4d9204dac5639ceef7",
+ "answer": {
+  "Dq": 1675.0,
+  "B": 706.0,
+  "C": 2734.0,
+  "out_of_scope": false,
+  "reason": "Numerical diagonalization of the full d4 octahedral Hamiltonian gives equal lowest S=2 and S=1 energies at Dq ≈ 1675 cm⁻¹ (Dq/B ≈ 2.37)."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|sympy\" ; cat << 'EOF' > /tmp/d4.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2\n# spin-orbitals: index = 2*orb + s, orb m=-2..2 -> 0..4\nms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc): return float(gaunt(l,k,l,-ma,q,mc)) if abs(q)<=k and abs(-ma+q-mc)==0 else 0.0\n# angular coefficient for <m_a m_b|V|m_c m_d> per k (without F^k)\ndef ang(k,a,b,c,d):\n    if ma_ok(a,b,c,d)==False: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+= ((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\ndef ma_ok(a,b,c,d): return (a+b-c-d)==0\nA={}\nfor k in (0,2,4):\n    T=np.zeros((5,5,5,5))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        T[a,b,c,d]=ang(k,ms[a],ms[b],ms[c],ms[d])\n    A[k]=T\n# single-particle projectors in complex basis (index i -> m=ms[i])\ndef vec(d): \n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g)\nPe=sum(np.outer(v,v.conj()) for v in eg)\ndef h1(Dq): return -4*Dq*Pt+6*Dq*Pe\n# Fock space: 10 spin orbitals, 4 electrons\nstates=[c for c in itertools.combinations(range(10),4)]\nidx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ, ops):\n    # ops: list of (type,i) applied right-to-left; returns (sign,newocc) or None\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':  # annihilate\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            # insert creation at front-sorted position\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(sorted(occ))\ndef build(Dq,Bv,Cv):\n    F={0:None,2:49*Bv+7*Cv,4:441*Cv/35}\n    F[0]=0.0  # F0 constant irrelevant for splittings\n    N=len(states); H=np.zeros((N,N))\n    h=h1(Dq)\n    # one-body\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                ma,sa=ms[a//2],a%2; mb,sb=ms[b//2],b%2\n                if sa!=sb: continue\n                hv=h[a//2,b//2]\n                if abs(hv)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('a',b)]) if False else None\n                r=apply_ops(occ,[('c',a),('a',b)])\n                if r is None: continue\n                sg,new=r; H[idx[new],j]+=sg*hv.real\n    # two-body: 1/2 sum V_{abcd} c+_a c+_b c_d c_c  with <ab|V|cd>\n    for j,occ in enumerate(states):\n        for a in range(10):\n          for b in range(10):\n            for c in range(10):\n              for d in range(10):\n                sa,sb,sc,sd=a%2,b%2,c%2,d%2\n                if sa!=sd or sb!=sc: continue\n                val=0.0\n                for k in (2,4):\n                    val+=F[k]*A[k][a//2,b//2,c//2,d//2]\n                if abs(val)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('c',b),('a',d),('a',c)])\n                if r is None: continue\n                sg,new=r; H[idx[new],j]+=0.5*sg*val\n    return H\ndef spinS2(occ):\n    pass\n# S_z total and total S^2 to separate multiplicity\ndef Sz(occ): return sum(0.5 if x%2==0 else -0.5 for x in occ)\ndef Sminus_plus_matrix():\n    N=len(states); Sp=np.zeros((N,N))\n    for j,occ in enumerate(states):\n        for m in range(5):\n            r=apply_ops(occ,[('c',2*m),('a',2*m+1)])\n            if r: sg,new=r; Sp[idx[new],j]+=sg\n    return Sp\nSp=Sminus_plus_matrix()\nS2=Sp.T@Sp + np.diag([Sz(o) for o in states])*0  # placeholder\nSzv=np.diag([Sz(o) for o in states])\nS2=Sp.T@Sp+Szv@Szv+Szv  # S^2 = S- S+ + Sz^2 + Sz ... check sign\nEOF\ncd /tmp && python3 -c \"\nexec(open('d4.py').read())\nimport numpy as np\nH=build(0.0,706.,2734.)\n# check trace-based sanity: eigenvalues at Dq=0\nw,v=np.linalg.eigh(H); print(np.round(w[:12],1))\n\"",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "46eb7e6eb444ec27663a496e01fabc58f3709d9e2fd4f679e2753348d23bfcb2",
+     "lines": 95,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2\n# spin-orbitals: index = 2*orb + s, orb m=-2..2 -> 0..4\nms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc): return float(gaunt(l,k,l,-ma,q,mc)) if abs(q)<=k and abs(-ma+q-mc)==0 else 0.0\n# angular coefficient for <m_a m_b|V|m_c m_d> per k (without F^k)\ndef ang(k,a,b,c,d):\n    if ma_ok(a,b,c,d)==False: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+= ((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\ndef ma_ok(a,b,c,d): return (a+b-c-d)==0\nA={}\nfor k in (0,2,4):\n    T=np.zeros((5,5,5,5))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        T[a,b,c,d]=ang(k,ms[a],ms[b],ms[c],ms[d])\n    A[k]=T\n# single-particle projectors in complex basis (index i -> m=ms[i])\ndef vec(d): \n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g)\nPe=sum(np.outer(v,v.conj()) for v in eg)\ndef h1(Dq): return -4*Dq*Pt+6*Dq*Pe\n# Fock space: 10 spin orbitals, 4 electrons\nstates=[c for c in itertools.combinations(range(10),4)]\nidx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ, ops):\n    # ops: list of (type,i) applied right-to-left; returns (sign,newocc) or None\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':  # annihilate\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            # insert creation at front-sorted position\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(sorted(occ))\ndef build(Dq,Bv,Cv):\n    F={0:None,2:49*Bv+7*Cv,4:441*Cv/35}\n    F[0]=0.0  # F0 constant irrelevant for splittings\n    N=len(states); H=np.zeros((N,N))\n    h=h1(Dq)\n    # one-body\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                ma,sa=ms[a//2],a%2; mb,sb=ms[b//2],b%2\n                if sa!=sb: continue\n                hv=h[a//2,b//2]\n                if abs(hv)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('a',b)]) if False else None\n                r=apply_ops(occ,[('c',a),('a',b)])\n                if r is None: continue\n                sg,new=r; H[idx[new],j]+=sg*hv.real\n    # two-body: 1/2 sum V_{abcd} c+_a c+_b c_d c_c  with <ab|V|cd>\n    for j,occ in enumerate(states):\n        for a in range(10):\n          for b in range(10):\n            for c in range(10):\n              for d in range(10):\n                sa,sb,sc,sd=a%2,b%2,c%2,d%2\n                if sa!=sd or sb!=sc: continue\n                val=0.0\n                for k in (2,4):\n                    val+=F[k]*A[k][a//2,b//2,c//2,d//2]\n                if abs(val)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('c',b),('a',d),('a',c)])\n                if r is None: continue\n                sg,new=r; H[idx[new],j]+=0.5*sg*val\n    return H\ndef spinS2(occ):\n    pass\n# S_z total and total S^2 to separate multiplicity\ndef Sz(occ): return sum(0.5 if x%2==0 else -0.5 for x in occ)\ndef Sminus_plus_matrix():\n    N=len(states); Sp=np.zeros((N,N))\n    for j,occ in enumerate(states):\n        for m in range(5):\n            r=apply_ops(occ,[('c',2*m),('a',2*m+1)])\n            if r: sg,new=r; Sp[idx[new],j]+=sg\n    return Sp\nSp=Sminus_plus_matrix()\nS2=Sp.T@Sp + np.diag([Sz(o) for o in states])*0  # placeholder\nSzv=np.diag([Sz(o) for o in states])\nS2=Sp.T@Sp+Szv@Szv+Szv  # S^2 = S- S+ + Sz^2 + Sz ... check sign\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 104: /tmp/d4.py: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    exec(open('d4.py').read())\n         ~~~~^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: 'd4.py'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "T=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d4.py",
+     "line": 51,
+     "method": "matrix",
+     "text": "N=len(states); H=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 86,
+     "method": "matrix",
+     "text": "N=len(states); Sp=np.zeros((N,N))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd ~ 2>/dev/null && pwd; python3 -c \"import numpy, sympy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\nok\nShell cwd was reset to /tmp/tsbench-run-5xwa9elu",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp/tsbench-home-xehwqch9 && cat << 'EOF' > d4.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2\nms=[-2,-1,0,1,2]\n_gc={}\ndef G(k,ma,q,mc):\n    key=(k,ma,q,mc)\n    if key not in _gc:\n        _gc[key]=float(gaunt(l,k,l,-ma,q,mc)) if abs(q)<=k and (-ma+q-mc)==0 else 0.0\n    return _gc[key]\ndef ang(k,a,b,c,d):\n    # a,b,c,d are m values; conservation a+b=c+d\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={}\nfor k in (2,4):\n    T=np.zeros((5,5,5,5))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        T[a,b,c,d]=ang(k,ms[a],ms[b],ms[c],ms[d])\n    A[k]=T\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g)\nPe=sum(np.outer(v,v.conj()) for v in eg)\nstates=list(itertools.combinations(range(10),4))\nidx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=-4*Dq*Pt+6*Dq*Pe\n    N=len(states); H=np.zeros((N,N),complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if a%2!=b%2: continue\n                hv=h[a//2,b//2]\n                if abs(hv)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('a',b)])\n                if r is None: continue\n                sg,new=r; H[idx[tuple(sorted(new))],j]+=sg*hv\n        for a in range(10):\n          for b in range(10):\n            for c in range(10):\n              for d in range(10):\n                if a%2!=d%2 or b%2!=c%2: continue\n                val=sum(F[k]*A[k][a//2,b//2,c//2,d//2] for k in (2,4))\n                if abs(val)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('c',b),('a',d),('a',c)])\n                if r is None: continue\n                sg,new=r; H[idx[tuple(sorted(new))],j]+=0.5*sg*val\n    return H.real\ndef Sz(occ): return sum(0.5 if x%2==0 else -0.5 for x in occ)\nN=len(states)\nSp=np.zeros((N,N))\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('c',2*m),('a',2*m+1)])\n        if r: sg,new=r; Sp[idx[tuple(sorted(new))],j]+=sg\nSzd=np.diag([Sz(o) for o in states])\nS2=Sp.T@Sp+Szd@Szd-Szd   # S^2 = S-S+ + Sz^2 - Sz? check below\nEOF\npython3 -c \"\nexec(open('d4.py').read())\nH=build(0.0,706.,2734.)\nprint('herm',np.abs(H-H.T).max())\n# check S2 eigenvalues\nw,v=np.linalg.eigh(S2); print(sorted(set(np.round(w,3))))\n\"",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "efe6baa673660e003fb35af70cfd6b99bc053ddd129b5f2a8511180d675cf144",
+     "lines": 78,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2\nms=[-2,-1,0,1,2]\n_gc={}\ndef G(k,ma,q,mc):\n    key=(k,ma,q,mc)\n    if key not in _gc:\n        _gc[key]=float(gaunt(l,k,l,-ma,q,mc)) if abs(q)<=k and (-ma+q-mc)==0 else 0.0\n    return _gc[key]\ndef ang(k,a,b,c,d):\n    # a,b,c,d are m values; conservation a+b=c+d\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={}\nfor k in (2,4):\n    T=np.zeros((5,5,5,5))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        T[a,b,c,d]=ang(k,ms[a],ms[b],ms[c],ms[d])\n    A[k]=T\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g)\nPe=sum(np.outer(v,v.conj()) for v in eg)\nstates=list(itertools.combinations(range(10),4))\nidx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=-4*Dq*Pt+6*Dq*Pe\n    N=len(states); H=np.zeros((N,N),complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if a%2!=b%2: continue\n                hv=h[a//2,b//2]\n                if abs(hv)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('a',b)])\n                if r is None: continue\n                sg,new=r; H[idx[tuple(sorted(new))],j]+=sg*hv\n        for a in range(10):\n          for b in range(10):\n            for c in range(10):\n              for d in range(10):\n                if a%2!=d%2 or b%2!=c%2: continue\n                val=sum(F[k]*A[k][a//2,b//2,c//2,d//2] for k in (2,4))\n                if abs(val)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('c',b),('a',d),('a',c)])\n                if r is None: continue\n                sg,new=r; H[idx[tuple(sorted(new))],j]+=0.5*sg*val\n    return H.real\ndef Sz(occ): return sum(0.5 if x%2==0 else -0.5 for x in occ)\nN=len(states)\nSp=np.zeros((N,N))\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('c',2*m),('a',2*m+1)])\n        if r: sg,new=r; Sp[idx[tuple(sorted(new))],j]+=sg\nSzd=np.diag([Sz(o) for o in states])\nS2=Sp.T@Sp+Szd@Szd-Szd   # S^2 = S-S+ + Sz^2 - Sz? check below\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 87: d4.py: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    exec(open('d4.py').read())\n         ~~~~^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: 'd4.py'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "T=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "d4.py",
+     "line": 49,
+     "method": "matrix",
+     "text": "N=len(states); H=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 72,
+     "method": "matrix",
+     "text": "Sp=np.zeros((N,N))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2\nms=[-2,-1,0,1,2]\n_gc={}\ndef G(k,ma,q,mc):\n    key=(k,ma,q,mc)\n    if key not in _gc:\n        _gc[key]=float(gaunt(l,k,l,-ma,q,mc)) if abs(q)<=k and (-ma+q-mc)==0 else 0.0\n    return _gc[key]\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={}\nfor k in (2,4):\n    T=np.zeros((5,5,5,5))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        T[a,b,c,d]=ang(k,ms[a],ms[b],ms[c],ms[d])\n    A[k]=T\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g)\nPe=sum(np.outer(v,v.conj()) for v in eg)\nstates=list(itertools.combinations(range(10),4))\nidx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=-4*Dq*Pt+6*Dq*Pe\n    N=len(states); H=np.zeros((N,N),complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if a%2!=b%2: continue\n                hv=h[a//2,b//2]\n                if abs(hv)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('a',b)])\n                if r is None: continue\n                sg,new=r; H[idx[tuple(sorted(new))],j]+=sg*hv\n        for a in range(10):\n          for b in range(10):\n            for c in range(10):\n              for d in range(10):\n                if a%2!=d%2 or b%2!=c%2: continue\n                val=sum(F[k]*A[k][a//2,b//2,c//2,d//2] for k in (2,4))\n                if abs(val)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('c',b),('a',d),('a',c)])\n                if r is None: continue\n                sg,new=r; H[idx[tuple(sorted(new))],j]+=0.5*sg*val\n    return H.real\nN=len(states)\nSp=np.zeros((N,N))\ndef Sz(occ): return sum(0.5 if x%2==0 else -0.5 for x in occ)\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('c',2*m),('a',2*m+1)])\n        if r: sg,new=r; Sp[idx[tuple(sorted(new))],j]+=sg\nSzd=np.diag([Sz(o) for o in states])\nS2=Sp.T@Sp+Szd@Szd-Szd\n# check: S2 with Sp-> S+ S- =S^2 - Sz^2 + Sz ; compute S-S+ instead\nS2b=Sp@Sp.T+Szd@Szd+Szd  # S+ S- = S^2 - Sz^2 + Sz ; S-S+ = S^2-Sz^2-Sz\nprint('S2 eig', sorted(set(np.round(np.linalg.eigvalsh(Sp.T@Sp+Szd@Szd-Szd),3))))\nprint('S2 eig alt', sorted(set(np.round(np.linalg.eigvalsh(Sp@Sp.T+Szd@Szd+Szd),3))))\nH=build(0.0,706.,2734.)\nprint('herm',np.abs(H-H.T).max())\nw=np.linalg.eigvalsh(H); print(np.round(w[:5],1))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "13519af4da85b202d79f5f97ac37812bd864d183334c30f66af7aa4e155e1c0f",
+     "lines": 84,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2\nms=[-2,-1,0,1,2]\n_gc={}\ndef G(k,ma,q,mc):\n    key=(k,ma,q,mc)\n    if key not in _gc:\n        _gc[key]=float(gaunt(l,k,l,-ma,q,mc)) if abs(q)<=k and (-ma+q-mc)==0 else 0.0\n    return _gc[key]\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={}\nfor k in (2,4):\n    T=np.zeros((5,5,5,5))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        T[a,b,c,d]=ang(k,ms[a],ms[b],ms[c],ms[d])\n    A[k]=T\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g)\nPe=sum(np.outer(v,v.conj()) for v in eg)\nstates=list(itertools.combinations(range(10),4))\nidx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=-4*Dq*Pt+6*Dq*Pe\n    N=len(states); H=np.zeros((N,N),complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if a%2!=b%2: continue\n                hv=h[a//2,b//2]\n                if abs(hv)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('a',b)])\n                if r is None: continue\n                sg,new=r; H[idx[tuple(sorted(new))],j]+=sg*hv\n        for a in range(10):\n          for b in range(10):\n            for c in range(10):\n              for d in range(10):\n                if a%2!=d%2 or b%2!=c%2: continue\n                val=sum(F[k]*A[k][a//2,b//2,c//2,d//2] for k in (2,4))\n                if abs(val)<1e-12: continue\n                r=apply_ops(occ,[('c',a),('c',b),('a',d),('a',c)])\n                if r is None: continue\n                sg,new=r; H[idx[tuple(sorted(new))],j]+=0.5*sg*val\n    return H.real\nN=len(states)\nSp=np.zeros((N,N))\ndef Sz(occ): return sum(0.5 if x%2==0 else -0.5 for x in occ)\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('c',2*m),('a',2*m+1)])\n        if r: sg,new=r; Sp[idx[tuple(sorted(new))],j]+=sg\nSzd=np.diag([Sz(o) for o in states])\nS2=Sp.T@Sp+Szd@Szd-Szd\n# check: S2 with Sp-> S+ S- =S^2 - Sz^2 + Sz ; compute S-S+ instead\nS2b=Sp@Sp.T+Szd@Szd+Szd  # S+ S- = S^2 - Sz^2 + Sz ; S-S+ = S^2-Sz^2-Sz\nprint('S2 eig', sorted(set(np.round(np.linalg.eigvalsh(Sp.T@Sp+Szd@Szd-Szd),3))))\nprint('S2 eig alt', sorted(set(np.round(np.linalg.eigvalsh(Sp@Sp.T+Szd@Szd+Szd),3))))\nH=build(0.0,706.,2734.)\nprint('herm',np.abs(H-H.T).max())\nw=np.linalg.eigvalsh(H); print(np.round(w[:5],1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "S2 eig [np.float64(-0.0), np.float64(2.0), np.float64(6.0)]\nS2 eig alt [np.float64(-0.0), np.float64(2.0), np.float64(6.0)]\nherm 5558.0\n[-15288.6 -12244.3 -12244.3 -12244.3 -12244.3]\nShell cwd was reset to /tmp/tsbench-run-5xwa9elu",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "T=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "N=len(states); H=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 70,
+     "method": "matrix",
+     "text": "Sp=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 80,
+     "method": "eigen_solver",
+     "text": "print('S2 eig', sorted(set(np.round(np.linalg.eigvalsh(Sp.T@Sp+Szd@Szd-Szd),3))))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 81,
+     "method": "eigen_solver",
+     "text": "print('S2 eig alt', sorted(set(np.round(np.linalg.eigvalsh(Sp@Sp.T+Szd@Szd+Szd),3))))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 84,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(H); print(np.round(w[:5],1))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp && cat > /tmp/x 2>/dev/null; python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2\nms=[-2,-1,0,1,2]\n_gc={}\ndef G(k,ma,q,mc):\n    key=(k,ma,q,mc)\n    if key not in _gc:\n        _gc[key]=float(gaunt(l,k,l,-ma,q,mc)) if abs(q)<=k and (-ma+q-mc)==0 else 0.0\n    return _gc[key]\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={}\nfor k in (2,4):\n    T=np.zeros((5,5,5,5))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        T[a,b,c,d]=ang(k,ms[a],ms[b],ms[c],ms[d])\n    A[k]=T\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g)\nPe=sum(np.outer(v,v.conj()) for v in eg)\nstates=list(itertools.combinations(range(10),4))\nidx={s:i for i,s in enumerate(states)}\n# ops: ('a',i)=create c_i^dag, ('c',i)=annihilate c_i ; applied right to left\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=-4*Dq*Pt+6*Dq*Pe\n    N=len(states); H=np.zeros((N,N),complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if a%2!=b%2: continue\n                hv=h[a//2,b//2]\n                if abs(hv)<1e-12: continue\n                r=apply_ops(occ,[('a',a),('c',b)])\n                if r is None: continue\n                sg,new=r; H[idx[new],j]+=sg*hv\n        for a in range(10):\n          for b in range(10):\n            for c in range(10):\n              for d in range(10):\n                if a%2!=d%2 or b%2!=c%2: continue\n                val=sum(F[k]*A[k][a//2,b//2,c//2,d//2] for k in (2,4))\n                if abs(val)<1e-12: continue\n                r=apply_ops(occ,[('a',a),('a',b),('c',d),('c',c)])\n                if r is None: continue\n                sg,new=r; H[idx[new],j]+=0.5*sg*val\n    return H.real\nN=len(states)\ndef Sz(occ): return sum(0.5 if x%2==0 else -0.5 for x in occ)\nSp=np.zeros((N,N))\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('a',2*m),('c',2*m+1)])\n        if r: sg,new=r; Sp[idx[new],j]+=sg\nSzd=np.diag([Sz(o) for o in states])\nS2=Sp.T@Sp+Szd@Szd-Szd\nprint('S2 eig', sorted(set(np.round(np.linalg.eigvalsh(S2),3))))\nH=build(0.0,706.,2734.)\nprint('herm',np.abs(H-H.T).max())\n# Check d4 free-ion term energies: multiplicities\ndef sect(Dq):\n    H=build(Dq,706.,2734.)\n    w,v=np.linalg.eigh(H)\n    # classify by S2 expectation\n    res={}\n    S2v=v.T@S2@v\n    for e,s in zip(w,np.diag(S2v)):\n        S=round((-1+np.sqrt(1+4*s))/2*2)/2  # S(S+1)=s\n        res.setdefault(S,[]).append(e)\n    return {k:min(vv) for k,vv in res.items()}\nprint('free ion Dq=0', sect(0.0))\nprint('Dq=2000', sect(2000.))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "62872377cedf68b550e54e5806afeb5a298fedcb34d0897fc3092ec82a9dc66f",
+     "lines": 94,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2\nms=[-2,-1,0,1,2]\n_gc={}\ndef G(k,ma,q,mc):\n    key=(k,ma,q,mc)\n    if key not in _gc:\n        _gc[key]=float(gaunt(l,k,l,-ma,q,mc)) if abs(q)<=k and (-ma+q-mc)==0 else 0.0\n    return _gc[key]\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={}\nfor k in (2,4):\n    T=np.zeros((5,5,5,5))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        T[a,b,c,d]=ang(k,ms[a],ms[b],ms[c],ms[d])\n    A[k]=T\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g)\nPe=sum(np.outer(v,v.conj()) for v in eg)\nstates=list(itertools.combinations(range(10),4))\nidx={s:i for i,s in enumerate(states)}\n# ops: ('a',i)=create c_i^dag, ('c',i)=annihilate c_i ; applied right to left\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=-4*Dq*Pt+6*Dq*Pe\n    N=len(states); H=np.zeros((N,N),complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if a%2!=b%2: continue\n                hv=h[a//2,b//2]\n                if abs(hv)<1e-12: continue\n                r=apply_ops(occ,[('a',a),('c',b)])\n                if r is None: continue\n                sg,new=r; H[idx[new],j]+=sg*hv\n        for a in range(10):\n          for b in range(10):\n            for c in range(10):\n              for d in range(10):\n                if a%2!=d%2 or b%2!=c%2: continue\n                val=sum(F[k]*A[k][a//2,b//2,c//2,d//2] for k in (2,4))\n                if abs(val)<1e-12: continue\n                r=apply_ops(occ,[('a',a),('a',b),('c',d),('c',c)])\n                if r is None: continue\n                sg,new=r; H[idx[new],j]+=0.5*sg*val\n    return H.real\nN=len(states)\ndef Sz(occ): return sum(0.5 if x%2==0 else -0.5 for x in occ)\nSp=np.zeros((N,N))\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('a',2*m),('c',2*m+1)])\n        if r: sg,new=r; Sp[idx[new],j]+=sg\nSzd=np.diag([Sz(o) for o in states])\nS2=Sp.T@Sp+Szd@Szd-Szd\nprint('S2 eig', sorted(set(np.round(np.linalg.eigvalsh(S2),3))))\nH=build(0.0,706.,2734.)\nprint('herm',np.abs(H-H.T).max())\n# Check d4 free-ion term energies: multiplicities\ndef sect(Dq):\n    H=build(Dq,706.,2734.)\n    w,v=np.linalg.eigh(H)\n    # classify by S2 expectation\n    res={}\n    S2v=v.T@S2@v\n    for e,s in zip(w,np.diag(S2v)):\n        S=round((-1+np.sqrt(1+4*s))/2*2)/2  # S(S+1)=s\n        res.setdefault(S,[]).append(e)\n    return {k:min(vv) for k,vv in res.items()}\nprint('free ion Dq=0', sect(0.0))\nprint('Dq=2000', sect(2000.))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 96: /tmp/x: Read-only file system\nS2 eig [np.float64(-0.0), np.float64(2.0), np.float64(4.0), np.float64(6.0), np.float64(8.0), np.float64(10.0)]\nherm 5558.0\nfree ion Dq=0 {0.0: np.float64(-7198.4), 0.5: np.float64(-7198.4), 1.5: np.float64(-7198.4), 1.0: np.float64(0.0), 2.0: np.float64(0.0), 2.5: np.float64(0.0)}\nDq=2000 {0.0: np.float64(-32000.00000000001), 0.5: np.float64(-32000.000000000004), 1.5: np.float64(-31999.999999999993), 1.0: np.float64(-12000.00000000002), 2.0: np.float64(7999.999999999998)}\nShell cwd was reset to /tmp/tsbench-run-5xwa9elu",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "T=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 49,
+     "method": "matrix",
+     "text": "N=len(states); H=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "matrix",
+     "text": "Sp=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 79,
+     "method": "eigen_solver",
+     "text": "print('S2 eig', sorted(set(np.round(np.linalg.eigvalsh(S2),3))))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 85,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={}\nfor k in (0,2,4):\n    T=np.zeros((5,5,5,5))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        T[a,b,c,d]=ang(k,ms[a],ms[b],ms[c],ms[d])\n    A[k]=T\nprint('sym err', np.abs(A[2]-A[2].transpose(2,3,0,1)).max(), np.abs(A[2]-A[2].transpose(1,0,3,2)).max())\nprint('F0 check diag', A[0][0,1,0,1], A[0][0,1,1,0])\nprint('F2 check', A[2][0,4,0,4], A[2][2,2,2,2])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "a097ecc6d308f05799cb908cc8e3bdba6e22a23d961f6fb6985d23f208b22108",
+     "lines": 21,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={}\nfor k in (0,2,4):\n    T=np.zeros((5,5,5,5))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        T[a,b,c,d]=ang(k,ms[a],ms[b],ms[c],ms[d])\n    A[k]=T\nprint('sym err', np.abs(A[2]-A[2].transpose(2,3,0,1)).max(), np.abs(A[2]-A[2].transpose(1,0,3,2)).max())\nprint('F0 check diag', A[0][0,1,0,1], A[0][0,1,1,0])\nprint('F2 check', A[2][0,4,0,4], A[2][2,2,2,2])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "sym err 0.0 0.0\nF0 check diag 0.9999999999999999 0.0\nF2 check 0.0816326530612245 0.0816326530612245\nShell cwd was reset to /tmp/tsbench-run-5xwa9elu",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "T=np.zeros((5,5,5,5))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g); Pe=sum(np.outer(v,v.conj()) for v in eg)\nstates=list(itertools.combinations(range(10),4)); idx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\nN=len(states)\n# precompute one-body and two-body operator lists (independent of Dq,B,C for two-body per k)\nops1=[]; ops2=[]\nfor j,occ in enumerate(states):\n    for a in range(10):\n        for b in range(10):\n            if a%2!=b%2: continue\n            r=apply_ops(occ,[('a',a),('c',b)])\n            if r: ops1.append((j,idx[r[1]],r[0],a//2,b//2))\n    for a,b,c,d in itertools.product(range(10),repeat=4):\n        if a%2!=d%2 or b%2!=c%2: continue\n        r=apply_ops(occ,[('a',a),('a',b),('c',d),('c',c)])\n        if r: ops2.append((j,idx[r[1]],r[0],a//2,b//2,c//2,d//2))\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=-4*Dq*Pt+6*Dq*Pe\n    H=np.zeros((N,N))\n    for j,i,sg,p,q in [(o[0],o[1],o[2],o[3],o[4]) for o in ops1]:\n        H[i,j]+=sg*h[p,q].real\n    for j,i,sg,a,b,c,d in ops2:\n        val=sum(F[k]*A[k][a,b,c,d] for k in (2,4))\n        H[i,j]+=0.5*sg*val\n    return H\nH=build(0,706.,2734.); print('herm', np.abs(H-H.T).max())\nSz=lambda occ: sum(0.5 if x%2==0 else -0.5 for x in occ)\nSp=np.zeros((N,N))\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('a',2*m),('c',2*m+1)])\n        if r: Sp[idx[r[1]],j]+=r[0]\nSzd=np.diag([Sz(o) for o in states]); S2=Sp.T@Sp+Szd@Szd-Szd\ndef sect(Dq):\n    w,v=np.linalg.eigh(build(Dq,706.,2734.))\n    s=np.diag(v.T@S2@v)\n    out={}\n    for e,ss in zip(w,s):\n        S=(-1+np.sqrt(1+4*ss))/2\n        out.setdefault(round(S*2)/2,[]).append(e)\n    return {k:round(min(vv),1) for k,vv in sorted(out.items())}\nprint('Dq=0',sect(0.))\n# free-ion check: d4 5D energy should be 5D lowest, 3H above\n# Find crossover: E(S=2 lowest) = E(S=1 lowest)\ndef diff(Dq):\n    r=sect(Dq); return r[2.0]-r[1.0]\nfor Dq in [0,500,1000,2000,3000]:\n    print(Dq, diff(Dq))\nx=brentq(diff,500,4000,xtol=1e-6)\nprint('crossover Dq =',x, 'Dq/B=',x/706)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "97257214cb85285c1d942d5e7f8b13fd32ecceeafc731163ea16f1597d9286b5",
+     "lines": 81,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g); Pe=sum(np.outer(v,v.conj()) for v in eg)\nstates=list(itertools.combinations(range(10),4)); idx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\nN=len(states)\n# precompute one-body and two-body operator lists (independent of Dq,B,C for two-body per k)\nops1=[]; ops2=[]\nfor j,occ in enumerate(states):\n    for a in range(10):\n        for b in range(10):\n            if a%2!=b%2: continue\n            r=apply_ops(occ,[('a',a),('c',b)])\n            if r: ops1.append((j,idx[r[1]],r[0],a//2,b//2))\n    for a,b,c,d in itertools.product(range(10),repeat=4):\n        if a%2!=d%2 or b%2!=c%2: continue\n        r=apply_ops(occ,[('a',a),('a',b),('c',d),('c',c)])\n        if r: ops2.append((j,idx[r[1]],r[0],a//2,b//2,c//2,d//2))\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=-4*Dq*Pt+6*Dq*Pe\n    H=np.zeros((N,N))\n    for j,i,sg,p,q in [(o[0],o[1],o[2],o[3],o[4]) for o in ops1]:\n        H[i,j]+=sg*h[p,q].real\n    for j,i,sg,a,b,c,d in ops2:\n        val=sum(F[k]*A[k][a,b,c,d] for k in (2,4))\n        H[i,j]+=0.5*sg*val\n    return H\nH=build(0,706.,2734.); print('herm', np.abs(H-H.T).max())\nSz=lambda occ: sum(0.5 if x%2==0 else -0.5 for x in occ)\nSp=np.zeros((N,N))\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('a',2*m),('c',2*m+1)])\n        if r: Sp[idx[r[1]],j]+=r[0]\nSzd=np.diag([Sz(o) for o in states]); S2=Sp.T@Sp+Szd@Szd-Szd\ndef sect(Dq):\n    w,v=np.linalg.eigh(build(Dq,706.,2734.))\n    s=np.diag(v.T@S2@v)\n    out={}\n    for e,ss in zip(w,s):\n        S=(-1+np.sqrt(1+4*ss))/2\n        out.setdefault(round(S*2)/2,[]).append(e)\n    return {k:round(min(vv),1) for k,vv in sorted(out.items())}\nprint('Dq=0',sect(0.))\n# free-ion check: d4 5D energy should be 5D lowest, 3H above\n# Find crossover: E(S=2 lowest) = E(S=1 lowest)\ndef diff(Dq):\n    r=sect(Dq); return r[2.0]-r[1.0]\nfor Dq in [0,500,1000,2000,3000]:\n    print(Dq, diff(Dq))\nx=brentq(diff,500,4000,xtol=1e-6)\nprint('crossover Dq =',x, 'Dq/B=',x/706)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nherm 0.0\nDq=0 {0.0: np.float64(-64709.5), 0.5: np.float64(-46059.9), 1.0: np.float64(-46059.9), 1.5: np.float64(-46059.9), 2.0: np.float64(-37791.6), 2.5: np.float64(-37791.6)}\n0 8268.300000000003\n500 9330.700000000004\n1000 13196.200000000004\n2000 22381.799999999996\n3000 32043.500000000007\nTraceback (most recent call last):\n  File \"<stdin>\", line 80, in <module>\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_zeros_py.py\", line 858, in brentq\n    r = _zeros._brentq(f, a, b, xtol, rtol, maxiter, args, full_output, disp)\nValueError: f(a) and f(b) must have different signs",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "A={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 50,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "H[i,j]+=sg*h[p,q].real"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 55,
+     "method": "matrix",
+     "text": "H[i,j]+=0.5*sg*val"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 59,
+     "method": "matrix",
+     "text": "Sp=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 66,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(build(Dq,706.,2734.))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g); Pe=sum(np.outer(v,v.conj()) for v in eg)\nstates=list(itertools.combinations(range(10),4)); idx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\nN=len(states); ops1=[]; ops2=[]\nfor j,occ in enumerate(states):\n    for a in range(10):\n        for b in range(10):\n            if a%2!=b%2: continue\n            r=apply_ops(occ,[('a',a),('c',b)])\n            if r: ops1.append((idx[r[1]],j,r[0],a//2,b//2))\n    for a,b,c,d in itertools.product(range(10),repeat=4):\n        if a%2!=d%2 or b%2!=c%2: continue\n        r=apply_ops(occ,[('a',a),('a',b),('c',d),('c',c)])\n        if r: ops2.append((idx[r[1]],j,r[0],a//2,b//2,c//2,d//2))\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=(-4*Dq*Pt+6*Dq*Pe).real\n    H=np.zeros((N,N))\n    for i,j,sg,p,q in ops1: H[i,j]+=sg*h[p,q]\n    for i,j,sg,a,b,c,d in ops2: H[i,j]+=0.5*sg*sum(F[k]*A[k][a,b,c,d] for k in (2,4))\n    return H\nSz=lambda occ: sum(0.5 if x%2==0 else -0.5 for x in occ)\nSp=np.zeros((N,N))\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('a',2*m),('c',2*m+1)])\n        if r: Sp[idx[r[1]],j]+=r[0]\nSzd=np.diag([Sz(o) for o in states]); S2=Sp.T@Sp+Szd@Szd+Szd\nprint('S2 spectrum', sorted(set(np.round(np.linalg.eigvalsh(S2),3))))\ndef levels(Dq,B=706.,C=2734.):\n    H=build(Dq,B,C)\n    # block diagonalize in S-sectors: use projection by S2 eigen\n    w,v=np.linalg.eigh(H+1e-3*S2)  # tiny shift to separate by S? instead project\n    return w,v\ndef lowest_by_S(Dq,B=706.,C=2734.):\n    H=build(Dq,B,C)\n    out={}\n    for S in [0,1,2]:\n        # S(S+1) eigen-subspace\n        vals,vecs=np.linalg.eigh(S2)\n        P=vecs[:,np.abs(vals-S*(S+1)*1.0)<1e-6] if False else None\n        Sv=S*(S+1)\n        mask=np.abs(vals-Sv)<1e-6\n        V=vecs[:,mask]\n        out[S]=np.linalg.eigvalsh(V.T@H@V).min()\n    return out\nprint('Dq=0', lowest_by_S(0.))\ndef diff(Dq):\n    r=lowest_by_S(Dq); return r[2]-r[1]\nfor Dq in [0,500,1000,2000,3000]: print(Dq, diff(Dq))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "46ed24c7ceeddcea2a40abb8a8eec2411e38ef6bd5fb2eb444bfa6cff0937884",
+     "lines": 80,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g); Pe=sum(np.outer(v,v.conj()) for v in eg)\nstates=list(itertools.combinations(range(10),4)); idx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\nN=len(states); ops1=[]; ops2=[]\nfor j,occ in enumerate(states):\n    for a in range(10):\n        for b in range(10):\n            if a%2!=b%2: continue\n            r=apply_ops(occ,[('a',a),('c',b)])\n            if r: ops1.append((idx[r[1]],j,r[0],a//2,b//2))\n    for a,b,c,d in itertools.product(range(10),repeat=4):\n        if a%2!=d%2 or b%2!=c%2: continue\n        r=apply_ops(occ,[('a',a),('a',b),('c',d),('c',c)])\n        if r: ops2.append((idx[r[1]],j,r[0],a//2,b//2,c//2,d//2))\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=(-4*Dq*Pt+6*Dq*Pe).real\n    H=np.zeros((N,N))\n    for i,j,sg,p,q in ops1: H[i,j]+=sg*h[p,q]\n    for i,j,sg,a,b,c,d in ops2: H[i,j]+=0.5*sg*sum(F[k]*A[k][a,b,c,d] for k in (2,4))\n    return H\nSz=lambda occ: sum(0.5 if x%2==0 else -0.5 for x in occ)\nSp=np.zeros((N,N))\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('a',2*m),('c',2*m+1)])\n        if r: Sp[idx[r[1]],j]+=r[0]\nSzd=np.diag([Sz(o) for o in states]); S2=Sp.T@Sp+Szd@Szd+Szd\nprint('S2 spectrum', sorted(set(np.round(np.linalg.eigvalsh(S2),3))))\ndef levels(Dq,B=706.,C=2734.):\n    H=build(Dq,B,C)\n    # block diagonalize in S-sectors: use projection by S2 eigen\n    w,v=np.linalg.eigh(H+1e-3*S2)  # tiny shift to separate by S? instead project\n    return w,v\ndef lowest_by_S(Dq,B=706.,C=2734.):\n    H=build(Dq,B,C)\n    out={}\n    for S in [0,1,2]:\n        # S(S+1) eigen-subspace\n        vals,vecs=np.linalg.eigh(S2)\n        P=vecs[:,np.abs(vals-S*(S+1)*1.0)<1e-6] if False else None\n        Sv=S*(S+1)\n        mask=np.abs(vals-Sv)<1e-6\n        V=vecs[:,mask]\n        out[S]=np.linalg.eigvalsh(V.T@H@V).min()\n    return out\nprint('Dq=0', lowest_by_S(0.))\ndef diff(Dq):\n    r=lowest_by_S(Dq); return r[2]-r[1]\nfor Dq in [0,500,1000,2000,3000]: print(Dq, diff(Dq))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "S2 spectrum [np.float64(-0.0), np.float64(2.0), np.float64(6.0)]\nDq=0 {0: np.float64(-64709.477932169466), 1: np.float64(-46059.92169023697), 2: np.float64(-37791.60000000004)}\n0 8268.321690236931\n500 9330.720670384755\n1000 13196.229270092874\n2000 22381.84433852259\n3000 32043.468425963234\nShell cwd was reset to /tmp/tsbench-run-5xwa9elu",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "A={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 53,
+     "method": "matrix",
+     "text": "Sp=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 59,
+     "method": "eigen_solver",
+     "text": "print('S2 spectrum', sorted(set(np.round(np.linalg.eigvalsh(S2),3))))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 63,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(H+1e-3*S2)  # tiny shift to separate by S? instead project"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 70,
+     "method": "eigen_solver",
+     "text": "vals,vecs=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 75,
+     "method": "eigen_solver",
+     "text": "out[S]=np.linalg.eigvalsh(V.T@H@V).min()"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nfor k in (0,2,4):\n  print(k, 'direct(0,0,0,0)',ang(k,0,0,0,0),'(0,1|0,1)',ang(k,0,1,0,1), '(0,1|1,0)',ang(k,0,1,1,0), '(2,0|0,2)', ang(k,2,0,0,2),'(1,-1|-1,1)',ang(k,1,-1,-1,1))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "c0f9d832659db4c71b316a1301f132f330334316732f9407d92cafe4545ee819",
+     "lines": 14,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nfor k in (0,2,4):\n  print(k, 'direct(0,0,0,0)',ang(k,0,0,0,0),'(0,1|0,1)',ang(k,0,1,0,1), '(0,1|1,0)',ang(k,0,1,1,0), '(2,0|0,2)', ang(k,2,0,0,2),'(1,-1|-1,1)',ang(k,1,-1,-1,1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0 direct(0,0,0,0) 0.9999999999999999 (0,1|0,1) 0.9999999999999999 (0,1|1,0) 0.0 (2,0|0,2) 0.0 (1,-1|-1,1) 0.0\n2 direct(0,0,0,0) 0.0816326530612245 (0,1|0,1) 0.04081632653061225 (0,1|1,0) 0.020408163265306124 (2,0|0,2) 0.0816326530612245 (1,-1|-1,1) 0.12244897959183673\n4 direct(0,0,0,0) 0.08163265306122448 (0,1|0,1) -0.05442176870748299 (0,1|1,0) 0.06802721088435373 (2,0|0,2) 0.034013605442176874 (1,-1|-1,1) 0.09070294784580499\nShell cwd was reset to /tmp/tsbench-run-5xwa9elu",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g); Pe=sum(np.outer(v,v.conj()) for v in eg)\ndef run(nel):\n    states=list(itertools.combinations(range(10),nel)); idx={s:i for i,s in enumerate(states)}\n    def apply_ops(occ,ops):\n        occ=list(occ); sign=1\n        for t,i in reversed(ops):\n            if t=='c':\n                if i not in occ: return None\n                p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n            else:\n                if i in occ: return None\n                p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n        return sign,tuple(occ)\n    N=len(states); ops1=[]; ops2=[]\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if a%2!=b%2: continue\n                r=apply_ops(occ,[('a',a),('c',b)])\n                if r: ops1.append((idx[r[1]],j,r[0],a//2,b//2))\n        for a,b,c,d in itertools.product(range(10),repeat=4):\n            if a%2!=c%2 or b%2!=d%2: continue\n            r=apply_ops(occ,[('a',a),('a',b),('c',d),('c',c)])\n            if r: ops2.append((idx[r[1]],j,r[0],a//2,b//2,c//2,d//2))\n    def build(Dq,Bv,Cv):\n        F={2:49*Bv+7*Cv,4:441*Cv/35}\n        h=(-4*Dq*Pt+6*Dq*Pe).real\n        H=np.zeros((N,N))\n        for i,j,sg,p,q in ops1: H[i,j]+=sg*h[p,q]\n        for i,j,sg,a,b,c,d in ops2: H[i,j]+=0.5*sg*sum(F[k]*A[k][a,b,c,d] for k in (2,4))\n        return H\n    Sz=lambda occ: sum(0.5 if x%2==0 else -0.5 for x in occ)\n    Sp=np.zeros((N,N))\n    for j,occ in enumerate(states):\n        for m in range(5):\n            r=apply_ops(occ,[('a',2*m),('c',2*m+1)])\n            if r: Sp[idx[r[1]],j]+=r[0]\n    Szd=np.diag([Sz(o) for o in states]); S2=Sp.T@Sp+Szd@Szd+Szd\n    return build,S2\nbuild,S2=run(4)\nH=build(0,706.,2734.); print('herm',np.abs(H-H.T).max())\nvals,vecs=np.linalg.eigh(S2)\ndef lowest_by_S(Dq,B=706.,C=2734.):\n    H=build(Dq,B,C); out={}\n    for S in [0,1,2]:\n        V=vecs[:,np.abs(vals-S*(S+1))<1e-6]\n        out[S]=np.linalg.eigvalsh(V.T@H@V).min()\n    return out\nprint('Dq=0',lowest_by_S(0.))\n# d2 check for Hund\nb2,S2b=run(2)\nprint('d2 Dq=0 ground S', )\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "df10c3da20927be42b59e4fdefbf563ca25ef3b9f243b3dd144fa2e301372ab3",
+     "lines": 73,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g); Pe=sum(np.outer(v,v.conj()) for v in eg)\ndef run(nel):\n    states=list(itertools.combinations(range(10),nel)); idx={s:i for i,s in enumerate(states)}\n    def apply_ops(occ,ops):\n        occ=list(occ); sign=1\n        for t,i in reversed(ops):\n            if t=='c':\n                if i not in occ: return None\n                p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n            else:\n                if i in occ: return None\n                p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n        return sign,tuple(occ)\n    N=len(states); ops1=[]; ops2=[]\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if a%2!=b%2: continue\n                r=apply_ops(occ,[('a',a),('c',b)])\n                if r: ops1.append((idx[r[1]],j,r[0],a//2,b//2))\n        for a,b,c,d in itertools.product(range(10),repeat=4):\n            if a%2!=c%2 or b%2!=d%2: continue\n            r=apply_ops(occ,[('a',a),('a',b),('c',d),('c',c)])\n            if r: ops2.append((idx[r[1]],j,r[0],a//2,b//2,c//2,d//2))\n    def build(Dq,Bv,Cv):\n        F={2:49*Bv+7*Cv,4:441*Cv/35}\n        h=(-4*Dq*Pt+6*Dq*Pe).real\n        H=np.zeros((N,N))\n        for i,j,sg,p,q in ops1: H[i,j]+=sg*h[p,q]\n        for i,j,sg,a,b,c,d in ops2: H[i,j]+=0.5*sg*sum(F[k]*A[k][a,b,c,d] for k in (2,4))\n        return H\n    Sz=lambda occ: sum(0.5 if x%2==0 else -0.5 for x in occ)\n    Sp=np.zeros((N,N))\n    for j,occ in enumerate(states):\n        for m in range(5):\n            r=apply_ops(occ,[('a',2*m),('c',2*m+1)])\n            if r: Sp[idx[r[1]],j]+=r[0]\n    Szd=np.diag([Sz(o) for o in states]); S2=Sp.T@Sp+Szd@Szd+Szd\n    return build,S2\nbuild,S2=run(4)\nH=build(0,706.,2734.); print('herm',np.abs(H-H.T).max())\nvals,vecs=np.linalg.eigh(S2)\ndef lowest_by_S(Dq,B=706.,C=2734.):\n    H=build(Dq,B,C); out={}\n    for S in [0,1,2]:\n        V=vecs[:,np.abs(vals-S*(S+1))<1e-6]\n        out[S]=np.linalg.eigvalsh(V.T@H@V).min()\n    return out\nprint('Dq=0',lowest_by_S(0.))\n# d2 check for Hund\nb2,S2b=run(2)\nprint('d2 Dq=0 ground S', )\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "herm 0.0\nDq=0 {0: np.float64(-17151.60000000002), 1: np.float64(-24031.60000000004), 2: np.float64(-37791.60000000005)}\nd2 Dq=0 ground S\nShell cwd was reset to /tmp/tsbench-run-5xwa9elu",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "A={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 49,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 54,
+     "method": "matrix",
+     "text": "Sp=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 63,
+     "method": "eigen_solver",
+     "text": "vals,vecs=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 68,
+     "method": "eigen_solver",
+     "text": "out[S]=np.linalg.eigvalsh(V.T@H@V).min()"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g); Pe=sum(np.outer(v,v.conj()) for v in eg)\nnel=4\nstates=list(itertools.combinations(range(10),nel)); idx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\nN=len(states); ops1=[]; ops2=[]\nfor j,occ in enumerate(states):\n    for a in range(10):\n        for b in range(10):\n            if a%2!=b%2: continue\n            r=apply_ops(occ,[('a',a),('c',b)])\n            if r: ops1.append((idx[r[1]],j,r[0],a//2,b//2))\n    for a,b,c,d in itertools.product(range(10),repeat=4):\n        if a%2!=c%2 or b%2!=d%2: continue\n        r=apply_ops(occ,[('a',a),('a',b),('c',d),('c',c)])\n        if r: ops2.append((idx[r[1]],j,r[0],a//2,b//2,c//2,d//2))\nSz=lambda occ: sum(0.5 if x%2==0 else -0.5 for x in occ)\nSp=np.zeros((N,N))\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('a',2*m),('c',2*m+1)])\n        if r: Sp[idx[r[1]],j]+=r[0]\nSzd=np.diag([Sz(o) for o in states]); S2=Sp.T@Sp+Szd@Szd+Szd\nvals,vecs=np.linalg.eigh(S2)\nVs={S:vecs[:,np.abs(vals-S*(S+1))<1e-6] for S in (0,1,2)}\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=(-4*Dq*Pt+6*Dq*Pe).real\n    H=np.zeros((N,N))\n    for i,j,sg,p,q in ops1: H[i,j]+=sg*h[p,q]\n    for i,j,sg,a,b,c,d in ops2: H[i,j]+=0.5*sg*sum(F[k]*A[k][a,b,c,d] for k in (2,4))\n    return H\ndef E(Dq,S,B=706.,C=2734.):\n    H=build(Dq,B,C); V=Vs[S]\n    return np.linalg.eigvalsh(V.T@H@V).min()\ndef diff(Dq): return E(Dq,2)-E(Dq,1)\nfor Dq in [0,1000,2000,2500,3000,3500,4000,5000]:\n    print(Dq, round(E(Dq,2),1), round(E(Dq,1),1), round(diff(Dq),1))\nx=brentq(diff,1000,6000,xtol=1e-8)\nprint('crossover Dq=',x, 'Dq/B=',x/706, 'check E S1', E(x,1), E(x,2))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "bfb9e296959d45c519896f0ab02c8e25be50324a4810e915e51eec0e9ae925f0",
+     "lines": 69,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nl=2; ms=[-2,-1,0,1,2]\ndef G(k,ma,q,mc):\n    if abs(q)>k or (-ma+q+mc)!=0: return 0.0\n    return float(gaunt(l,k,l,-ma,q,mc))\ndef ang(k,a,b,c,d):\n    if a+b!=c+d: return 0.0\n    s=0.0\n    for q in range(-k,k+1):\n        s+=((-1)**(a+q))*G(k,a,-q,c)*((-1)**b)*G(k,b,q,d)\n    return 4*np.pi/(2*k+1)*s\nA={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[ms.index(m)]=c\n    return v\ns2=np.sqrt(2)\nt2g=[vec({2:1/(1j*s2),-2:-1/(1j*s2)}), vec({1:1/s2,-1:-1/s2}), vec({1:1/(1j*s2),-1:1/(1j*s2)})]\neg=[vec({0:1}), vec({2:1/s2,-2:1/s2})]\nPt=sum(np.outer(v,v.conj()) for v in t2g); Pe=sum(np.outer(v,v.conj()) for v in eg)\nnel=4\nstates=list(itertools.combinations(range(10),nel)); idx={s:i for i,s in enumerate(states)}\ndef apply_ops(occ,ops):\n    occ=list(occ); sign=1\n    for t,i in reversed(ops):\n        if t=='c':\n            if i not in occ: return None\n            p=occ.index(i); sign*=(-1)**p; occ.pop(p)\n        else:\n            if i in occ: return None\n            p=sum(1 for x in occ if x<i); sign*=(-1)**p; occ.insert(p,i)\n    return sign,tuple(occ)\nN=len(states); ops1=[]; ops2=[]\nfor j,occ in enumerate(states):\n    for a in range(10):\n        for b in range(10):\n            if a%2!=b%2: continue\n            r=apply_ops(occ,[('a',a),('c',b)])\n            if r: ops1.append((idx[r[1]],j,r[0],a//2,b//2))\n    for a,b,c,d in itertools.product(range(10),repeat=4):\n        if a%2!=c%2 or b%2!=d%2: continue\n        r=apply_ops(occ,[('a',a),('a',b),('c',d),('c',c)])\n        if r: ops2.append((idx[r[1]],j,r[0],a//2,b//2,c//2,d//2))\nSz=lambda occ: sum(0.5 if x%2==0 else -0.5 for x in occ)\nSp=np.zeros((N,N))\nfor j,occ in enumerate(states):\n    for m in range(5):\n        r=apply_ops(occ,[('a',2*m),('c',2*m+1)])\n        if r: Sp[idx[r[1]],j]+=r[0]\nSzd=np.diag([Sz(o) for o in states]); S2=Sp.T@Sp+Szd@Szd+Szd\nvals,vecs=np.linalg.eigh(S2)\nVs={S:vecs[:,np.abs(vals-S*(S+1))<1e-6] for S in (0,1,2)}\ndef build(Dq,Bv,Cv):\n    F={2:49*Bv+7*Cv,4:441*Cv/35}\n    h=(-4*Dq*Pt+6*Dq*Pe).real\n    H=np.zeros((N,N))\n    for i,j,sg,p,q in ops1: H[i,j]+=sg*h[p,q]\n    for i,j,sg,a,b,c,d in ops2: H[i,j]+=0.5*sg*sum(F[k]*A[k][a,b,c,d] for k in (2,4))\n    return H\ndef E(Dq,S,B=706.,C=2734.):\n    H=build(Dq,B,C); V=Vs[S]\n    return np.linalg.eigvalsh(V.T@H@V).min()\ndef diff(Dq): return E(Dq,2)-E(Dq,1)\nfor Dq in [0,1000,2000,2500,3000,3500,4000,5000]:\n    print(Dq, round(E(Dq,2),1), round(E(Dq,1),1), round(diff(Dq),1))\nx=brentq(diff,1000,6000,xtol=1e-8)\nprint('crossover Dq=',x, 'Dq/B=',x/706, 'check E S1', E(x,1), E(x,2))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "0 -37791.6 -24031.6 -13760.0\n1000 -43791.6 -37429.8 -6361.8\n2000 -49791.6 -52912.5 3120.9\n2500 -52791.6 -60766.6 7975.0\n3000 -55791.6 -68657.1 12865.5\n3500 -58791.6 -76572.0 17780.4\n4000 -61791.6 -84503.8 22712.2\n5000 -67791.6 -100401.4 32609.8\ncrossover Dq= 1675.4945239143635 Dq/B= 2.373221705261138 check E S1 -47844.56714348122 -47844.56714348624\nShell cwd was reset to /tmp/tsbench-run-5xwa9elu",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "A={k:np.array([[[[ang(k,ms[a],ms[b],ms[c],ms[d]) for d in range(5)] for c in range(5)] for b in range(5)] for a in range(5)]) for k in (2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 47,
+     "method": "matrix",
+     "text": "Sp=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 53,
+     "method": "eigen_solver",
+     "text": "vals,vecs=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 58,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(V.T@H@V).min()"
+    }
+   ],
+   "produces": [
+    "Dq"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1675.0,
+   "weak": false,
+   "steps": [
+    10
+   ],
+   "typed_in_steps": [],
+   "source_step": 10
+  },
+  {
+   "path": "B",
+   "value": 706.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 2734.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 11,
+  "n_scripts": 10,
+  "n_failed_steps": 3,
+  "n_values": 3,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   10
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": false
+ }
+}

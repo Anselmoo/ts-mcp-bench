@@ -1,0 +1,1 @@
+cd ~ && pwd && mkdir -p d5w && echo ok

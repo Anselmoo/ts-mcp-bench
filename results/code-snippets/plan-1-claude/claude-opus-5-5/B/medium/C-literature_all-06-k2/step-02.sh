@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null || cd .; mkdir -p ./w && echo ok; pwd; python3 -c "import sympy,scipy;print('y')"

@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null || cd .; mkdir -p ./w && cd w && history | tail -0; echo ok; pwd

@@ -1,0 +1,1 @@
+touch <SANDBOX_TMP>/x && echo ok; python3 -c "import numpy,sympy;print(1)"

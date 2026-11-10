@@ -1,0 +1,1 @@
+echo 'Processing d3 octahedral ion with B=722 cm⁻¹, C=3003 cm⁻¹. Calculating energy levels for Dq/B = 1.00, 2.20, 3.50.'

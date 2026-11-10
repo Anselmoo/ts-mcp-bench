@@ -1,0 +1,1 @@
+export MPLCONFIGDIR=$PWD/.mpl; sed -i 's/for dq in \[1e-6,1e-5\]/for dq in [1e-3,1e-2]/; s/dq if dq>0 else 1e-7/dq if dq>0 else 1e-3/' run2.py; python3 run2.py

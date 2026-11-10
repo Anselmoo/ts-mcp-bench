@@ -1,0 +1,1 @@
+pwd; touch ./x_test && echo ok; echo $HOME; ls -ld $HOME /var/tmp 2>&1

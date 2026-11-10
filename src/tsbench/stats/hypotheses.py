@@ -115,8 +115,11 @@ def _paired_row(table, name, key_a, key_b) -> dict | None:
 
 
 def primary(table: RateTable, models=MODELS, effort: str = "medium",
-            allow_incomplete: bool = False) -> list[dict]:
+            allow_incomplete: bool = False, h3: bool = True) -> list[dict]:
     """Holm family: H2_<model> for each model and H3 (models[-1] vs models[0]).
+
+    h3=False is the secondary family of the preregistration (plans 2a-2c): Holm over the H2 tests only, no H3, rows
+    marked family "secondary_h2".
 
     The family size is fixed by the design, never by the data: a missing cell raises,
     or with allow_incomplete=True (pilot only) enters Holm as p = 1 and is marked missing.
@@ -124,7 +127,7 @@ def primary(table: RateTable, models=MODELS, effort: str = "medium",
     (it would compare a model with itself, give p = 1 and inflate the Holm adjustment of the other tests).
     """
     models = tuple(dict.fromkeys(models))
-    has_h3 = len(models) >= 2
+    has_h3 = h3 and len(models) >= 2
     names = [f"H2_{m}" for m in models] + (["H3"] if has_h3 else [])
     found = {}
     for m in models:
@@ -140,7 +143,7 @@ def primary(table: RateTable, models=MODELS, effort: str = "medium",
         raise ValueError(f"primary family incomplete, missing: {missing}")
     rows = [found.get(n, {"name": n, "n": 0, "p": 1.0, "missing": True}) for n in names]
     for r, adj in zip(rows, holm([r["p"] for r in rows]), strict=False):
-        r["p_holm"], r["family"] = adj, "primary"
+        r["p_holm"], r["family"] = adj, "primary" if h3 else "secondary_h2"
     return rows
 
 
@@ -289,7 +292,7 @@ def rates_upto(rows: list[dict], cells, k_max: int) -> RateTable:
 
 def layered(rows: list[dict], models=MODELS, effort: str = "medium", h4_models=H4_MODELS, effort_hi: str = "max",
             effort_lo: str = "low", expect_tasks: int | None = None, allow_incomplete: bool = False,
-            k_min: int = 1) -> dict:
+            k_min: int = 1, h3: bool = True) -> dict:
     """The tests on complete layers: each family on its own RateTable (primary: B, C; H1: A, C; H4: the sweep).
     Returns {"layers": {family: L}, "primary": [...], "secondary": [...]}. A family with fewer than `k_min` complete
     layers (confirmatory: 3) counts as L = 0 and yields no rows."""
@@ -299,7 +302,8 @@ def layered(rows: list[dict], models=MODELS, effort: str = "medium", h4_models=H
     layers = {f: complete_layers(rows, cells, expect_tasks) for f, cells in fam.items()}
     layers = {f: (L if L >= k_min else 0) for f, L in layers.items()}
     tab = {f: rates_upto(rows, cells, layers[f]) for f, cells in fam.items()}
-    prim = primary(tab["primary"], models, effort, allow_incomplete=allow_incomplete) if layers["primary"] else []
+    prim = (primary(tab["primary"], models, effort, allow_incomplete=allow_incomplete, h3=h3)
+            if layers["primary"] else [])
     sec = [r for r in secondary(tab["primary"], models, effort, h4_models=()) if r["name"].startswith("H2_")]
     sec += [r for r in secondary(tab["h1"], models, effort, h4_models=()) if r["name"].startswith("H1_")]
     sec += [r for r in secondary(tab["h4"], (), effort, h4_models, effort_hi, effort_lo) if r["name"].startswith("H4_")]
@@ -332,6 +336,9 @@ def main(argv: list[str] | None = None) -> int:
                          "H3 compares the last with the first, H4 uses the first and the last")
     ap.add_argument("--allow-incomplete", action="store_true",
                     help="pilot only: missing primary cells enter Holm as p = 1 instead of raising")
+    ap.add_argument("--family", choices=("primary", "secondary"), default="primary",
+                    help="primary: Holm over H2 of each model and H3; secondary (the open-weight plans 2a-2c): Holm "
+                         "over the H2 tests only, no H3")
     ap.add_argument("--out", default="hypotheses.json", help="output JSON file (default: hypotheses.json)")
     a = ap.parse_args(argv)
     if not a.rates and not a.scores:
@@ -342,13 +349,13 @@ def main(argv: list[str] | None = None) -> int:
     h4_models = tuple(dict.fromkeys((models[0], models[-1])))
     if a.scores:
         lay = layered(load_score_rows(a.scores), models, a.effort, h4_models, expect_tasks=a.expect_tasks,
-                      allow_incomplete=a.allow_incomplete, k_min=a.k_min)
+                      allow_incomplete=a.allow_incomplete, k_min=a.k_min, h3=a.family == "primary")
         res = {"k_layers": lay["layers"], "primary": lay["primary"], "secondary": lay["secondary"],
                "efficiency": efficiency(a.rates, models, a.effort) if a.rates else []}
     else:
         table = load_rates(a.rates)
         try:
-            prim = primary(table, models, a.effort, allow_incomplete=a.allow_incomplete)
+            prim = primary(table, models, a.effort, allow_incomplete=a.allow_incomplete, h3=a.family == "primary")
         except ValueError as exc:
             print(f"{exc}; check --models (now {', '.join(models)}) and --effort {a.effort}", file=sys.stderr)
             return 1
@@ -360,6 +367,7 @@ def main(argv: list[str] | None = None) -> int:
               + (f" (complete layers {res['k_layers']}; check --expect-tasks {a.expect_tasks} and --k-min {a.k_min})"
                  if a.scores else "") + "; nothing written", file=sys.stderr)
         return 1
+    res["family"] = a.family
     # scipy's wilcoxon method selection depends on the version: record what the analysis ran with
     res["environment"] = {"python": platform.python_version(), "numpy": np.__version__, "scipy": scipy.__version__}
     for r in res["primary"] + res["secondary"] + res["efficiency"]:

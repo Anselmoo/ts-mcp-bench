@@ -1,0 +1,1 @@
+cd /tmp && mkdir -p w && echo ok && pwd

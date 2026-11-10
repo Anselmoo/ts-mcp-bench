@@ -1,0 +1,1 @@
+history 2>/dev/null | true; echo

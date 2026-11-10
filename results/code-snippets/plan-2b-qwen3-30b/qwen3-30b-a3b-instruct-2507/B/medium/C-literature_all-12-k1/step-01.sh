@@ -1,0 +1,1 @@
+echo 'Solving ligand-field parameters for octahedral d⁷ Co²⁺ using the given absorption bands: 6150, 12400, 16850, 19000 cm⁻¹.'

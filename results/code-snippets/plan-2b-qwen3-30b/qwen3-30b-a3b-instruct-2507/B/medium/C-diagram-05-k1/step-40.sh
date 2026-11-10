@@ -1,0 +1,1 @@
+ls -la <HOME>/.cache/tsbench/output/test.png

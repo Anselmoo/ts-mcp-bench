@@ -1,0 +1,1 @@
+sed -i 's/A\[a,c,b,d\]= v1@Kk@(F\[:,b\]\*F\[:,d\])/A[a,c,b,d]= v1@Kk@(F[:,b]*F[:,d]*W)/' d5.py && grep -n "v1@Kk" d5.py && python3 dbg.py && timeout 550 python3 d5.py

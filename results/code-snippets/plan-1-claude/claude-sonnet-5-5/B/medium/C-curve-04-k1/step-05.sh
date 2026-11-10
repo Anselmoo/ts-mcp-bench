@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP>; sed -i 's/S2=Sm.T@Sm+Sz@Sz+Sz/S2=Sm.T@Sm+Sz@Sz-Sz/' a.py; sed -i 's/lv.append(((w\[i\]-w\[0\])\/B,j-i,round(s2\[i\],2)))/lv.append((round((w[i]-w[0])\/B,3),j-i,round(s2[i],2)))/' a.py; python3 a.py

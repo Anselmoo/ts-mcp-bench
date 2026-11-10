@@ -1,0 +1,1 @@
+touch /dev/shm/x && echo ok; touch ./x && echo cwd; echo $TMPDIR

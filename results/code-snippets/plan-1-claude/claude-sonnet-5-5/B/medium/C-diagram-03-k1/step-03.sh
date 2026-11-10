@@ -1,0 +1,1 @@
+touch <SANDBOX_TMP>/x && echo ok; touch ./y && echo ok2; pwd

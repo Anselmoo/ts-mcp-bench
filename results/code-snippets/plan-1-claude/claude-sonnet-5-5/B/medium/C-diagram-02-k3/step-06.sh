@@ -1,0 +1,1 @@
+sed -i 's/^F2=1+C\/B\/7;F4=C\/B\/35.*/F2=49*(1+C\/B\/7);F4=441*C\/B\/35/' t.py && python3 t.py 2>&1 | grep -v Matplotlib

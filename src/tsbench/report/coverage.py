@@ -23,7 +23,7 @@ import pathlib
 import sys
 
 from tsbench.report import page
-from tsbench.report.base import as_run_sets
+from tsbench.report.base import as_run_sets, model_key
 from tsbench.report.svg.base import fixed
 from tsbench.score.run_sets import run_sets_in
 
@@ -58,7 +58,7 @@ def coverage(run_sets, k: int = 3, models=None, conds=CONDS, effort: str = "medi
                 bad[(tid, model, cond)].setdefault(k_index, why)
             else:
                 ok[(tid, model, cond)].add(k_index)
-    models = list(models) if models else sorted(seen_models)
+    models = list(models) if models else sorted(seen_models, key=model_key)
     # a repetition counts once, however many run sets hold it, and an evaluable copy wins over a not-evaluable one
     cells = [{"task": t, "class": tasks[t]["class"], "model": m, "cond": c, "ok": len(ok[(t, m, c)]),
               "bad": dict(collections.Counter(w for k, w in sorted(bad[(t, m, c)].items()) if k not in ok[(t, m, c)]))}

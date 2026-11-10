@@ -1,0 +1,1 @@
+print("stdin python works")

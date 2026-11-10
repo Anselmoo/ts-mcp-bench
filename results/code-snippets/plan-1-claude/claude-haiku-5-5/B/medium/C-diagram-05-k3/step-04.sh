@@ -1,0 +1,1 @@
+for d in <SANDBOX_TMP> /tmp/tsbench-run-gr4_6my6 <HOME>; do echo $d; touch $d/.w 2>&1 && echo writable && rm $d/.w; done

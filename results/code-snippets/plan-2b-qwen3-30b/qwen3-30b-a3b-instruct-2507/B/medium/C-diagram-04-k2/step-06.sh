@@ -1,0 +1,1 @@
+python3 -c "from scipy.special import comb; from itertools import combinations; import numpy as np; B = 551; C = 2511; Dq_values = [i * 0.5 * B for i in range(0, 9)]; print('Dq/B:', [f'{d/B:.1f}' for d in Dq_values]); # Placeholder for actual calculation"

@@ -1,0 +1,339 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-opus-5-5/B/medium/C-racah_c-03-k2.jsonl",
+ "transcript_sha256": "157b3fc1b165e59fdf8475c91ba07191e7d2dfe3bd4c5bc69372915d79d52747",
+ "answer": {
+  "Dq": 1917.0,
+  "B": 824.0,
+  "C": 3670.0,
+  "out_of_scope": false,
+  "reason": "Dq comes from the first band, B from the two 4T1g bands, and C from fitting the 2Eg band with a full d3 diagonalisation."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncat << 'EOF' > /tmp/d3.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\n# real-space via complex spherical harmonics basis m=-2..2, spin\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\ndef ck(k,m1,m2):\n    return float(gaunt(2,k,2,-m1,m1-m2,m2))*(-1)**m1*np.sqrt(4*np.pi/(2*k+1))\ndef Rk(k,B,C):\n    F0=0;F2=49*B+7*C;F4=63*C/5*... if False else None\nEOF\npip list 2>/dev/null | grep -i -E \"sympy|scipy\"\n",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "bb781ca12d16b6f7f63e896399f8cc1e97be3de524ef9cdf42101fc9c952c671",
+     "lines": 9,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\n# real-space via complex spherical harmonics basis m=-2..2, spin\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\ndef ck(k,m1,m2):\n    return float(gaunt(2,k,2,-m1,m1-m2,m2))*(-1)**m1*np.sqrt(4*np.pi/(2*k+1))\ndef Rk(k,B,C):\n    F0=0;F2=49*B+7*C;F4=63*C/5*... if False else None\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 15: /tmp/d3.py: Read-only file system",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd $(mktemp -d) && cat << 'EOF' > d3.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=range(-2,3)\norbs=[(m,s) for m in ms for s in (1,-1)]\ndef ck(k,m1,m2): # c^k(l m1, l m2)\n    return float(gaunt(2,k,2,-m1,m1-m2,m2))*(-1)**m1*np.sqrt(4*np.pi/(2*k+1))\nCK={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\ndef U(Fk):\n    n=10;V=np.zeros((n,n,n,n))\n    for i,(m1,s1) in enumerate(orbs):\n     for j,(m2,s2) in enumerate(orbs):\n      for k_,(m3,s3) in enumerate(orbs):\n       for l,(m4,s4) in enumerate(orbs):\n        if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: continue\n        V[i,j,k_,l]=sum(Fk[k]*CK[(k,m1,m3)]*CK[(k,m4,m2)] for k in (2,4))\n    return V\ndets=list(itertools.combinations(range(10),3))\nidx={d:i for i,d in enumerate(dets)}\ndef H(Dq,B,C):\n    Fk={2:49*B+7*C,4:441*C/35}\n    V=U(Fk)\n    h=np.zeros((5,5))\n    for i,m in enumerate(ms):\n        h[i,i]={0:6,1:-4,-1:-4,2:1,-2:1}[m]*Dq\n    h[0,4]=h[4,0]=5*Dq\n    h1=np.zeros((10,10))\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2: h1[i,j]=h[m1+2,m2+2]\n    N=len(dets);M=np.zeros((N,N))\n    def apply(ops,det):\n        # returns list of (sign,det) ; ops list of ('c'/'a',orb) applied right to left\n        st=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in st: return None\n                p=st.index(o);sign*=(-1)**p;st.pop(p)\n            else:\n                if o in st: return None\n                st.insert(0,o)\n                # sort\n                p=sorted(st).index(o);sign*=(-1)**p;st=sorted(st)\n        return sign,tuple(st)\n    for J,d in enumerate(dets):\n        for p in range(10):\n            for q in range(10):\n                if h1[p,q]!=0:\n                    r=apply([('c',p),('a',q)],d)\n                    if r: M[idx[r[1]],J]+=r[0]*h1[p,q]\n        for p in range(10):\n         for q in range(10):\n          for r_ in range(10):\n           for s in range(10):\n            v=V[p,q,r_,s]\n            if v==0: continue\n            r=apply([('c',p),('c',q),('a',s),('a',r_)],d)\n            if r: M[idx[r[1]],J]+=0.5*r[0]*v\n    return M\n# S^2 to classify\ndef levels(Dq,B,C):\n    e=np.linalg.eigvalsh(H(Dq,B,C)); e=e-e[0]\n    # unique with degeneracies\n    out=[];\n    for x in e:\n        if out and abs(x-out[-1][0])<1e-3: out[-1][1]+=1\n        else: out.append([x,1])\n    return out\nfor l in levels(1917,824,3300)[:8]: print(l)\nEOF\npython3 d3.py\n",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "d7b316ee67effb3a50694718eb12e401bfee7866b06edd4fd2eb4d3fa47ea67f",
+     "lines": 69,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=range(-2,3)\norbs=[(m,s) for m in ms for s in (1,-1)]\ndef ck(k,m1,m2): # c^k(l m1, l m2)\n    return float(gaunt(2,k,2,-m1,m1-m2,m2))*(-1)**m1*np.sqrt(4*np.pi/(2*k+1))\nCK={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\ndef U(Fk):\n    n=10;V=np.zeros((n,n,n,n))\n    for i,(m1,s1) in enumerate(orbs):\n     for j,(m2,s2) in enumerate(orbs):\n      for k_,(m3,s3) in enumerate(orbs):\n       for l,(m4,s4) in enumerate(orbs):\n        if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: continue\n        V[i,j,k_,l]=sum(Fk[k]*CK[(k,m1,m3)]*CK[(k,m4,m2)] for k in (2,4))\n    return V\ndets=list(itertools.combinations(range(10),3))\nidx={d:i for i,d in enumerate(dets)}\ndef H(Dq,B,C):\n    Fk={2:49*B+7*C,4:441*C/35}\n    V=U(Fk)\n    h=np.zeros((5,5))\n    for i,m in enumerate(ms):\n        h[i,i]={0:6,1:-4,-1:-4,2:1,-2:1}[m]*Dq\n    h[0,4]=h[4,0]=5*Dq\n    h1=np.zeros((10,10))\n    for i,(m1,s1) in enumerate(orbs):\n        for j,(m2,s2) in enumerate(orbs):\n            if s1==s2: h1[i,j]=h[m1+2,m2+2]\n    N=len(dets);M=np.zeros((N,N))\n    def apply(ops,det):\n        # returns list of (sign,det) ; ops list of ('c'/'a',orb) applied right to left\n        st=list(det);sign=1\n        for t,o in reversed(ops):\n            if t=='a':\n                if o not in st: return None\n                p=st.index(o);sign*=(-1)**p;st.pop(p)\n            else:\n                if o in st: return None\n                st.insert(0,o)\n                # sort\n                p=sorted(st).index(o);sign*=(-1)**p;st=sorted(st)\n        return sign,tuple(st)\n    for J,d in enumerate(dets):\n        for p in range(10):\n            for q in range(10):\n                if h1[p,q]!=0:\n                    r=apply([('c',p),('a',q)],d)\n                    if r: M[idx[r[1]],J]+=r[0]*h1[p,q]\n        for p in range(10):\n         for q in range(10):\n          for r_ in range(10):\n           for s in range(10):\n            v=V[p,q,r_,s]\n            if v==0: continue\n            r=apply([('c',p),('c',q),('a',s),('a',r_)],d)\n            if r: M[idx[r[1]],J]+=0.5*r[0]*v\n    return M\n# S^2 to classify\ndef levels(Dq,B,C):\n    e=np.linalg.eigvalsh(H(Dq,B,C)); e=e-e[0]\n    # unique with degeneracies\n    out=[];\n    for x in e:\n        if out and abs(x-out[-1][0])<1e-3: out[-1][1]+=1\n        else: out.append([x,1])\n    return out\nfor l in levels(1917,824,3300)[:8]: print(l)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d3.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[np.float64(0.0), 4]\n[np.float64(15916.518428106996), 4]\n[np.float64(16676.738470945373), 6]\n[np.float64(19169.999999999978), 12]\n[np.float64(23980.080792280456), 6]\n[np.float64(27255.00878906751), 12]\n[np.float64(32366.000000000007), 2]\n[np.float64(34953.50534928248), 6]\nShell cwd was reset to /tmp/tsbench-run-o6l8itvw",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d3.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "n=10;V=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "d3.py",
+     "line": 23,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5))"
+    },
+    {
+     "script": "d3.py",
+     "line": 25,
+     "method": "matrix",
+     "text": "h[i,i]={0:6,1:-4,-1:-4,2:1,-2:1}[m]*Dq"
+    },
+    {
+     "script": "d3.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "h[0,4]=h[4,0]=5*Dq"
+    },
+    {
+     "script": "d3.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "h1=np.zeros((10,10))"
+    },
+    {
+     "script": "d3.py",
+     "line": 31,
+     "method": "matrix",
+     "text": "N=len(dets);M=np.zeros((N,N))"
+    },
+    {
+     "script": "d3.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "e=np.linalg.eigvalsh(H(Dq,B,C)); e=e-e[0]"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd /tmp && cd $(ls -td /tmp/tmp* | head -1) && cat >> d3.py << 'EOF'\nfrom scipy.optimize import brentq\ndef q(Dq,B,C):\n    M=H(Dq,B,C);e,v=np.linalg.eigh(M);e=e-e[0]\n    # identify quartets via Sz=3/2 component: dets with all spin up\n    up=[idx[d] for d in dets if all(orbs[o][1]==1 for o in d)]\n    qe=sorted(set(np.round([e[i] for i in range(len(e)) if np.sum(v[up,i]**2)>0.5],3)))\n    lv=levels(Dq,B,C); E2=[x for x,g in lv if g==4][1]\n    return qe,E2\ndef res(p):\n    B,C=p;qe,E2=q(1917,B,C)\n    return [qe[2]-27260,qe[3]-42610,E2-17050]\ns=least_squares(res,[824,3300]);print(s.x,res(s.x),q(1917,*s.x)[0])\nfor B in (824,):\n    print(brentq(lambda C:q(1917,B,C)[1]-17050,2000,5000))\nEOF\npython3 d3.py\n",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "26e0284c16ae7475a6ed7f16197a4b1accea88901111e29eaad685dfa0c7265f",
+     "lines": 14,
+     "code": "from scipy.optimize import brentq\ndef q(Dq,B,C):\n    M=H(Dq,B,C);e,v=np.linalg.eigh(M);e=e-e[0]\n    # identify quartets via Sz=3/2 component: dets with all spin up\n    up=[idx[d] for d in dets if all(orbs[o][1]==1 for o in d)]\n    qe=sorted(set(np.round([e[i] for i in range(len(e)) if np.sum(v[up,i]**2)>0.5],3)))\n    lv=levels(Dq,B,C); E2=[x for x,g in lv if g==4][1]\n    return qe,E2\ndef res(p):\n    B,C=p;qe,E2=q(1917,B,C)\n    return [qe[2]-27260,qe[3]-42610,E2-17050]\ns=least_squares(res,[824,3300]);print(s.x,res(s.x),q(1917,*s.x)[0])\nfor B in (824,):\n    print(brentq(lambda C:q(1917,B,C)[1]-17050,2000,5000))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d3.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nls: cannot access '/tmp/tmp*': No such file or directory\n/bin/bash: line 20: d3.py: Read-only file system\npython3: can't open file '/tmp/tsbench-home-xehwqch9/d3.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 3,
+     "method": "eigen_solver",
+     "text": "M=H(Dq,B,C);e,v=np.linalg.eigh(M);e=e-e[0]"
+    },
+    {
+     "script": "d3.py",
+     "line": 12,
+     "method": "least_squares",
+     "text": "s=least_squares(res,[824,3300]);print(s.x,res(s.x),q(1917,*s.x)[0])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "\nls -d /tmp/*/ ; find /tmp -name d3.py 2>/dev/null\n",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "<SANDBOX_TMP>/\n/tmp/com.google.Chrome.4E7mwD/\n/tmp/com.google.Chrome.chrome_chrome_url_fetcher_.HdzKTH/\n/tmp/com.google.Chrome.Dj8XZO/\n/tmp/com.google.Chrome.F0cVix/\n/tmp/com.google.Chrome.hT4cQj/\n/tmp/com.google.Chrome.wIYFMU/\n/tmp/gitkraken/\n/tmp/mcp-7ilBte/\n/tmp/node-compile-cache/\n/tmp/pyright-29886-hOADCKREDxXI/\n/tmp/pytest-of-<USER>/\n/tmp/snap-private-tmp/\n/tmp/systemd-private-b71765d57e854d44bdd77ec8841a41ad-earlyoom.service-WR24iA/\n/tmp/systemd-private-b71765d57e854d44bdd77ec8841a41ad-haveged.service-p4rx0D/\n/tmp/systemd-private-b71765d57e854d44bdd77ec8841a41ad-systemd-logind.service-4gJ3Li/\n/tmp/systemd-private-b71765d57e854d44bdd77ec8841a41ad-systemd-resolved.service-KpRBMb/\n/tmp/systemd-private-b71765d57e854d44bdd77ec8841a41ad-systemd-timesyncd.service-8zc3Ud/\n/tmp/tsbench-cfg-md8cf5r6/\n/tmp/tsbench-cfg-pikv1tf2/\n/tmp/tsbench-home-2oealm8b/\n/tmp/tsbench-home-xehwqch9/\n/tmp/tsbench-run-o6l8itvw/\n/tmp/tsbench-run-uop33y1e/\n/tmp/vscode-typescript1000/\n<SANDBOX_TMP>/w/d3.py\n<SANDBOX_TMP>/tmp.8T68n0g3oK/d3.py\n<SANDBOX_TMP>/tmp.wS2RpUWv3h/d3.py\n<SANDBOX_TMP>/tmp.oGcTPDdsBV/d3.py\n<SANDBOX_TMP>/d3.py",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "\nF=$(ls -t <SANDBOX_TMP>/*/d3.py <SANDBOX_TMP>/d3.py | head -1); echo $F; grep -c \"for l in levels(1917,824\" $F; D=$(mktemp -d); cp $F $D/; cd $D && cat >> d3.py << 'EOF'\nfrom scipy.optimize import brentq\ndef q(Dq,B,C):\n    M=H(Dq,B,C);e,v=np.linalg.eigh(M);e=e-e[0]\n    up=[idx[d] for d in dets if all(orbs[o][1]==1 for o in d)]\n    qe=sorted(set(np.round([e[i] for i in range(len(e)) if np.sum(v[up,i]**2)>0.5],3)))\n    lv=levels(Dq,B,C); E2=[x for x,g in lv if g==4][1]\n    return qe,E2\ndef res(p):\n    B,C=p;qe,E2=q(1917,B,C)\n    return [qe[2]-27260,qe[3]-42610,E2-17050]\ns=least_squares(res,[824,3300]);print(s.x,res(s.x),q(1917,*s.x)[0])\nprint(brentq(lambda C:q(1917,824,C)[1]-17050,2000,5000))\nEOF\npython3 d3.py\n",
+   "scripts": [
+    {
+     "name": "d3.py",
+     "sha256": "3372618633563ae2882b3ff050dd467cb1782091aa69a3a6f40daa28d1e59191",
+     "lines": 12,
+     "code": "from scipy.optimize import brentq\ndef q(Dq,B,C):\n    M=H(Dq,B,C);e,v=np.linalg.eigh(M);e=e-e[0]\n    up=[idx[d] for d in dets if all(orbs[o][1]==1 for o in d)]\n    qe=sorted(set(np.round([e[i] for i in range(len(e)) if np.sum(v[up,i]**2)>0.5],3)))\n    lv=levels(Dq,B,C); E2=[x for x,g in lv if g==4][1]\n    return qe,E2\ndef res(p):\n    B,C=p;qe,E2=q(1917,B,C)\n    return [qe[2]-27260,qe[3]-42610,E2-17050]\ns=least_squares(res,[824,3300]);print(s.x,res(s.x),q(1917,*s.x)[0])\nprint(brentq(lambda C:q(1917,824,C)[1]-17050,2000,5000))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d3.py",
+     "written_in_step": 4
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n<SANDBOX_TMP>/tmp.wS2RpUWv3h/d3.py\n1\n[np.float64(0.0), 4]\n[np.float64(15916.518428106996), 4]\n[np.float64(16676.738470945373), 6]\n[np.float64(19169.999999999978), 12]\n[np.float64(23980.080792280456), 6]\n[np.float64(27255.00878906751), 12]\n[np.float64(32366.000000000007), 2]\n[np.float64(34953.50534928248), 6]\nTraceback (most recent call last):\n  File \"<SANDBOX_TMP>/tmp.FxrcSTRKdB/d3.py\", line 80, in <module>\n    s=least_squares(res,[824,3300]);print(s.x,res(s.x),q(1917,*s.x)[0])\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/_lib/_util.py\", line 662, in inner\n    return func(*args, **kwargs)\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_lsq/least_squares.py\", line 1019, in least_squares\n    result = trf(vector_fun.fun, vector_fun.jac, x0, f0, J0, lb, ub, ftol, xtol,\n                 gtol, max_nfev, x_scale, loss_function, tr_solver,\n                 tr_options.copy(), verbose, callback=callback_wrapped)\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_lsq/trf.py\", line 120, in trf\n    return trf_no_bounds(\n        fun, jac, x0, f0, J0, ftol, xtol, gtol, max_nfev, x_scale,\n        loss_function, tr_solver, tr_options, verbose, callback=callback)\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_lsq/trf.py\", line 514, in trf_no_bounds\n    f_new = fun(x_new)\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_differentiable_functions.py\", line 743, in fun\n    self._update_fun()\n    ~~~~~~~~~~~~~~~~^^\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_differentiable_functions.py\", line 707, in _update_fun\n    self.f = self.fun_wrapped(xp_copy(self.x))\n             ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_differentiable_functions.py\", line 424, in __call__\n    return np.atleast_1d(self.fun(x))\n                         ~~~~~~~~^^^\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_lsq/least_squares.py\", line 263, in __call__\n    return self.f(x, *self.args, **self.kwargs)\n           ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<SANDBOX_TMP>/tmp.FxrcSTRKdB/d3.py\", line 79, in res\n    return [qe[2]-27260,qe[3]-42610,E2-17050]\n                        ~~^^^\nIndexError: list index out of range",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d3.py",
+     "line": 3,
+     "method": "eigen_solver",
+     "text": "M=H(Dq,B,C);e,v=np.linalg.eigh(M);e=e-e[0]"
+    },
+    {
+     "script": "d3.py",
+     "line": 11,
+     "method": "least_squares",
+     "text": "s=least_squares(res,[824,3300]);print(s.x,res(s.x),q(1917,*s.x)[0])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "\ncd $(ls -td <SANDBOX_TMP>/tmp.* | head -1) && python3 - << 'EOF'\nsrc=open('d3.py').read().split(\"from scipy.optimize import brentq\")[0].replace(\"for l in levels(1917,824,3300)[:8]: print(l)\",\"\")\nexec(src)\nfrom scipy.optimize import brentq\nup=[idx[d] for d in dets if all(orbs[o][1]==1 for o in d)]\ndef q(Dq,B,C):\n    M=H(Dq,B,C);e=np.linalg.eigvalsh(M);g=e[0]\n    qe=np.linalg.eigvalsh(M[np.ix_(up,up)])-g\n    u=[];[u.append(x) for x in qe if not u or abs(x-u[-1])>1e-3]\n    E2=[x for x,gg in levels(Dq,B,C) if gg==4][1]\n    return u,E2\nprint(q(1917,824,3300))\ndef res(p):\n    B,C=p;qe,E2=q(1917,B,C);return [qe[2]-27260,qe[3]-42610,E2-17050]\ns=least_squares(res,[824,3300]);print(s.x,res(s.x))\ndef res2(p):\n    Dq,B,C=p;qe,E2=q(Dq,B,C);return [qe[1]-19170,qe[2]-27260,qe[3]-42610,E2-17050]\ns=least_squares(res2,[1917,824,3300]);print(s.x,res2(s.x))\nEOF\n",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "b9b209c86b4e98fa4926a683abc8721299aa192d722295e1565b44c0537e34f5",
+     "lines": 17,
+     "code": "src=open('d3.py').read().split(\"from scipy.optimize import brentq\")[0].replace(\"for l in levels(1917,824,3300)[:8]: print(l)\",\"\")\nexec(src)\nfrom scipy.optimize import brentq\nup=[idx[d] for d in dets if all(orbs[o][1]==1 for o in d)]\ndef q(Dq,B,C):\n    M=H(Dq,B,C);e=np.linalg.eigvalsh(M);g=e[0]\n    qe=np.linalg.eigvalsh(M[np.ix_(up,up)])-g\n    u=[];[u.append(x) for x in qe if not u or abs(x-u[-1])>1e-3]\n    E2=[x for x,gg in levels(Dq,B,C) if gg==4][1]\n    return u,E2\nprint(q(1917,824,3300))\ndef res(p):\n    B,C=p;qe,E2=q(1917,B,C);return [qe[2]-27260,qe[3]-42610,E2-17050]\ns=least_squares(res,[824,3300]);print(s.x,res(s.x))\ndef res2(p):\n    Dq,B,C=p;qe,E2=q(Dq,B,C);return [qe[1]-19170,qe[2]-27260,qe[3]-42610,E2-17050]\ns=least_squares(res2,[1917,824,3300]);print(s.x,res2(s.x))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "([np.float64(0.0), np.float64(19170.000000000004), np.float64(27255.008789067528), np.float64(42614.991210932465)], np.float64(15916.518428106996))\n[ 823.9629653  3671.22651531] [np.float64(-5.253460649415501), np.float64(4.6979401674325345), np.float64(-4.804387572221458e-07)]\n[1916.74825099  824.47169887 3670.19784366] [np.float64(-2.5174901317041076), np.float64(-4.46531256774324), np.float64(3.9883252884537796), np.float64(-9.640643838793039e-08)]\nShell cwd was reset to /tmp/tsbench-run-o6l8itvw",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 6,
+     "method": "eigen_solver",
+     "text": "M=H(Dq,B,C);e=np.linalg.eigvalsh(M);g=e[0]"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 7,
+     "method": "eigen_solver",
+     "text": "qe=np.linalg.eigvalsh(M[np.ix_(up,up)])-g"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "least_squares",
+     "text": "s=least_squares(res,[824,3300]);print(s.x,res(s.x))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 17,
+     "method": "least_squares",
+     "text": "s=least_squares(res2,[1917,824,3300]);print(s.x,res2(s.x))"
+    }
+   ],
+   "produces": [
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1917.0,
+   "weak": false,
+   "steps": [
+    4,
+    5
+   ],
+   "typed_in_steps": [
+    4,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "B",
+   "value": 824.0,
+   "weak": false,
+   "steps": [
+    4,
+    5
+   ],
+   "typed_in_steps": [
+    4,
+    5
+   ],
+   "source_step": null
+  },
+  {
+   "path": "C",
+   "value": 3670.0,
+   "weak": false,
+   "steps": [
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  }
+ ],
+ "summary": {
+  "n_steps": 6,
+  "n_scripts": 5,
+  "n_failed_steps": 2,
+  "n_values": 3,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   5
+  ],
+  "methods": [
+   "least_squares",
+   "eigen_solver"
+  ],
+  "edits_in_place": true
+ }
+}

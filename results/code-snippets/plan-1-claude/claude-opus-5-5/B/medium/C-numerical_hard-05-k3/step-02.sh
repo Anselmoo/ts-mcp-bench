@@ -1,0 +1,1 @@
+python3 -c "import numpy,scipy;print(numpy.__version__)"; which python3

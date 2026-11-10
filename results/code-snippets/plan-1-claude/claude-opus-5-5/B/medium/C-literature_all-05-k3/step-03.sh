@@ -1,0 +1,1 @@
+cd $(mktemp -d 2>/dev/null || echo .) ; pwd; touch x && echo ok

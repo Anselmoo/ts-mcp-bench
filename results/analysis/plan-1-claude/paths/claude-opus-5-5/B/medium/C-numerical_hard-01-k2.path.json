@@ -1,0 +1,249 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-opus-5-5/B/medium/C-numerical_hard-01-k2.jsonl",
+ "transcript_sha256": "30f3f39264fe2d8da450edaea264afb04644a1bb99e8208776f95616d8739dc3",
+ "answer": {
+  "Dq": 2176.0,
+  "B": 725.0,
+  "C": 3409.0,
+  "out_of_scope": false,
+  "reason": "Full d4 ligand-field fit reproduces all three triplet bands within 2 cm^-1 with a low-spin 3T1g ground state."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check python packages",
+   "command": "pip list 2>/dev/null | grep -i -E \"sympy|numpy|scipy\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(Bash completed with no output)",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Check/install numpy",
+   "command": "python3 -c \"import numpy,scipy;print(numpy.__version__)\"; pip install numpy scipy sympy 2>&1 | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "2.5.4\n/bin/bash: line 1: pip: command not found",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Write d4 ligand field code",
+   "command": "cat << 'EOF' > /tmp/d4.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\n# ck(l=2,m1,l=2,m2) = sqrt(4pi/(2k+1)) * gaunt\nimport math\ndef ck(k,m1,m2):\n    # <2 m1|C^k_{m1-m2}|2 m2>\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float((-1)**m1*math.sqrt(4*math.pi/(2*k+1))*gaunt(2,k,2,-m1,q,m2))\nCK={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\ndef R(a,b,c,d,F):\n    # <ab|1/r|cd>, a,c electron1\n    if a+b!=c+d: return 0.0\n    return sum(F[k]*CK[(k,a,c)]*CK[(k,d,b)] for k in (0,2,4))\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),4))\nidx={d:i for i,d in enumerate(dets)}\ndef build(Dq,B,C):\n    F2=49*B+7*C; F4=63*C/5; F={0:0,2:F2,4:F4}\n    V=np.zeros((5,5)); \n    dm={-2:Dq,-1:-4*Dq,0:6*Dq,1:-4*Dq,2:Dq}\n    for m in ms: V[m+2,m+2]=dm[m]\n    V[0,4]=V[4,0]=5*Dq\n    N=len(dets); H=np.zeros((N,N))\n    for i,d in enumerate(dets):\n        occ=list(d)\n        # one-body\n        for p_i,p in enumerate(occ):\n            for q in range(10):\n                if so[q][1]!=so[p][1]: continue\n                v=V[so[q][0]+2,so[p][0]+2]\n                if v==0: continue\n                if q!=p and q in occ: continue\n                new=occ.copy(); new[p_i]=q\n                sign=1\n                # sort with sign\n                arr=new[:]\n                for a in range(len(arr)):\n                    for b in range(len(arr)-1-a):\n                        if arr[b]>arr[b+1]: arr[b],arr[b+1]=arr[b+1],arr[b]; sign=-sign\n                H[idx[tuple(arr)],i]+=sign*v\n        # two-body\n        for (ia,a),(ib,b) in itertools.combinations(enumerate(occ),2):\n            for c in range(10):\n                for e in range(10):\n                    if c==e: continue\n                    if so[c][1]!=so[a][1] or so[e][1]!=so[b][1]: continue\n                    val=R(so[c][0],so[e][0],so[a][0],so[b][0],F)\n                    if abs(val)<1e-12: continue\n                    new=occ.copy()\n                    rest=[x for x in occ if x not in (a,b)]\n                    if c in rest or e in rest: continue\n                    new[ia]=c; new[ib]=e\n                    arr=new[:]; sign=1\n                    for x in range(len(arr)):\n                        for y in range(len(arr)-1-x):\n                            if arr[y]>arr[y+1]: arr[y],arr[y+1]=arr[y+1],arr[y]; sign=-sign\n                    H[idx[tuple(arr)],i]+=sign*val\n    return H\n# Sz=1 sector: count spin up(0) minus down\ndef sz(d): return sum(1 if so[x][1]==0 else -1 for x in d)/2\ndef levels(Dq,B,C):\n    H=build(Dq,B,C); H=(H+H.T)/2\n    e=np.linalg.eigvalsh(H)\n    # spin: get triplets by Sz sectors: triplet energies = in Sz=1 but not Sz=2\n    sel1=[i for i,d in enumerate(dets) if sz(d)==1]\n    sel2=[i for i,d in enumerate(dets) if sz(d)==2]\n    e1=np.linalg.eigvalsh(H[np.ix_(sel1,sel1)]); e2=np.linalg.eigvalsh(H[np.ix_(sel2,sel2)])\n    e0=np.linalg.eigvalsh(H[np.ix_([i for i,d in enumerate(dets) if sz(d)==0],)*2])\n    return e0,e1,e2\nEOF\necho ok",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "5d07c7191861f40ea4e3a7bfcd6a26edc73d3ccc6a09fdef4fb528160a6e6028",
+     "lines": 72,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\n# ck(l=2,m1,l=2,m2) = sqrt(4pi/(2k+1)) * gaunt\nimport math\ndef ck(k,m1,m2):\n    # <2 m1|C^k_{m1-m2}|2 m2>\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float((-1)**m1*math.sqrt(4*math.pi/(2*k+1))*gaunt(2,k,2,-m1,q,m2))\nCK={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\ndef R(a,b,c,d,F):\n    # <ab|1/r|cd>, a,c electron1\n    if a+b!=c+d: return 0.0\n    return sum(F[k]*CK[(k,a,c)]*CK[(k,d,b)] for k in (0,2,4))\nso=[(m,s) for m in ms for s in (0,1)]\ndets=list(itertools.combinations(range(10),4))\nidx={d:i for i,d in enumerate(dets)}\ndef build(Dq,B,C):\n    F2=49*B+7*C; F4=63*C/5; F={0:0,2:F2,4:F4}\n    V=np.zeros((5,5)); \n    dm={-2:Dq,-1:-4*Dq,0:6*Dq,1:-4*Dq,2:Dq}\n    for m in ms: V[m+2,m+2]=dm[m]\n    V[0,4]=V[4,0]=5*Dq\n    N=len(dets); H=np.zeros((N,N))\n    for i,d in enumerate(dets):\n        occ=list(d)\n        # one-body\n        for p_i,p in enumerate(occ):\n            for q in range(10):\n                if so[q][1]!=so[p][1]: continue\n                v=V[so[q][0]+2,so[p][0]+2]\n                if v==0: continue\n                if q!=p and q in occ: continue\n                new=occ.copy(); new[p_i]=q\n                sign=1\n                # sort with sign\n                arr=new[:]\n                for a in range(len(arr)):\n                    for b in range(len(arr)-1-a):\n                        if arr[b]>arr[b+1]: arr[b],arr[b+1]=arr[b+1],arr[b]; sign=-sign\n                H[idx[tuple(arr)],i]+=sign*v\n        # two-body\n        for (ia,a),(ib,b) in itertools.combinations(enumerate(occ),2):\n            for c in range(10):\n                for e in range(10):\n                    if c==e: continue\n                    if so[c][1]!=so[a][1] or so[e][1]!=so[b][1]: continue\n                    val=R(so[c][0],so[e][0],so[a][0],so[b][0],F)\n                    if abs(val)<1e-12: continue\n                    new=occ.copy()\n                    rest=[x for x in occ if x not in (a,b)]\n                    if c in rest or e in rest: continue\n                    new[ia]=c; new[ib]=e\n                    arr=new[:]; sign=1\n                    for x in range(len(arr)):\n                        for y in range(len(arr)-1-x):\n                            if arr[y]>arr[y+1]: arr[y],arr[y+1]=arr[y+1],arr[y]; sign=-sign\n                    H[idx[tuple(arr)],i]+=sign*val\n    return H\n# Sz=1 sector: count spin up(0) minus down\ndef sz(d): return sum(1 if so[x][1]==0 else -1 for x in d)/2\ndef levels(Dq,B,C):\n    H=build(Dq,B,C); H=(H+H.T)/2\n    e=np.linalg.eigvalsh(H)\n    # spin: get triplets by Sz sectors: triplet energies = in Sz=1 but not Sz=2\n    sel1=[i for i,d in enumerate(dets) if sz(d)==1]\n    sel2=[i for i,d in enumerate(dets) if sz(d)==2]\n    e1=np.linalg.eigvalsh(H[np.ix_(sel1,sel1)]); e2=np.linalg.eigvalsh(H[np.ix_(sel2,sel2)])\n    e0=np.linalg.eigvalsh(H[np.ix_([i for i,d in enumerate(dets) if sz(d)==0],)*2])\n    return e0,e1,e2\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 75: /tmp/d4.py: Read-only file system\nok",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d4.py",
+     "line": 22,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5));"
+    },
+    {
+     "script": "d4.py",
+     "line": 25,
+     "method": "matrix",
+     "text": "V[0,4]=V[4,0]=5*Dq"
+    },
+    {
+     "script": "d4.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "N=len(dets); H=np.zeros((N,N))"
+    },
+    {
+     "script": "d4.py",
+     "line": 66,
+     "method": "eigen_solver",
+     "text": "e=np.linalg.eigvalsh(H)"
+    },
+    {
+     "script": "d4.py",
+     "line": 70,
+     "method": "eigen_solver",
+     "text": "e1=np.linalg.eigvalsh(H[np.ix_(sel1,sel1)]); e2=np.linalg.eigvalsh(H[np.ix_(sel2,sel2)])"
+    },
+    {
+     "script": "d4.py",
+     "line": 71,
+     "method": "eigen_solver",
+     "text": "e0=np.linalg.eigvalsh(H[np.ix_([i for i,d in enumerate(dets) if sz(d)==0],)*2])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find writable dir, check imports",
+   "command": "cd ~ 2>/dev/null || cd $TMPDIR; pwd; python3 -c \"import sympy, scipy; print('ok')\"; touch x && echo writable",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/tmp/tsbench-home-xehwqch9\nok\ntouch: cannot touch 'x': Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Build d4 matrices and fit triplet bands",
+   "command": "cd /tmp; python3 - << 'EOF'\nimport numpy as np, itertools, math\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float((-1)**m1*math.sqrt(4*math.pi/(2*k+1))*gaunt(2,k,2,-m1,q,m2))\nCK={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\nso=[(m,s) for m in ms for s in (0,1)]\ndef sortsign(arr):\n    arr=arr[:]; s=1\n    for x in range(len(arr)):\n        for y in range(len(arr)-1-x):\n            if arr[y]>arr[y+1]: arr[y],arr[y+1]=arr[y+1],arr[y]; s=-s\n    return tuple(arr),s\ndef sz(d): return sum(1 if so[x][1]==0 else -1 for x in d)\ndef sector(S2):\n    dets=[d for d in itertools.combinations(range(10),4) if sz(d)==S2]\n    idx={d:i for i,d in enumerate(dets)}\n    N=len(dets)\n    Hd=np.zeros((N,N)); Hk={k:np.zeros((N,N)) for k in (2,4)}\n    for i,d in enumerate(dets):\n        occ=list(d)\n        for p_i,p in enumerate(occ):\n            for q in range(10):\n                if so[q][1]!=so[p][1]: continue\n                mp,mq=so[p][0],so[q][0]\n                v={-2:1,-1:-4,0:6,1:-4,2:1}[mp] if mp==mq else (5 if abs(mp-mq)==4 else 0)\n                if v==0: continue\n                if q!=p and q in occ: continue\n                new=occ.copy(); new[p_i]=q\n                t,s=sortsign(new); Hd[idx[t],i]+=s*v\n        for (ia,a),(ib,b) in itertools.combinations(enumerate(occ),2):\n            rest=[x for x in occ if x not in (a,b)]\n            for c in range(10):\n                for e in range(10):\n                    if c==e or c in rest or e in rest: continue\n                    if so[c][1]!=so[a][1] or so[e][1]!=so[b][1]: continue\n                    m1,m2,m3,m4=so[c][0],so[e][0],so[a][0],so[b][0]\n                    if m1+m2!=m3+m4: continue\n                    new=occ.copy(); new[ia]=c; new[ib]=e\n                    t,s=sortsign(new)\n                    for k in (2,4):\n                        Hk[k][idx[t],i]+=s*CK[(k,m1,m3)]*CK[(k,m4,m2)]\n    return Hd,Hk\nS={s:sector(s) for s in (0,2,4)}\ndef eig(s,Dq,B,C):\n    Hd,Hk=S[s]; F2=49*B+7*C; F4=63*C/5\n    H=Dq*Hd+F2*Hk[2]+F4*Hk[4]; H=(H+H.T)/2\n    return np.linalg.eigvalsh(H)\ndef triplets(Dq,B,C):\n    e1=list(eig(2,Dq,B,C)); e2=eig(4,Dq,B,C)\n    for x in e2:\n        j=np.argmin([abs(y-x) for y in e1]); e1.pop(j)\n    e1=np.array(e1); e0=eig(0,Dq,B,C)\n    # group degeneracies\n    out=[];\n    for x in sorted(e1):\n        if out and abs(x-out[-1][0])<1e-4: out[-1][1]+=1\n        else: out.append([x,1])\n    return out,e0.min(),e2.min()\nimport sys\nt,g0,g5=triplets(2500,600,4.7*600)\nprint([(round(a-t[0][0]),n) for a,n in t[:10]], round(g5-t[0][0]), round(g0-t[0][0]))\nobs=np.array([18850,19750,20560])\ndef res(p):\n    Dq,B=p; t,_,_=triplets(Dq,B,4.7*B)\n    ex=np.array([a-t[0][0] for a,n in t[1:4]]); return ex-obs\nfor g in [(2000,500),(2500,700),(3000,600),(2200,300)]:\n    r=least_squares(res,g); print(r.x, r.fun)\n    t,g0,g5=triplets(r.x[0],r.x[1],4.7*r.x[1])\n    print([(round(a-t[0][0]),n) for a,n in t[:8]], round(g5-t[0][0]))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "a0989f373bec3de84747ff4a2f36183874784b5b3ce037d267e4983fd3e96bd8",
+     "lines": 73,
+     "code": "import numpy as np, itertools, math\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\ndef ck(k,m1,m2):\n    q=m1-m2\n    if abs(q)>k: return 0.0\n    return float((-1)**m1*math.sqrt(4*math.pi/(2*k+1))*gaunt(2,k,2,-m1,q,m2))\nCK={(k,a,b):ck(k,a,b) for k in (0,2,4) for a in ms for b in ms}\nso=[(m,s) for m in ms for s in (0,1)]\ndef sortsign(arr):\n    arr=arr[:]; s=1\n    for x in range(len(arr)):\n        for y in range(len(arr)-1-x):\n            if arr[y]>arr[y+1]: arr[y],arr[y+1]=arr[y+1],arr[y]; s=-s\n    return tuple(arr),s\ndef sz(d): return sum(1 if so[x][1]==0 else -1 for x in d)\ndef sector(S2):\n    dets=[d for d in itertools.combinations(range(10),4) if sz(d)==S2]\n    idx={d:i for i,d in enumerate(dets)}\n    N=len(dets)\n    Hd=np.zeros((N,N)); Hk={k:np.zeros((N,N)) for k in (2,4)}\n    for i,d in enumerate(dets):\n        occ=list(d)\n        for p_i,p in enumerate(occ):\n            for q in range(10):\n                if so[q][1]!=so[p][1]: continue\n                mp,mq=so[p][0],so[q][0]\n                v={-2:1,-1:-4,0:6,1:-4,2:1}[mp] if mp==mq else (5 if abs(mp-mq)==4 else 0)\n                if v==0: continue\n                if q!=p and q in occ: continue\n                new=occ.copy(); new[p_i]=q\n                t,s=sortsign(new); Hd[idx[t],i]+=s*v\n        for (ia,a),(ib,b) in itertools.combinations(enumerate(occ),2):\n            rest=[x for x in occ if x not in (a,b)]\n            for c in range(10):\n                for e in range(10):\n                    if c==e or c in rest or e in rest: continue\n                    if so[c][1]!=so[a][1] or so[e][1]!=so[b][1]: continue\n                    m1,m2,m3,m4=so[c][0],so[e][0],so[a][0],so[b][0]\n                    if m1+m2!=m3+m4: continue\n                    new=occ.copy(); new[ia]=c; new[ib]=e\n                    t,s=sortsign(new)\n                    for k in (2,4):\n                        Hk[k][idx[t],i]+=s*CK[(k,m1,m3)]*CK[(k,m4,m2)]\n    return Hd,Hk\nS={s:sector(s) for s in (0,2,4)}\ndef eig(s,Dq,B,C):\n    Hd,Hk=S[s]; F2=49*B+7*C; F4=63*C/5\n    H=Dq*Hd+F2*Hk[2]+F4*Hk[4]; H=(H+H.T)/2\n    return np.linalg.eigvalsh(H)\ndef triplets(Dq,B,C):\n    e1=list(eig(2,Dq,B,C)); e2=eig(4,Dq,B,C)\n    for x in e2:\n        j=np.argmin([abs(y-x) for y in e1]); e1.pop(j)\n    e1=np.array(e1); e0=eig(0,Dq,B,C)\n    # group degeneracies\n    out=[];\n    for x in sorted(e1):\n        if out and abs(x-out[-1][0])<1e-4: out[-1][1]+=1\n        else: out.append([x,1])\n    return out,e0.min(),e2.min()\nimport sys\nt,g0,g5=triplets(2500,600,4.7*600)\nprint([(round(a-t[0][0]),n) for a,n in t[:10]], round(g5-t[0][0]), round(g0-t[0][0]))\nobs=np.array([18850,19750,20560])\ndef res(p):\n    Dq,B=p; t,_,_=triplets(Dq,B,4.7*B)\n    ex=np.array([a-t[0][0] for a,n in t[1:4]]); return ex-obs\nfor g in [(2000,500),(2500,700),(3000,600),(2200,300)]:\n    r=least_squares(res,g); print(r.x, r.fun)\n    t,g0,g5=triplets(r.x[0],r.x[1],4.7*r.x[1])\n    print([(round(a-t[0][0]),n) for a,n in t[:8]], round(g5-t[0][0]))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[(0, 3), (22416, 2), (23144, 3), (23855, 3), (24756, 1), (25807, 1), (27432, 2), (35396, 3), (35735, 3), (47606, 3)] 8076 0\n[2176.08832048  725.22255692] [ 0.62119875 -1.5472155   0.91655122]\n[(0, 3), (18851, 2), (19748, 3), (20561, 3), (21712, 1), (22637, 1), (24851, 2), (32951, 3)] 1551\n[2176.08832006  725.22255473] [ 0.62120136 -1.54721578  0.91654897]\n[(0, 3), (18851, 2), (19748, 3), (20561, 3), (21712, 1), (22637, 1), (24851, 2), (32951, 3)] 1551\n[2176.08831975  725.22255304] [ 0.62120353 -1.54721586  0.91654737]\n[(0, 3), (18851, 2), (19748, 3), (20561, 3), (21712, 1), (22637, 1), (24851, 2), (32951, 3)] 1551\n[2176.08832018  725.22255535] [ 0.62120061 -1.54721572  0.91654958]\n[(0, 3), (18851, 2), (19748, 3), (20561, 3), (21712, 1), (22637, 1), (24851, 2), (32951, 3)] 1551\nShell cwd was reset to /tmp/tsbench-run-41lx5pd1",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 22,
+     "method": "matrix",
+     "text": "Hd=np.zeros((N,N)); Hk={k:np.zeros((N,N)) for k in (2,4)}"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 48,
+     "method": "eigen_solver",
+     "text": "def eig(s,Dq,B,C):"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 51,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(H)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 53,
+     "method": "eigen_solver",
+     "text": "e1=list(eig(2,Dq,B,C)); e2=eig(4,Dq,B,C)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 56,
+     "method": "eigen_solver",
+     "text": "e1=np.array(e1); e0=eig(0,Dq,B,C)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 71,
+     "method": "least_squares",
+     "text": "r=least_squares(res,g); print(r.x, r.fun)"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 2176.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "B",
+   "value": 725.0,
+   "weak": false,
+   "steps": [
+    4
+   ],
+   "typed_in_steps": [],
+   "source_step": 4
+  },
+  {
+   "path": "C",
+   "value": 3409.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 5,
+  "n_scripts": 2,
+  "n_failed_steps": 1,
+  "n_values": 3,
+  "n_linked": 2,
+  "n_weak": 0,
+  "source_steps": [
+   4
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

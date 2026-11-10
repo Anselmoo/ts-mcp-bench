@@ -1,0 +1,1 @@
+cd ~ && touch x.py && echo ok; pwd

@@ -1,0 +1,1 @@
+sed -i 's/np.diag(Phi@(Phi\*w\[:,None\]))/np.diag(Phi@(Phi*w).T)/' d4.py && time python3 d4.py

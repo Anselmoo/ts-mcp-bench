@@ -1,0 +1,1 @@
+cd /; python3 -c "import numpy,sympy;print('ok')" ; echo $HOME; touch /var/tmp/x 2>&1 && echo writable_var

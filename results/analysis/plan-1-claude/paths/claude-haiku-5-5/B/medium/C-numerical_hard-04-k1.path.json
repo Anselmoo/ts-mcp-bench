@@ -1,0 +1,950 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-numerical_hard-04-k1.jsonl",
+ "transcript_sha256": "d66b6c322b34db202a15d2c3957c5f162012cd628be096249d91ae6e357870dd",
+ "answer": {
+  "Dq": 3343.0,
+  "B": 739.0,
+  "C": 3252.0,
+  "out_of_scope": false,
+  "reason": "Full d5 crystal-field CI fit with C/B=4.4 to the three lowest doublet bands (assigned 2A1g, 2T1g, 2T2g) gives residuals under 2 cm-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numerical Python packages available",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|sympy|scipy\" ; python3 -c \"import numpy, sympy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d5 CI matrix and get doublet energies",
+   "command": "mkdir -p /w && cat > /w/d5.py <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom functools import lru_cache\nl=2\nms=[-2,-1,0,1,2]\ndef G(a,b,c):\n    return float(gaunt(a[0],b[0],c[0],a[1],b[1],c[1]))\n# spatial-orbital Gaunt tables\ndef Ang(mi,mk,K,q):\n    # int conj(Y_{2mi}) Y_{2mk} conj(Y_{Kq})\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\n# spin-orbital index: (mi_index, s) s=0 up,1 down\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\n# real cubic basis coefficient vectors in complex Y_{2m} basis (index by m)\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef build(Dq,B,C):\n    F4=12.6*C; F2=49*B+7*C\n    F={0:0.0,2:F2,4:F4}\n    # one-electron matrix in complex spatial basis\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+= -4*Dq*np.outer(v,v.conj())\n    for v in eg: h+= 6*Dq*np.outer(v,v.conj())\n    # two-electron integrals in spin-orbital basis <ij|kl> (electron1: i->k, electron2: j->l)\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for k,(mk,sk) in enumerate(orbs):\n      if si!=sk: continue\n      for j,(mj,sj) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if sj!=sl: continue\n        val=0.0\n        for K in (0,2,4):\n          if F[K]==0: continue\n          for q in range(-K,K+1):\n            a=Ang(mi,mk,K,q); \n            if a==0: continue\n            b=Ang(mj,ml,K,-q)\n            if b==0: continue\n            val+= 4*np.pi/(2*K+1)*F[K]*a*b\n        V[i,j,k,ll]=val\n    # Hamiltonian in Fock space of 5 electrons: determinants as sorted tuples\n    dets=[c for c in itertools.combinations(range(N),5)]\n    idx={d:n for n,d in enumerate(dets)}\n    # one-electron spin-orbital matrix\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((len(dets),len(dets)),complex)\n    def apply_ops(state, ops):\n        # ops list of ('c'|'a', idx) applied right to left: ops given in order of application (first applied first)\n        s=list(state); sign=1\n        for typ,p in ops:\n            if typ=='a':\n                if p not in s: return None,0\n                pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n            else:\n                if p in s: return None,0\n                pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n        return tuple(s),sign\n    for n,d in enumerate(dets):\n        # one-body: sum h1[i,k] a+_i a_k\n        for i in range(N):\n            for k in range(N):\n                if h1[i,k]==0: continue\n                s,sg=apply_ops(d,[('a',k),('c',i)])\n                if s is None: continue\n                H[idx[s],n]+=sg*h1[i,k]\n        # two-body: 1/2 sum V[i,j,k,l] a+_i a+_j a_l a_k\n        for i in range(N):\n         for j in range(N):\n          for k in range(N):\n           for ll in range(N):\n            v=V[i,j,k,ll]\n            if v==0: continue\n            s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n            if s is None: continue\n            H[idx[s],n]+=0.5*sg*v\n    # S^2\n    Sz=np.zeros(len(dets))\n    Sp=np.zeros((len(dets),len(dets)))\n    # S+ = sum_m a+_{m up} a_{m down}\n    for n,d in enumerate(dets):\n        for m in ms:\n            iu=orbs.index((m,0)); idn=orbs.index((m,1))\n            s,sg=apply_ops(d,[('a',idn),('c',iu)])\n            if s is not None: Sp[idx[s],n]+=sg\n    Szv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\n    S2=Sp.T@Sp*0  # placeholder\n    Smin=Sp.T\n    S2 = Smin@Sp + np.diag(Szv)+np.diag(Szv)**2*0\n    # S^2 = S- S+ + Sz^2 + Sz ; S- = Sp^T\n    S2 = Sp.T@Sp + np.diag(Szv**2+Szv)\n    return H,S2,dets\ndef doublet_energies(Dq,B,C,nlev=8):\n    H,S2,dets=build(Dq,B,C)\n    w,U=np.linalg.eigh(S2)\n    # doublets: S2 eigenvalue 3/4\n    P=U[:,np.abs(w-0.75)<1e-6]\n    Hd=P.conj().T@H@P\n    e=np.sort(np.linalg.eigvalsh(Hd).real)\n    return e\nif __name__==\"__main__\":\n    import sys\n    e=doublet_energies(1000,500,2200)\n    print(np.round(e-e[0],1))\nEOF\ncd /w && time python3 d5.py",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "5f05a291722d873de2a6433a08ef8bbab0de1ec5942b039ac4fba0f57aa01c98",
+     "lines": 114,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom functools import lru_cache\nl=2\nms=[-2,-1,0,1,2]\ndef G(a,b,c):\n    return float(gaunt(a[0],b[0],c[0],a[1],b[1],c[1]))\n# spatial-orbital Gaunt tables\ndef Ang(mi,mk,K,q):\n    # int conj(Y_{2mi}) Y_{2mk} conj(Y_{Kq})\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\n# spin-orbital index: (mi_index, s) s=0 up,1 down\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\n# real cubic basis coefficient vectors in complex Y_{2m} basis (index by m)\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef build(Dq,B,C):\n    F4=12.6*C; F2=49*B+7*C\n    F={0:0.0,2:F2,4:F4}\n    # one-electron matrix in complex spatial basis\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+= -4*Dq*np.outer(v,v.conj())\n    for v in eg: h+= 6*Dq*np.outer(v,v.conj())\n    # two-electron integrals in spin-orbital basis <ij|kl> (electron1: i->k, electron2: j->l)\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for k,(mk,sk) in enumerate(orbs):\n      if si!=sk: continue\n      for j,(mj,sj) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if sj!=sl: continue\n        val=0.0\n        for K in (0,2,4):\n          if F[K]==0: continue\n          for q in range(-K,K+1):\n            a=Ang(mi,mk,K,q); \n            if a==0: continue\n            b=Ang(mj,ml,K,-q)\n            if b==0: continue\n            val+= 4*np.pi/(2*K+1)*F[K]*a*b\n        V[i,j,k,ll]=val\n    # Hamiltonian in Fock space of 5 electrons: determinants as sorted tuples\n    dets=[c for c in itertools.combinations(range(N),5)]\n    idx={d:n for n,d in enumerate(dets)}\n    # one-electron spin-orbital matrix\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((len(dets),len(dets)),complex)\n    def apply_ops(state, ops):\n        # ops list of ('c'|'a', idx) applied right to left: ops given in order of application (first applied first)\n        s=list(state); sign=1\n        for typ,p in ops:\n            if typ=='a':\n                if p not in s: return None,0\n                pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n            else:\n                if p in s: return None,0\n                pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n        return tuple(s),sign\n    for n,d in enumerate(dets):\n        # one-body: sum h1[i,k] a+_i a_k\n        for i in range(N):\n            for k in range(N):\n                if h1[i,k]==0: continue\n                s,sg=apply_ops(d,[('a',k),('c',i)])\n                if s is None: continue\n                H[idx[s],n]+=sg*h1[i,k]\n        # two-body: 1/2 sum V[i,j,k,l] a+_i a+_j a_l a_k\n        for i in range(N):\n         for j in range(N):\n          for k in range(N):\n           for ll in range(N):\n            v=V[i,j,k,ll]\n            if v==0: continue\n            s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n            if s is None: continue\n            H[idx[s],n]+=0.5*sg*v\n    # S^2\n    Sz=np.zeros(len(dets))\n    Sp=np.zeros((len(dets),len(dets)))\n    # S+ = sum_m a+_{m up} a_{m down}\n    for n,d in enumerate(dets):\n        for m in ms:\n            iu=orbs.index((m,0)); idn=orbs.index((m,1))\n            s,sg=apply_ops(d,[('a',idn),('c',iu)])\n            if s is not None: Sp[idx[s],n]+=sg\n    Szv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\n    S2=Sp.T@Sp*0  # placeholder\n    Smin=Sp.T\n    S2 = Smin@Sp + np.diag(Szv)+np.diag(Szv)**2*0\n    # S^2 = S- S+ + Sz^2 + Sz ; S- = Sp^T\n    S2 = Sp.T@Sp + np.diag(Szv**2+Szv)\n    return H,S2,dets\ndef doublet_energies(Dq,B,C,nlev=8):\n    H,S2,dets=build(Dq,B,C)\n    w,U=np.linalg.eigh(S2)\n    # doublets: S2 eigenvalue 3/4\n    P=U[:,np.abs(w-0.75)<1e-6]\n    Hd=P.conj().T@H@P\n    e=np.sort(np.linalg.eigvalsh(Hd).real)\n    return e\nif __name__==\"__main__\":\n    import sys\n    e=doublet_energies(1000,500,2200)\n    print(np.round(e-e[0],1))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d5.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 233: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d5.py",
+     "line": 32,
+     "method": "matrix",
+     "text": "V=np.zeros((N,N,N,N))"
+    },
+    {
+     "script": "d5.py",
+     "line": 53,
+     "method": "matrix",
+     "text": "h1=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "d5.py",
+     "line": 105,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "d5.py",
+     "line": 109,
+     "method": "eigen_solver",
+     "text": "e=np.sort(np.linalg.eigvalsh(Hd).real)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d5 CI matrix in temp dir and get doublet energies",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > d5.py <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\n# precompute angular tables\ndef build_static():\n    A={}\n    for K in (0,2,4):\n        for q in range(-K,K+1):\n            for mi in ms:\n                for mk in ms:\n                    A[(K,q,mi,mk)]=Ang(mi,mk,K,q)\n    return A\nA=build_static()\n# operator structures independent of Dq,B,C\ndef build_ops():\n    # one-body spin-orbital pair list: (i,k) -> spatial (mi,mk) with spin same\n    # two-body: list of (i,j,k,l, {K: coefficient sum over q of A*A})\n    W={}  # (i,j,k,l) -> dict K-> angular factor\n    for i,(mi,si) in enumerate(orbs):\n     for k,(mk,sk) in enumerate(orbs):\n      if si!=sk: continue\n      for j,(mj,sj) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if sj!=sl: continue\n        d={}\n        for K in (0,2,4):\n            tot=0.0\n            for q in range(-K,K+1):\n                a=A[(K,q,mi,mk)]; b=A[(K,-q,mj,ml)]\n                tot+=a*b\n            d[K]=4*np.pi/(2*K+1)*tot\n        if any(abs(v)>1e-12 for v in d.values()):\n            W[(i,j,k,ll)]=d\n    return W\nW=build_ops()\n# precompute operator connections\nconn2=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is None: continue\n        conn2.append((idx[s],n,sg,i,j,k,ll,dd))\nconn1=[]\nHspatial=None\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            conn1.append((idx[s],n,sg,i,k))\n# S+ \nSp=np.zeros((len(dets),len(dets)))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\ndef H_of(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+=-4*Dq*np.outer(v,v.conj())\n    for v in eg: h+=6*Dq*np.outer(v,v.conj())\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((len(dets),)*2,complex)\n    for (a,n,sg,i,k) in conn1: H[a,n]+=sg*h1[i,k]\n    for (a,n,sg,i,j,k,ll,dd) in conn2:\n        v=sum(F[K]*dd[K] for K in (2,4))\n        H[a,n]+=0.5*sg*v\n    return H\ndef doublets(Dq,B,C):\n    H=H_of(Dq,B,C)\n    w,U=np.linalg.eigh(S2)\n    P=U[:,np.abs(w-0.75)<1e-6]\n    Hd=P.conj().T@H@P\n    return np.sort(np.linalg.eigvalsh(Hd).real)\nif __name__==\"__main__\":\n    H=H_of(0,0,0); print(\"trace check\", np.round(np.linalg.eigvalsh(H)[:5],3))\n    e=doublets(1000,500,2200)\n    print(\"doublets rel to ground:\", np.round(e-e[0],1))\nEOF\ntime python3 d5.py",
+   "scripts": [
+    {
+     "name": "d5.py",
+     "sha256": "555db20e500764563b548316c1c7df0098667c998822c9cff3bfca5bbdcb1c18",
+     "lines": 109,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\n# precompute angular tables\ndef build_static():\n    A={}\n    for K in (0,2,4):\n        for q in range(-K,K+1):\n            for mi in ms:\n                for mk in ms:\n                    A[(K,q,mi,mk)]=Ang(mi,mk,K,q)\n    return A\nA=build_static()\n# operator structures independent of Dq,B,C\ndef build_ops():\n    # one-body spin-orbital pair list: (i,k) -> spatial (mi,mk) with spin same\n    # two-body: list of (i,j,k,l, {K: coefficient sum over q of A*A})\n    W={}  # (i,j,k,l) -> dict K-> angular factor\n    for i,(mi,si) in enumerate(orbs):\n     for k,(mk,sk) in enumerate(orbs):\n      if si!=sk: continue\n      for j,(mj,sj) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if sj!=sl: continue\n        d={}\n        for K in (0,2,4):\n            tot=0.0\n            for q in range(-K,K+1):\n                a=A[(K,q,mi,mk)]; b=A[(K,-q,mj,ml)]\n                tot+=a*b\n            d[K]=4*np.pi/(2*K+1)*tot\n        if any(abs(v)>1e-12 for v in d.values()):\n            W[(i,j,k,ll)]=d\n    return W\nW=build_ops()\n# precompute operator connections\nconn2=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is None: continue\n        conn2.append((idx[s],n,sg,i,j,k,ll,dd))\nconn1=[]\nHspatial=None\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            conn1.append((idx[s],n,sg,i,k))\n# S+ \nSp=np.zeros((len(dets),len(dets)))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\ndef H_of(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+=-4*Dq*np.outer(v,v.conj())\n    for v in eg: h+=6*Dq*np.outer(v,v.conj())\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((len(dets),)*2,complex)\n    for (a,n,sg,i,k) in conn1: H[a,n]+=sg*h1[i,k]\n    for (a,n,sg,i,j,k,ll,dd) in conn2:\n        v=sum(F[K]*dd[K] for K in (2,4))\n        H[a,n]+=0.5*sg*v\n    return H\ndef doublets(Dq,B,C):\n    H=H_of(Dq,B,C)\n    w,U=np.linalg.eigh(S2)\n    P=U[:,np.abs(w-0.75)<1e-6]\n    Hd=P.conj().T@H@P\n    return np.sort(np.linalg.eigvalsh(Hd).real)\nif __name__==\"__main__\":\n    H=H_of(0,0,0); print(\"trace check\", np.round(np.linalg.eigvalsh(H)[:5],3))\n    e=doublets(1000,500,2200)\n    print(\"doublets rel to ground:\", np.round(e-e[0],1))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d5.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\npython3: can't open file '/tmp/tsbench-run-llrka3xb/d5.py': [Errno 2] No such file or directory\n\nreal\t0m0,020s\nuser\t0m0,019s\nsys\t0m0,000s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d5.py",
+     "line": 87,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d5.py",
+     "line": 90,
+     "method": "matrix",
+     "text": "h1=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "d5.py",
+     "line": 98,
+     "method": "matrix",
+     "text": "H[a,n]+=0.5*sg*v"
+    },
+    {
+     "script": "d5.py",
+     "line": 102,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "d5.py",
+     "line": 105,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh(Hd).real)"
+    },
+    {
+     "script": "d5.py",
+     "line": 107,
+     "method": "eigen_solver",
+     "text": "H=H_of(0,0,0); print(\"trace check\", np.round(np.linalg.eigvalsh(H)[:5],3))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Run d5 CI calculation inline",
+   "command": "cd ~ 2>/dev/null; pwd; python3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nA={}\nfor K in (0,2,4):\n    for q in range(-K,K+1):\n        for mi in ms:\n            for mk in ms:\n                A[(K,q,mi,mk)]=Ang(mi,mk,K,q)\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={}\n    for K in (0,2,4):\n        tot=sum(A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1))\n        d[K]=4*np.pi/(2*K+1)*tot\n    if any(abs(v)>1e-12 for v in d.values()):\n        W[(i,j,k,ll)]=d\nconn2=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is None: continue\n        conn2.append((idx[s],n,sg,dd))\nconn1=[]\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            conn1.append((idx[s],n,sg,i,k))\nSp=np.zeros((len(dets),len(dets)))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\ndef H_of(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+=-4*Dq*np.outer(v,v.conj())\n    for v in eg: h+=6*Dq*np.outer(v,v.conj())\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((len(dets),)*2,complex)\n    for (a,n,sg,i,k) in conn1: H[a,n]+=sg*h1[i,k]\n    for (a,n,sg,dd) in conn2:\n        H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))\n    return H\ndef doublets(Dq,B,C):\n    H=H_of(Dq,B,C)\n    w,U=np.linalg.eigh(S2)\n    P=U[:,np.abs(w-0.75)<1e-6]\n    Hd=P.conj().T@H@P\n    return np.sort(np.linalg.eigvalsh(Hd).real)\n# sanity: Hermitian, and free-ion term energies check with Dq=0\nH=H_of(0,1,4.4)\nprint(\"herm\", np.allclose(H,H.conj().T))\nprint(\"S2 eig\", np.unique(np.round(np.linalg.eigvalsh(S2),3)))\ne=doublets(0,1,4.4); print(\"doublets Dq=0 (B units):\", np.round(e,3))\ne=doublets(1000,500,2200); print(\"doublets rel:\", np.round(e-e[0],1))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "71013bfb44a17bc94b8723431c657445c8658200d8cf22cf6dd7ce12f407a504",
+     "lines": 94,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nA={}\nfor K in (0,2,4):\n    for q in range(-K,K+1):\n        for mi in ms:\n            for mk in ms:\n                A[(K,q,mi,mk)]=Ang(mi,mk,K,q)\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={}\n    for K in (0,2,4):\n        tot=sum(A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1))\n        d[K]=4*np.pi/(2*K+1)*tot\n    if any(abs(v)>1e-12 for v in d.values()):\n        W[(i,j,k,ll)]=d\nconn2=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is None: continue\n        conn2.append((idx[s],n,sg,dd))\nconn1=[]\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            conn1.append((idx[s],n,sg,i,k))\nSp=np.zeros((len(dets),len(dets)))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\ndef H_of(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+=-4*Dq*np.outer(v,v.conj())\n    for v in eg: h+=6*Dq*np.outer(v,v.conj())\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((len(dets),)*2,complex)\n    for (a,n,sg,i,k) in conn1: H[a,n]+=sg*h1[i,k]\n    for (a,n,sg,dd) in conn2:\n        H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))\n    return H\ndef doublets(Dq,B,C):\n    H=H_of(Dq,B,C)\n    w,U=np.linalg.eigh(S2)\n    P=U[:,np.abs(w-0.75)<1e-6]\n    Hd=P.conj().T@H@P\n    return np.sort(np.linalg.eigvalsh(Hd).real)\n# sanity: Hermitian, and free-ion term energies check with Dq=0\nH=H_of(0,1,4.4)\nprint(\"herm\", np.allclose(H,H.conj().T))\nprint(\"S2 eig\", np.unique(np.round(np.linalg.eigvalsh(S2),3)))\ne=doublets(0,1,4.4); print(\"doublets Dq=0 (B units):\", np.round(e,3))\ne=doublets(1000,500,2200); print(\"doublets rel:\", np.round(e-e[0],1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\nherm True\nS2 eig [0.75 3.75 8.75]\ndoublets Dq=0 (B units): [-7.4606e+01 -7.4606e+01 -4.9284e+01 -4.9284e+01 -4.9284e+01 -4.9284e+01\n -4.4423e+01 -4.4423e+01 -4.4423e+01 -4.4423e+01 -4.3670e+01 -4.3670e+01\n -4.3670e+01 -4.3670e+01 -3.2945e+01 -3.2945e+01 -3.0578e+01 -3.0578e+01\n -3.0578e+01 -3.0578e+01 -3.0117e+01 -3.0117e+01 -3.0117e+01 -3.0117e+01\n -2.7355e+01 -2.7355e+01 -2.7355e+01 -2.7355e+01 -2.3901e+01 -2.3901e+01\n -2.3901e+01 -2.3901e+01 -2.1855e+01 -2.1855e+01 -2.1468e+01 -2.1468e+01\n -2.1468e+01 -2.1468e+01 -1.9253e+01 -1.9253e+01 -1.9253e+01 -1.9253e+01\n -1.7005e+01 -1.7005e+01 -1.7005e+01 -1.7005e+01 -1.6922e+01 -1.6922e+01\n -1.6922e+01 -1.6922e+01 -1.6250e+01 -1.6250e+01 -1.4841e+01 -1.4841e+01\n -1.4841e+01 -1.4841e+01 -1.3053e+01 -1.3053e+01 -1.3053e+01 -1.3053e+01\n -1.0856e+01 -1.0856e+01 -1.0856e+01 -1.0856e+01 -6.5400e+00 -6.5400e+00\n -6.5400e+00 -6.5400e+00 -3.7330e+00 -3.7330e+00 -3.7330e+00 -3.7330e+00\n -3.1020e+00 -3.1020e+00 -3.1020e+00 -3.1020e+00 -3.0190e+00 -3.0190e+00\n -2.4940e+00 -2.4940e+00 -1.5700e+00 -1.5700e+00 -1.5700e+00 -1.5700e+00\n -5.8000e-02 -5.8000e-02  1.7410e+00  1.7410e+00  1.7410e+00  1.7410e+00\n  2.0000e+00  2.0000e+00  2.0000e+00  2.0000e+00  3.4450e+00  3.4450e+00\n  3.4450e+00  3.4450e+00  3.9360e+00  3.9360e+00  3.9360e+00  3.9360e+00\n  4.2610e+00  4.2610e+00  4.2610e+00  4.2610e+00  5.7920e+00  5.7920e+00\n  6.8410e+00  6.8410e+00  6.8410e+00  6.8410e+00  8.0810e+00  8.0810e+00\n  8.0810e+00  8.0810e+00  8.3600e+00  8.3600e+00  8.3600e+00  8.3600e+00\n  1.6770e+01  1.6770e+01  1.6770e+01  1.6770e+01  1.7248e+01  1.7248e+01\n  1.8826e+01  1.8826e+01  1.8826e+01  1.8826e+01  2.6100e+01  2.6100e+01\n  2.6100e+01  2.6100e+01  2.6304e+01  2.6304e+01  2.6304e+01  2.6304e+01\n  3.1358e+01  3.1358e+01  3.3830e+01  3.3830e+01  4.1344e+01  4.1344e+01\n  4.1344e+01  4.1344e+01  4.3661e+01  4.3661e+01  4.3661e+01  4.3661e+01]\ndoublets rel: [    0.      0.  10188.  10188.  10935.7 10935.7 10935.7 10935.7 14224.1\n 14224.1 14601.3 14601.3 14601.3 14601.3 18228.7 18228.7 19315.6 19315.6\n 19315.6 19315.6 20189.9 20189.9 20593.2 20593.2 21071.1 21071.1 21071.1\n 21071.1 22236.7 22236.7 22258.9 22258.9 25789.2 25789.2 25789.2 25789.2\n 26507.2 26507.2 26688.3 26688.3 26688.3 26688.3 26860.5 26860.5 28247.2\n 28247.2 28247.2 28247.2 28620.  28620.  29162.3 29162.3 29961.7 29961.7\n 29961.7 29961.7 31081.2 31081.2 31081.2 31081.2 31871.3 31871.3 32202.5\n 32202.5 32555.2 32555.2 32574.2 32574.2 32574.2 32574.2 33555.8 33555.8\n 34343.7 34343.7 34693.6 34693.6 34983.4 34983.4 34983.4 34983.4 35495.1\n 35495.1 35543.2 35543.2 37748.8 37748.8 37809.7 37809.7 38220.  38220.\n 38248.1 38248.1 38248.1 38248.1 38407.6 38407.6 39925.4 39925.4 39925.4\n 39925.4 40542.9 40542.9 41040.5 41040.5 41125.5 41125.5 43071.9 43071.9\n 43127.9 43127.9 43127.9 43127.9 43659.6 43659.6 45565.3 45565.3 46521.8\n 46521.8 46521.8 46521.8 47237.6 47237.6 47237.6 47237.6 47323.5 47323.5\n 48157.4 48157.4 48858.3 48858.3 51022.2 51022.2 51022.2 51022.2 51435.2\n 51435.2 51485.1 51485.1 54643.4 54643.4 59504.6 59504.6 59627.5 59627.5\n 60171.3 60171.3 60171.3 60171.3 62367.2 62367.2]\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 71,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 74,
+     "method": "matrix",
+     "text": "h1=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 81,
+     "method": "matrix",
+     "text": "H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 85,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 88,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh(Hd).real)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 92,
+     "method": "eigen_solver",
+     "text": "print(\"S2 eig\", np.unique(np.round(np.linalg.eigvalsh(S2),3)))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Sanity check Gaunt-based angular factors",
+   "command": "cd /tmp && cat > chk.py <<'EOF'\nexec(open('/dev/stdin').read()) if False else None\nEOF\npython3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\n# quick check of Gaunt-based angular factors: <Y20 Y20|1/r12|Y20 Y20> reduction\nms=[-2,-1,0,1,2]\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\n# Check: for K=0, angular a = int |Y_mi|^2 * Y00^*... should equal 1/sqrt(4pi) * delta\nprint([round(Ang(m,m,0,0),5) for m in ms], 1/np.sqrt(4*np.pi))\n# Check F0 Slater: F0 = sum over K=0 coefficient for d-orbital pair (0,0),(0,0): should be 4pi*(1/(4pi))^2 ... = 1/(4pi) *4pi =1\nprint(4*np.pi*Ang(0,0,0,0)**2)\nEOF",
+   "scripts": [
+    {
+     "name": "chk.py",
+     "sha256": "1c0fdaefc1360fbdededd17d46b37142de6437c7eba26a81f8cf216c6b957419",
+     "lines": 1,
+     "code": "exec(open('/dev/stdin').read()) if False else None\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "5c9b603c9a1f5f1c023720d40791bee7bb26529383588fcb9a23532a7f1162f2",
+     "lines": 11,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\n# quick check of Gaunt-based angular factors: <Y20 Y20|1/r12|Y20 Y20> reduction\nms=[-2,-1,0,1,2]\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\n# Check: for K=0, angular a = int |Y_mi|^2 * Y00^*... should equal 1/sqrt(4pi) * delta\nprint([round(Ang(m,m,0,0),5) for m in ms], 1/np.sqrt(4*np.pi))\n# Check F0 Slater: F0 = sum over K=0 coefficient for d-orbital pair (0,0),(0,0): should be 4pi*(1/(4pi))^2 ... = 1/(4pi) *4pi =1\nprint(4*np.pi*Ang(0,0,0,0)**2)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 16: chk.py: Read-only file system\n[0.28209, 0.28209, 0.28209, 0.28209, 0.28209] 0.28209479177387814\n0.9999999999999999\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Check multiplet energies by spin for Slater K components",
+   "command": "cd /tmp && python3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\n# Build pure 2e Hamiltonian per K separately\ndef Hk(K):\n    H=np.zeros((252,252))\n    for n,d in enumerate(dets):\n        for (i,j,k,ll),dd in W.items():\n            if abs(dd[K])<1e-14: continue\n            s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n            if s is None: continue\n            H[idx[s],n]+=0.5*sg*dd[K]\n    return H\nSp=np.zeros((252,252))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\nw,U=np.linalg.eigh(S2)\nH0=Hk(0)\nfor K in (0,2,4):\n    H=Hk(K)\n    print(\"K\",K)\n    for S in (2.5,1.5,0.5):\n        P=U[:,np.abs(w-(S*(S+1)))<1e-6]\n        ev=np.linalg.eigvalsh(P.T@H@P)\n        print(\" S\",S, np.round(np.unique(np.round(ev,4)),3))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "f2ff56d09a979e964b96dc3e414224450bb87c51e1dd030ae79157f8e305ea3b",
+     "lines": 57,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\n# Build pure 2e Hamiltonian per K separately\ndef Hk(K):\n    H=np.zeros((252,252))\n    for n,d in enumerate(dets):\n        for (i,j,k,ll),dd in W.items():\n            if abs(dd[K])<1e-14: continue\n            s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n            if s is None: continue\n            H[idx[s],n]+=0.5*sg*dd[K]\n    return H\nSp=np.zeros((252,252))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\nw,U=np.linalg.eigh(S2)\nH0=Hk(0)\nfor K in (0,2,4):\n    H=Hk(K)\n    print(\"K\",K)\n    for S in (2.5,1.5,0.5):\n        P=U[:,np.abs(w-(S*(S+1)))<1e-6]\n        ev=np.linalg.eigvalsh(P.T@H@P)\n        print(\" S\",S, np.round(np.unique(np.round(ev,4)),3))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "K 0\n S 2.5 [10.]\n S 1.5 [10.]\n S 0.5 [10.]\nK 2\n S 2.5 [-0.143]\n S 1.5 [-0.39  -0.264 -0.254 -0.206 -0.195 -0.184 -0.117 -0.058 -0.024  0.03\n  0.042  0.043  0.112  0.179]\n S 0.5 [-0.732 -0.586 -0.54  -0.464 -0.372 -0.346 -0.313 -0.278 -0.275 -0.266\n -0.232 -0.222 -0.218 -0.186 -0.164 -0.155 -0.129 -0.125 -0.089 -0.076\n -0.073 -0.042 -0.017  0.005  0.006  0.012  0.022  0.037  0.041  0.072\n  0.076  0.109  0.118  0.132  0.206  0.219  0.227  0.309  0.362  0.436\n  0.472  0.514  0.546]\nK 4\n S 2.5 [-0.079]\n S 1.5 [-0.348 -0.166 -0.159 -0.103 -0.094 -0.089 -0.075 -0.074 -0.023  0.023\n  0.025  0.035  0.135  0.2  ]\n S 0.5 [-0.59  -0.404 -0.342 -0.338 -0.291 -0.274 -0.242 -0.206 -0.199 -0.195\n -0.162 -0.157 -0.145 -0.09  -0.088 -0.082 -0.074 -0.066 -0.027 -0.026\n -0.023 -0.022  0.     0.002  0.003  0.009  0.029  0.044  0.045  0.047\n  0.06   0.098  0.099  0.107  0.117  0.18   0.181  0.214  0.238  0.24\n  0.332  0.359  0.36 ]\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "H=np.zeros((252,252))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 41,
+     "method": "matrix",
+     "text": "Sp=np.zeros((252,252))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 49,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 56,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(P.T@H@P)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Check orthonormality of cubic orbital vectors",
+   "command": "cd /tmp && python3 - <<'EOF'\nimport numpy as np\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\nr2=np.sqrt(2)\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\nM=np.array(t2g+eg)\nprint(np.round(M.conj()@M.T,6))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "a6629f187b4da36c6fd5c31591be0487cf4e17d0b159072206ed0296e0a56d80",
+     "lines": 12,
+     "code": "import numpy as np\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\nr2=np.sqrt(2)\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\nM=np.array(t2g+eg)\nprint(np.round(M.conj()@M.T,6))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[[1.+0.j 0.+0.j 0.+0.j 0.+0.j 0.-0.j]\n [0.+0.j 1.+0.j 0.-0.j 0.+0.j 0.+0.j]\n [0.+0.j 0.+0.j 1.+0.j 0.+0.j 0.+0.j]\n [0.+0.j 0.+0.j 0.+0.j 1.+0.j 0.+0.j]\n [0.+0.j 0.+0.j 0.+0.j 0.+0.j 1.+0.j]]\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Check one-electron ligand-field spectrum alone",
+   "command": "cd /tmp && python3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nDq=1.0\nh=np.zeros((5,5),complex)\nfor v in t2g: h+=-4*Dq*np.outer(v,v.conj())\nfor v in eg: h+=6*Dq*np.outer(v,v.conj())\nprint(np.round(h,3))\nh1=np.zeros((N,N),complex)\nfor i,(mi,si) in enumerate(orbs):\n    for k,(mk,sk) in enumerate(orbs):\n        if si==sk: h1[i,k]=h[mi+2,mk+2]\nH=np.zeros((252,252),complex)\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if h1[i,k]==0: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            H[idx[s],n]+=sg*h1[i,k]\nprint(np.round(np.linalg.eigvalsh(H)[:8],4))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "a42fcbd34b7de82f9d0b5f2f72d0bb08f501a052b5f57291f60f381c5df033db",
+     "lines": 42,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nDq=1.0\nh=np.zeros((5,5),complex)\nfor v in t2g: h+=-4*Dq*np.outer(v,v.conj())\nfor v in eg: h+=6*Dq*np.outer(v,v.conj())\nprint(np.round(h,3))\nh1=np.zeros((N,N),complex)\nfor i,(mi,si) in enumerate(orbs):\n    for k,(mk,sk) in enumerate(orbs):\n        if si==sk: h1[i,k]=h[mi+2,mk+2]\nH=np.zeros((252,252),complex)\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if h1[i,k]==0: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            H[idx[s],n]+=sg*h1[i,k]\nprint(np.round(np.linalg.eigvalsh(H)[:8],4))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[[ 1.+0.j  0.+0.j  0.+0.j  0.+0.j  5.+0.j]\n [ 0.+0.j -4.+0.j  0.+0.j  0.+0.j  0.+0.j]\n [ 0.+0.j  0.+0.j  6.+0.j  0.+0.j  0.+0.j]\n [ 0.+0.j  0.+0.j  0.+0.j -4.+0.j  0.+0.j]\n [ 5.+0.j  0.+0.j  0.+0.j  0.+0.j  1.+0.j]]\n[-20. -20. -20. -20. -20. -20. -10. -10.]\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "h1=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "H=np.zeros((252,252),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 42,
+     "method": "eigen_solver",
+     "text": "print(np.round(np.linalg.eigvalsh(H)[:8],4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Diagnose doublet spectrum and S^2 multiplicities",
+   "command": "cd /tmp && cat > /tmp/run_d5.py <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nconn2=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is None: continue\n        conn2.append((idx[s],n,sg,dd))\nconn1=[]\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            conn1.append((idx[s],n,sg,i,k))\nSp=np.zeros((252,252))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\ndef H_of(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+=-4*Dq*np.outer(v,v.conj())\n    for v in eg: h+=6*Dq*np.outer(v,v.conj())\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((252,252),complex)\n    for (a,n,sg,i,k) in conn1: H[a,n]+=sg*h1[i,k]\n    for (a,n,sg,dd) in conn2:\n        H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))\n    return H\nEOF\npython3 - <<'EOF'\nexec(open('/tmp/run_d5.py').read())\nH=H_of(1000,500,2200)\nprint(\"herm\",np.allclose(H,H.conj().T))\nw,U=np.linalg.eigh(S2)\nprint(\"S2 eigen counts\", [ (round(x,2),int(np.sum(np.abs(w-x)<1e-6))) for x in np.unique(np.round(w,4))])\nP=U[:,np.abs(w-0.75)<1e-6]\nev=np.linalg.eigvalsh(P.conj().T@H@P)\nprint(np.round(ev[:12],2))\nprint(\"full H lowest\", np.round(np.linalg.eigvalsh(H)[:10],2))\nEOF",
+   "scripts": [
+    {
+     "name": "run_d5.py",
+     "sha256": "47369dc589a9d5428099abadd192cb1a804ba1a575c6b52349ad0998d3fa34a9",
+     "lines": 73,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nconn2=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is None: continue\n        conn2.append((idx[s],n,sg,dd))\nconn1=[]\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            conn1.append((idx[s],n,sg,i,k))\nSp=np.zeros((252,252))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\ndef H_of(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+=-4*Dq*np.outer(v,v.conj())\n    for v in eg: h+=6*Dq*np.outer(v,v.conj())\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((252,252),complex)\n    for (a,n,sg,i,k) in conn1: H[a,n]+=sg*h1[i,k]\n    for (a,n,sg,dd) in conn2:\n        H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))\n    return H\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "95739d0c2c02d3d0f6a50572b9ba6ea5f32e3f495038a49064e1b9cf9e3e1533",
+     "lines": 9,
+     "code": "exec(open('/tmp/run_d5.py').read())\nH=H_of(1000,500,2200)\nprint(\"herm\",np.allclose(H,H.conj().T))\nw,U=np.linalg.eigh(S2)\nprint(\"S2 eigen counts\", [ (round(x,2),int(np.sum(np.abs(w-x)<1e-6))) for x in np.unique(np.round(w,4))])\nP=U[:,np.abs(w-0.75)<1e-6]\nev=np.linalg.eigvalsh(P.conj().T@H@P)\nprint(np.round(ev[:12],2))\nprint(\"full H lowest\", np.round(np.linalg.eigvalsh(H)[:10],2))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 86: /tmp/run_d5.py: Read-only file system\nTraceback (most recent call last):\n  File \"<stdin>\", line 1, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: '/tmp/run_d5.py'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "run_d5.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "Sp=np.zeros((252,252))"
+    },
+    {
+     "script": "run_d5.py",
+     "line": 62,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "run_d5.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "h1=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "run_d5.py",
+     "line": 69,
+     "method": "matrix",
+     "text": "H=np.zeros((252,252),complex)"
+    },
+    {
+     "script": "run_d5.py",
+     "line": 72,
+     "method": "matrix",
+     "text": "H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 4,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 7,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(P.conj().T@H@P)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 9,
+     "method": "eigen_solver",
+     "text": "print(\"full H lowest\", np.round(np.linalg.eigvalsh(H)[:10],2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Diagnose doublet spectrum and S^2 multiplicities",
+   "command": "cd ~ && python3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nconn2=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is None: continue\n        conn2.append((idx[s],n,sg,dd))\nconn1=[]\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            conn1.append((idx[s],n,sg,i,k))\nSp=np.zeros((252,252))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\ndef H_of(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+=-4*Dq*np.outer(v,v.conj())\n    for v in eg: h+=6*Dq*np.outer(v,v.conj())\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((252,252),complex)\n    for (a,n,sg,i,k) in conn1: H[a,n]+=sg*h1[i,k]\n    for (a,n,sg,dd) in conn2:\n        H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))\n    return H\nH=H_of(1000,500,2200)\nprint(\"herm\",np.allclose(H,H.conj().T))\nw,U=np.linalg.eigh(S2)\nprint(\"S2 eigen counts\", [ (round(x,2),int(np.sum(np.abs(w-x)<1e-6))) for x in np.unique(np.round(w,4))])\nP=U[:,np.abs(w-0.75)<1e-6]\nev=np.linalg.eigvalsh(P.conj().T@H@P)\nprint(np.round(ev[:12],2))\nprint(\"full H lowest\", np.round(np.linalg.eigvalsh(H)[:10],2))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "0eec51de1ce190ed1a89369ceae9f4db1718d18ac5206e1e5e52c361fb5b0118",
+     "lines": 81,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nconn2=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is None: continue\n        conn2.append((idx[s],n,sg,dd))\nconn1=[]\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            conn1.append((idx[s],n,sg,i,k))\nSp=np.zeros((252,252))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\ndef H_of(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+=-4*Dq*np.outer(v,v.conj())\n    for v in eg: h+=6*Dq*np.outer(v,v.conj())\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((252,252),complex)\n    for (a,n,sg,i,k) in conn1: H[a,n]+=sg*h1[i,k]\n    for (a,n,sg,dd) in conn2:\n        H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))\n    return H\nH=H_of(1000,500,2200)\nprint(\"herm\",np.allclose(H,H.conj().T))\nw,U=np.linalg.eigh(S2)\nprint(\"S2 eigen counts\", [ (round(x,2),int(np.sum(np.abs(w-x)<1e-6))) for x in np.unique(np.round(w,4))])\nP=U[:,np.abs(w-0.75)<1e-6]\nev=np.linalg.eigvalsh(P.conj().T@H@P)\nprint(np.round(ev[:12],2))\nprint(\"full H lowest\", np.round(np.linalg.eigvalsh(H)[:10],2))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "herm True\nS2 eigen counts [(np.float64(0.75), 150), (np.float64(3.75), 96), (np.float64(8.75), 6)]\n[-37339.07 -37339.07 -27151.05 -27151.05 -26403.37 -26403.37 -26403.37\n -26403.37 -23114.93 -23114.93 -22737.72 -22737.72]\nfull H lowest [-37339.07 -37339.07 -27151.05 -27151.05 -26403.37 -26403.37 -26403.37\n -26403.37 -24828.05 -24828.05]\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "Sp=np.zeros((252,252))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 62,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "h1=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 69,
+     "method": "matrix",
+     "text": "H=np.zeros((252,252),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "matrix",
+     "text": "H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 76,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 79,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(P.conj().T@H@P)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 81,
+     "method": "eigen_solver",
+     "text": "print(\"full H lowest\", np.round(np.linalg.eigvalsh(H)[:10],2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "Inspect angular Gaunt factors for k=2",
+   "command": "cd ~ && python3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\n# check Ang for K=2 symmetry: sum over q of A(mi,mk)*A(mj,ml) etc\nfor mi,mk in [(1,1),(2,-2),(0,0),(1,-1)]:\n    print(mi,mk,[round(Ang(mi,mk,2,q),4) for q in range(-2,3)])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "95c6592fdef9f8a61365d013ebe7483599477f2cffb3efaf01b6d98ad32f2c41",
+     "lines": 11,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\n# check Ang for K=2 symmetry: sum over q of A(mi,mk)*A(mj,ml) etc\nfor mi,mk in [(1,1),(2,-2),(0,0),(1,-1)]:\n    print(mi,mk,[round(Ang(mi,mk,2,q),4) for q in range(-2,3)])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1 1 [0.0, 0.0, 0.0901, 0.0, 0.0]\n2 -2 [0.0, 0.0, 0.0, 0.0, 0.0]\n0 0 [0.0, 0.0, 0.1802, 0.0, 0.0]\n1 -1 [-0.2207, 0.0, 0.0, 0.0, 0.0]\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 11,
+   "tool": "Bash",
+   "description": "Fix electron-2 phase factor and verify free-ion and strong-field spectra",
+   "command": "cd ~ && python3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nconn2=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is None: continue\n        conn2.append((idx[s],n,sg,dd))\nconn1=[]\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            conn1.append((idx[s],n,sg,i,k))\nSp=np.zeros((252,252))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\ndef H_of(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+=-4*Dq*np.outer(v,v.conj())\n    for v in eg: h+=6*Dq*np.outer(v,v.conj())\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((252,252),complex)\n    for (a,n,sg,i,k) in conn1: H[a,n]+=sg*h1[i,k]\n    for (a,n,sg,dd) in conn2:\n        H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))\n    return H\n# free ion check (Dq=0): term energies relative to sextet, in units of B with C=4.4B\nH0=H_of(0,1,4.4)\nw,U=np.linalg.eigh(S2)\nfor S,lab in [(2.5,'sext'),(1.5,'quart'),(0.5,'doub')]:\n    P=U[:,np.abs(w-S*(S+1))<1e-6]\n    ev=np.linalg.eigvalsh(P.conj().T@H0@P)\n    print(lab, np.round(np.unique(np.round(ev,3)),2))\n# t2g^5 check: Dq strong, B small\nH=H_of(1000,1,4.4)\nP=U[:,np.abs(w-0.75)<1e-6]\nev=np.linalg.eigvalsh(P.conj().T@H@P)\nprint(\"Dq=1000,B=1 doublets lowest\", np.round(ev[:10],3))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "94a54f34066a61e0f853a6f67f5b94a348d2c0fb2abdafd3f4154464143d1333",
+     "lines": 85,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5))\nidx={d:n for n,d in enumerate(dets)}\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nconn2=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is None: continue\n        conn2.append((idx[s],n,sg,dd))\nconn1=[]\nfor n,d in enumerate(dets):\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            conn1.append((idx[s],n,sg,i,k))\nSp=np.zeros((252,252))\nfor n,d in enumerate(dets):\n    for m in ms:\n        iu=orbs.index((m,0)); idn=orbs.index((m,1))\n        s,sg=apply_ops(d,[('a',idn),('c',iu)])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\ndef H_of(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    h=np.zeros((5,5),complex)\n    for v in t2g: h+=-4*Dq*np.outer(v,v.conj())\n    for v in eg: h+=6*Dq*np.outer(v,v.conj())\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((252,252),complex)\n    for (a,n,sg,i,k) in conn1: H[a,n]+=sg*h1[i,k]\n    for (a,n,sg,dd) in conn2:\n        H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))\n    return H\n# free ion check (Dq=0): term energies relative to sextet, in units of B with C=4.4B\nH0=H_of(0,1,4.4)\nw,U=np.linalg.eigh(S2)\nfor S,lab in [(2.5,'sext'),(1.5,'quart'),(0.5,'doub')]:\n    P=U[:,np.abs(w-S*(S+1))<1e-6]\n    ev=np.linalg.eigvalsh(P.conj().T@H0@P)\n    print(lab, np.round(np.unique(np.round(ev,3)),2))\n# t2g^5 check: Dq strong, B small\nH=H_of(1000,1,4.4)\nP=U[:,np.abs(w-0.75)<1e-6]\nev=np.linalg.eigvalsh(P.conj().T@H@P)\nprint(\"Dq=1000,B=1 doublets lowest\", np.round(ev[:10],3))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "sext [-96.6]\nquart [-64.6 -58.8 -57.6 -43.8]\ndoub [-50.4  -43.88 -42.6  -39.6  -39.4  -35.4  -29.4  -21.6  -14.6    2.4\n  11.48]\nDq=1000,B=1 doublets lowest [-20037.615 -20037.615 -20037.615 -20037.615 -20037.615 -20037.615\n -10045.002 -10045.002 -10044.618 -10044.618]\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "Sp=np.zeros((252,252))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 62,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "h1=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 69,
+     "method": "matrix",
+     "text": "H=np.zeros((252,252),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "matrix",
+     "text": "H[a,n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 76,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 79,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(P.conj().T@H0@P)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 84,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(P.conj().T@H@P)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 12,
+   "tool": "Bash",
+   "description": "Validate Slater-Condon machinery on d2 free-ion terms",
+   "command": "cd ~ && python3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\ndef run(nel,B,C):\n    dets=list(itertools.combinations(range(N),nel)); idx={d:n for n,d in enumerate(dets)}\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    H=np.zeros((len(dets),)*2)\n    for n,d in enumerate(dets):\n        for (i,j,k,ll),dd in W.items():\n            s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n            if s is None: continue\n            H[idx[s],n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))\n    Sp=np.zeros((len(dets),)*2)\n    for n,d in enumerate(dets):\n        for m in ms:\n            s,sg=apply_ops(d,[('a',orbs.index((m,1))),('c',orbs.index((m,0)))])\n            if s is not None: Sp[idx[s],n]+=sg\n    Szv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\n    S2=Sp.T@Sp+np.diag(Szv**2+Szv)\n    w,U=np.linalg.eigh(S2)\n    out={}\n    for S in sorted(set(np.round(w,6))):\n        P=U[:,np.abs(w-S)<1e-6]\n        ev=np.linalg.eigvalsh(P.conj().T@H@P)\n        out[S]=np.round(np.unique(np.round(ev,4)),3)\n    return out\n# d2: test 3F(triplet S=1), 3P, 1D (singlet S=0), with B=1, C=4 (C/B arbitrary)\nfor C in (0,4):\n    o=run(2,1.0,C)\n    print(\"C=\",C,{k:v for k,v in o.items()})\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "3fffd4624b01c2b237677c059e3f3a445b63fd1c511b2db305da9105e1e2b596",
+     "lines": 55,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\ndef run(nel,B,C):\n    dets=list(itertools.combinations(range(N),nel)); idx={d:n for n,d in enumerate(dets)}\n    F={0:0.0,2:49*B+7*C,4:12.6*C}\n    H=np.zeros((len(dets),)*2)\n    for n,d in enumerate(dets):\n        for (i,j,k,ll),dd in W.items():\n            s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n            if s is None: continue\n            H[idx[s],n]+=0.5*sg*sum(F[K]*dd[K] for K in (2,4))\n    Sp=np.zeros((len(dets),)*2)\n    for n,d in enumerate(dets):\n        for m in ms:\n            s,sg=apply_ops(d,[('a',orbs.index((m,1))),('c',orbs.index((m,0)))])\n            if s is not None: Sp[idx[s],n]+=sg\n    Szv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\n    S2=Sp.T@Sp+np.diag(Szv**2+Szv)\n    w,U=np.linalg.eigh(S2)\n    out={}\n    for S in sorted(set(np.round(w,6))):\n        P=U[:,np.abs(w-S)<1e-6]\n        ev=np.linalg.eigvalsh(P.conj().T@H@P)\n        out[S]=np.round(np.unique(np.round(ev,4)),3)\n    return out\n# d2: test 3F(triplet S=1), 3P, 1D (singlet S=0), with B=1, C=4 (C/B arbitrary)\nfor C in (0,4):\n    o=run(2,1.0,C)\n    print(\"C=\",C,{k:v for k,v in o.items()})\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "C= 0 {np.float64(0.0): array([-3.,  4., 14.]), np.float64(2.0): array([-8.,  7.])}\nC= 4 {np.float64(0.0): array([-0.6,  6.4, 36.4]), np.float64(2.0): array([-13.6,   1.4])}\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 45,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 49,
+     "method": "eigen_solver",
+     "text": "ev=np.linalg.eigvalsh(P.conj().T@H@P)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 13,
+   "tool": "Bash",
+   "description": "Precompute d5 operator matrices in doublet subspace",
+   "command": "cd ~ && cat > /dev/null <<'EOF'\nEOF\npython3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5)); idx={d:n for n,d in enumerate(dets)}\nnd=len(dets)\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nconn2=[];conn1=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is not None: conn2.append((idx[s],n,sg,dd))\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is not None: conn1.append((idx[s],n,sg,i,k))\nSp=np.zeros((nd,nd))\nfor n,d in enumerate(dets):\n    for m in ms:\n        s,sg=apply_ops(d,[('a',orbs.index((m,1))),('c',orbs.index((m,0)))])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\nw,U=np.linalg.eigh(S2)\nP=U[:,np.abs(w-0.75)<1e-6]\n# precompute 2e operator matrices for K=2 and K=4 separately (Dq,B,C independent)\nM2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); M1=np.zeros((nd,nd,5,5))\nfor a,n,sg,dd in conn2:\n    M2[a,n]+=0.5*sg*dd[2]; M4[a,n]+=0.5*sg*dd[4]\n# one-electron pieces: Dq coefficients: t2g part and eg part as operators on the 5x5 orbital matrix\nHt=np.zeros((nd,nd)); He=np.zeros((nd,nd))\ndef onebody(h):\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((nd,nd),complex)\n    for a,n,sg,i,k in conn1: H[a,n]+=sg*h1[i,k]\n    return H\nOt=sum(onebody(-4*np.outer(v,v.conj())) for v in t2g)\nOe=sum(onebody(6*np.outer(v,v.conj())) for v in eg)\nOt=np.real_if_close(Ot); Oe=np.real_if_close(Oe)\n# Dq-coefficient operator = -4*Ot_unit + 6*Oe_unit (Ot,Oe already include -4,6 factors); Dq operator = Ot+Oe with Dq=1\nOD=(Ot+Oe)\nnp.savez('/tmp/ops.npz',M2=M2,M4=M4,OD=np.real(OD),P=P)\nprint(\"saved\", P.shape)\nEOF",
+   "scripts": [
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "9eddf611b8a073eb607d769b9834e4aff6ee5fa9cb5f222fe28082a4ec522858",
+     "lines": 77,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5)); idx={d:n for n,d in enumerate(dets)}\nnd=len(dets)\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nconn2=[];conn1=[]\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is not None: conn2.append((idx[s],n,sg,dd))\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is not None: conn1.append((idx[s],n,sg,i,k))\nSp=np.zeros((nd,nd))\nfor n,d in enumerate(dets):\n    for m in ms:\n        s,sg=apply_ops(d,[('a',orbs.index((m,1))),('c',orbs.index((m,0)))])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\nw,U=np.linalg.eigh(S2)\nP=U[:,np.abs(w-0.75)<1e-6]\n# precompute 2e operator matrices for K=2 and K=4 separately (Dq,B,C independent)\nM2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); M1=np.zeros((nd,nd,5,5))\nfor a,n,sg,dd in conn2:\n    M2[a,n]+=0.5*sg*dd[2]; M4[a,n]+=0.5*sg*dd[4]\n# one-electron pieces: Dq coefficients: t2g part and eg part as operators on the 5x5 orbital matrix\nHt=np.zeros((nd,nd)); He=np.zeros((nd,nd))\ndef onebody(h):\n    h1=np.zeros((N,N),complex)\n    for i,(mi,si) in enumerate(orbs):\n        for k,(mk,sk) in enumerate(orbs):\n            if si==sk: h1[i,k]=h[mi+2,mk+2]\n    H=np.zeros((nd,nd),complex)\n    for a,n,sg,i,k in conn1: H[a,n]+=sg*h1[i,k]\n    return H\nOt=sum(onebody(-4*np.outer(v,v.conj())) for v in t2g)\nOe=sum(onebody(6*np.outer(v,v.conj())) for v in eg)\nOt=np.real_if_close(Ot); Oe=np.real_if_close(Oe)\n# Dq-coefficient operator = -4*Ot_unit + 6*Oe_unit (Ot,Oe already include -4,6 factors); Dq operator = Ot+Oe with Dq=1\nOD=(Ot+Oe)\nnp.savez('/tmp/ops.npz',M2=M2,M4=M4,OD=np.real(OD),P=P)\nprint(\"saved\", P.shape)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"<stdin>\", line 76, in <module>\n  File \"<B_VENV>/lib/python3.14/site-packages/numpy/lib/_npyio_impl.py\", line 673, in savez\n    _savez(file, args, kwds, False, allow_pickle=allow_pickle)\n    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<B_VENV>/lib/python3.14/site-packages/numpy/lib/_npyio_impl.py\", line 779, in _savez\n    zipf = zipfile_factory(file, mode=\"w\", compression=compression)\n  File \"<B_VENV>/lib/python3.14/site-packages/numpy/lib/_npyio_impl.py\", line 112, in zipfile_factory\n    return zipfile.ZipFile(file, *args, **kwargs)\n           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<HOME>/.cache/tsbench/python/cpython-3.14.9-linux-x86_64-gnu/lib/python3.14/zipfile/__init__.py\", line 1487, in __init__\n    self.fp = io.open(file, filemode)\n              ~~~~~~~^^^^^^^^^^^^^^^^\nOSError: [Errno 30] Read-only file system: '/tmp/ops.npz'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "Sp=np.zeros((nd,nd))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 55,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 58,
+     "method": "matrix",
+     "text": "M2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); M1=np.zeros((nd,nd,5,5))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 60,
+     "method": "matrix",
+     "text": "M2[a,n]+=0.5*sg*dd[2]; M4[a,n]+=0.5*sg*dd[4]"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 62,
+     "method": "matrix",
+     "text": "Ht=np.zeros((nd,nd)); He=np.zeros((nd,nd))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 64,
+     "method": "matrix",
+     "text": "h1=np.zeros((N,N),complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 68,
+     "method": "matrix",
+     "text": "H=np.zeros((nd,nd),complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 14,
+   "tool": "Bash",
+   "description": "Build doublet-subspace operators and list level pattern",
+   "command": "cd ~ && cat > /dev/null <<'EOF'\nEOF\npython3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5)); idx={d:n for n,d in enumerate(dets)}\nnd=len(dets)\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nM2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); OD=np.zeros((nd,nd))\nSp=np.zeros((nd,nd))\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is not None:\n            M2[idx[s],n]+=0.5*sg*dd[2]; M4[idx[s],n]+=0.5*sg*dd[4]\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            mi=orbs[i][0]; mk=orbs[k][0]\n            # one-body Dq operator: sum over orbital matrix h_unit[mi,mk]\n            hu=-4*sum(np.outer(v,v.conj()) for v in t2g)+6*sum(np.outer(v,v.conj()) for v in eg)\n            OD[idx[s],n]+=sg*hu[mi+2,mk+2].real\n    for m in ms:\n        s,sg=apply_ops(d,[('a',orbs.index((m,1))),('c',orbs.index((m,0)))])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\nw,U=np.linalg.eigh(S2)\nP=U[:,np.abs(w-0.75)<1e-6]\nMd=[P.T@M for M in (OD,M2,M4)]\nprint(\"P dim\",P.shape[1])\ndef levels(Dq,B,C=None):\n    if C is None: C=4.4*B\n    F2=49*B+7*C; F4=12.6*C\n    H=Dq*Md[0]+F2*Md[1]+F4*Md[2]\n    e=np.sort(np.linalg.eigvalsh(H))\n    # group into distinct levels\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<1e-6: out[-1][1]+=1\n        else: out.append([x,1])\n    g=out[0][0]\n    return [(round(x-g,1),m//2) for x,m in out]\n# Check ground multiplicity at strong field\nprint(levels(2000,600)[:8])\nEOF",
+   "scripts": [
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "927efd02d743ce689f5cff9644a08f3e402d58958f704c0c6879ee9612dc49a4",
+     "lines": 76,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5)); idx={d:n for n,d in enumerate(dets)}\nnd=len(dets)\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nM2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); OD=np.zeros((nd,nd))\nSp=np.zeros((nd,nd))\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is not None:\n            M2[idx[s],n]+=0.5*sg*dd[2]; M4[idx[s],n]+=0.5*sg*dd[4]\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            mi=orbs[i][0]; mk=orbs[k][0]\n            # one-body Dq operator: sum over orbital matrix h_unit[mi,mk]\n            hu=-4*sum(np.outer(v,v.conj()) for v in t2g)+6*sum(np.outer(v,v.conj()) for v in eg)\n            OD[idx[s],n]+=sg*hu[mi+2,mk+2].real\n    for m in ms:\n        s,sg=apply_ops(d,[('a',orbs.index((m,1))),('c',orbs.index((m,0)))])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\nw,U=np.linalg.eigh(S2)\nP=U[:,np.abs(w-0.75)<1e-6]\nMd=[P.T@M for M in (OD,M2,M4)]\nprint(\"P dim\",P.shape[1])\ndef levels(Dq,B,C=None):\n    if C is None: C=4.4*B\n    F2=49*B+7*C; F4=12.6*C\n    H=Dq*Md[0]+F2*Md[1]+F4*Md[2]\n    e=np.sort(np.linalg.eigvalsh(H))\n    # group into distinct levels\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<1e-6: out[-1][1]+=1\n        else: out.append([x,1])\n    g=out[0][0]\n    return [(round(x-g,1),m//2) for x,m in out]\n# Check ground multiplicity at strong field\nprint(levels(2000,600)[:8])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nP dim 150\nTraceback (most recent call last):\n  File \"<stdin>\", line 76, in <module>\n  File \"<stdin>\", line 67, in levels\n  File \"<B_VENV>/lib/python3.14/site-packages/numpy/linalg/_linalg.py\", line 1353, in eigvalsh\n    _assert_stacked_square(a)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^\n  File \"<B_VENV>/lib/python3.14/site-packages/numpy/linalg/_linalg.py\", line 258, in _assert_stacked_square\n    raise LinAlgError('Last 2 dimensions of the array must be square')\nnumpy.linalg.LinAlgError: Last 2 dimensions of the array must be square",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "M2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); OD=np.zeros((nd,nd))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 39,
+     "method": "matrix",
+     "text": "Sp=np.zeros((nd,nd))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 59,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 67,
+     "method": "eigen_solver",
+     "text": "e=np.sort(np.linalg.eigvalsh(H))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 15,
+   "tool": "Bash",
+   "description": "Scan d5 low-spin doublet level pattern for trial Dq, B",
+   "command": "cd ~ && cat > /tmp/x 2>/dev/null; python3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\nhu=-4*sum(np.outer(v,v.conj()) for v in t2g)+6*sum(np.outer(v,v.conj()) for v in eg)\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5)); idx={d:n for n,d in enumerate(dets)}\nnd=len(dets)\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nM2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); OD=np.zeros((nd,nd))\nSp=np.zeros((nd,nd))\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is not None:\n            M2[idx[s],n]+=0.5*sg*dd[2]; M4[idx[s],n]+=0.5*sg*dd[4]\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            OD[idx[s],n]+=sg*hu[orbs[i][0]+2,orbs[k][0]+2].real\n    for m in ms:\n        s,sg=apply_ops(d,[('a',orbs.index((m,1))),('c',orbs.index((m,0)))])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\nw,U=np.linalg.eigh(S2)\nP=U[:,np.abs(w-0.75)<1e-6]\nMd=[P.T@M@P for M in (OD,M2,M4)]\ndef levels(Dq,B,C=None):\n    if C is None: C=4.4*B\n    F2=49*B+7*C; F4=12.6*C\n    H=Dq*Md[0]+F2*Md[1]+F4*Md[2]\n    e=np.sort(np.linalg.eigvalsh(H))\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<1e-6: out[-1][1]+=1\n        else: out.append([x,1])\n    g=out[0][0]\n    return [(round(x-g,1),m//2) for x,m in out]\nprint(\"sanity Dq=1,B=0 ground:\", levels(1000,0)[:3])\nprint(levels(2000,600)[:12])\nnp.save if False else None\nimport pickle\npickle.dump((Md,),open('/dev/null','wb'))\nfor Dq,B in [(2400,600),(2800,650)]:\n    print(Dq,B,levels(Dq,B)[:10])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "3d6aac73b189fe9bcc79bd40ee5cb88974b71802e38f8cf06bdf6432f24f4f38",
+     "lines": 77,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\nhu=-4*sum(np.outer(v,v.conj()) for v in t2g)+6*sum(np.outer(v,v.conj()) for v in eg)\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5)); idx={d:n for n,d in enumerate(dets)}\nnd=len(dets)\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nM2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); OD=np.zeros((nd,nd))\nSp=np.zeros((nd,nd))\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is not None:\n            M2[idx[s],n]+=0.5*sg*dd[2]; M4[idx[s],n]+=0.5*sg*dd[4]\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            OD[idx[s],n]+=sg*hu[orbs[i][0]+2,orbs[k][0]+2].real\n    for m in ms:\n        s,sg=apply_ops(d,[('a',orbs.index((m,1))),('c',orbs.index((m,0)))])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\nw,U=np.linalg.eigh(S2)\nP=U[:,np.abs(w-0.75)<1e-6]\nMd=[P.T@M@P for M in (OD,M2,M4)]\ndef levels(Dq,B,C=None):\n    if C is None: C=4.4*B\n    F2=49*B+7*C; F4=12.6*C\n    H=Dq*Md[0]+F2*Md[1]+F4*Md[2]\n    e=np.sort(np.linalg.eigvalsh(H))\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<1e-6: out[-1][1]+=1\n        else: out.append([x,1])\n    g=out[0][0]\n    return [(round(x-g,1),m//2) for x,m in out]\nprint(\"sanity Dq=1,B=0 ground:\", levels(1000,0)[:3])\nprint(levels(2000,600)[:12])\nnp.save if False else None\nimport pickle\npickle.dump((Md,),open('/dev/null','wb'))\nfor Dq,B in [(2400,600),(2800,650)]:\n    print(Dq,B,levels(Dq,B)[:10])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 79: /tmp/x: Read-only file system\nsanity Dq=1,B=0 ground: [(np.float64(0.0), 3), (np.float64(10000.0), 18), (np.float64(20000.0), 33)]\n[(np.float64(0.0), 3), (np.float64(16926.6), 1), (np.float64(17132.4), 3), (np.float64(18634.8), 3), (np.float64(20058.0), 2), (np.float64(24120.8), 3), (np.float64(26107.5), 3), (np.float64(27595.8), 1), (np.float64(31252.0), 2), (np.float64(34763.6), 1), (np.float64(35598.1), 3), (np.float64(37906.6), 2)]\n2400 600 [(np.float64(0.0), 3), (np.float64(20788.0), 1), (np.float64(20995.3), 3), (np.float64(22582.5), 3), (np.float64(23998.7), 2), (np.float64(28224.6), 3), (np.float64(30066.5), 3), (np.float64(31765.8), 1), (np.float64(36566.2), 2), (np.float64(42453.8), 1)]\n2800 650 [(np.float64(0.0), 3), (np.float64(24460.5), 1), (np.float64(24685.7), 3), (np.float64(26440.9), 3), (np.float64(27970.3), 2), (np.float64(32619.9), 3), (np.float64(34545.9), 3), (np.float64(36458.2), 1), (np.float64(42114.0), 2), (np.float64(49877.7), 1)]\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 39,
+     "method": "matrix",
+     "text": "M2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); OD=np.zeros((nd,nd))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 40,
+     "method": "matrix",
+     "text": "Sp=np.zeros((nd,nd))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 57,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "e=np.sort(np.linalg.eigvalsh(H))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 16,
+   "tool": "Bash",
+   "description": "Least-squares fit of Dq and B to three d5 bands",
+   "command": "cd ~ && python3 - <<'EOF'\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\nhu=-4*sum(np.outer(v,v.conj()) for v in t2g)+6*sum(np.outer(v,v.conj()) for v in eg)\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5)); idx={d:n for n,d in enumerate(dets)}\nnd=len(dets)\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nM2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); OD=np.zeros((nd,nd)); Sp=np.zeros((nd,nd))\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is not None:\n            M2[idx[s],n]+=0.5*sg*dd[2]; M4[idx[s],n]+=0.5*sg*dd[4]\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            OD[idx[s],n]+=sg*hu[orbs[i][0]+2,orbs[k][0]+2].real\n    for m in ms:\n        s,sg=apply_ops(d,[('a',orbs.index((m,1))),('c',orbs.index((m,0)))])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\nw,U=np.linalg.eigh(S2)\nP=U[:,np.abs(w-0.75)<1e-6]\nMd=[P.T@M@P for M in (OD,M2,M4)]\ndef levels(Dq,B):\n    C=4.4*B; F2=49*B+7*C; F4=12.6*C\n    e=np.sort(np.linalg.eigvalsh(Dq*Md[0]+F2*Md[1]+F4*Md[2]))\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<1e-5: out[-1][1]+=1\n        else: out.append([x,1])\n    g=out[0][0]\n    return [(x-g,m//2) for x,m in out]\n# Identify lowest three excited distinct levels: A1g(deg1), T1g(3), T2g(3)\ndef lowest3(Dq,B):\n    L=levels(Dq,B)\n    ex=[(e,d) for e,d in L if e>1e-3]\n    return ex[:4]\nobs=np.array([29360.,29620.,31640.])\nprint(lowest3(2400,600))\ndef resid(p):\n    Dq,B=p\n    ex=lowest3(Dq,B)\n    return np.array([ex[0][0],ex[1][0],ex[2][0]])-obs\nsol=least_squares(resid,[2400,600],x_scale=[1000,100])\nprint(\"fit Dq,B:\",sol.x, \"C=\",4.4*sol.x[1], \"resid\", resid(sol.x))\nprint(\"levels:\",[(round(e,1),d) for e,d in lowest3(*sol.x)])\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "822ff509396cfe7e5a0b43aec5e8b58f72a480bdd5a11e59707c6931939088d0",
+     "lines": 82,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import least_squares\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]\nN=10\ndef Ang(mi,mk,K,q):\n    if -mi+mk-q!=0 or abs(q)>K: return 0.0\n    return (-1)**(mi)*((-1)**q)*float(gaunt(2,2,K,-mi,mk,-q))\ndef vec(d):\n    v=np.zeros(5,complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\nr2=np.sqrt(2)\nt2g=[vec({-2:1/(1j*r2),2:-1/(1j*r2)}), vec({-1:-1/r2,1:1/r2}), vec({-1:1/(1j*r2),1:1/(1j*r2)})]\neg=[vec({0:1}), vec({-2:1/r2,2:1/r2})]\nhu=-4*sum(np.outer(v,v.conj()) for v in t2g)+6*sum(np.outer(v,v.conj()) for v in eg)\ndef apply_ops(state, ops):\n    s=list(state); sign=1\n    for typ,p in ops:\n        if typ=='a':\n            if p not in s: return None,0\n            pos=s.index(p); sign*=(-1)**pos; s.pop(pos)\n        else:\n            if p in s: return None,0\n            pos=sum(1 for x in s if x<p); sign*=(-1)**pos; s.insert(pos,p)\n    return tuple(s),sign\ndets=list(itertools.combinations(range(N),5)); idx={d:n for n,d in enumerate(dets)}\nnd=len(dets)\nA={(K,q,mi,mk):Ang(mi,mk,K,q) for K in (0,2,4) for q in range(-K,K+1) for mi in ms for mk in ms}\nW={}\nfor i,(mi,si) in enumerate(orbs):\n for k,(mk,sk) in enumerate(orbs):\n  if si!=sk: continue\n  for j,(mj,sj) in enumerate(orbs):\n   for ll,(ml,sl) in enumerate(orbs):\n    if sj!=sl: continue\n    d={K:4*np.pi/(2*K+1)*sum(((-1)**q)*A[(K,q,mi,mk)]*A[(K,-q,mj,ml)] for q in range(-K,K+1)) for K in (0,2,4)}\n    if any(abs(v)>1e-12 for v in d.values()): W[(i,j,k,ll)]=d\nM2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); OD=np.zeros((nd,nd)); Sp=np.zeros((nd,nd))\nfor n,d in enumerate(dets):\n    for (i,j,k,ll),dd in W.items():\n        s,sg=apply_ops(d,[('a',k),('a',ll),('c',j),('c',i)])\n        if s is not None:\n            M2[idx[s],n]+=0.5*sg*dd[2]; M4[idx[s],n]+=0.5*sg*dd[4]\n    for i in range(N):\n        for k in range(N):\n            if orbs[i][1]!=orbs[k][1]: continue\n            s,sg=apply_ops(d,[('a',k),('c',i)])\n            if s is None: continue\n            OD[idx[s],n]+=sg*hu[orbs[i][0]+2,orbs[k][0]+2].real\n    for m in ms:\n        s,sg=apply_ops(d,[('a',orbs.index((m,1))),('c',orbs.index((m,0)))])\n        if s is not None: Sp[idx[s],n]+=sg\nSzv=np.array([sum(0.5 if orbs[p][1]==0 else -0.5 for p in d) for d in dets])\nS2=Sp.T@Sp+np.diag(Szv**2+Szv)\nw,U=np.linalg.eigh(S2)\nP=U[:,np.abs(w-0.75)<1e-6]\nMd=[P.T@M@P for M in (OD,M2,M4)]\ndef levels(Dq,B):\n    C=4.4*B; F2=49*B+7*C; F4=12.6*C\n    e=np.sort(np.linalg.eigvalsh(Dq*Md[0]+F2*Md[1]+F4*Md[2]))\n    out=[]\n    for x in e:\n        if out and abs(x-out[-1][0])<1e-5: out[-1][1]+=1\n        else: out.append([x,1])\n    g=out[0][0]\n    return [(x-g,m//2) for x,m in out]\n# Identify lowest three excited distinct levels: A1g(deg1), T1g(3), T2g(3)\ndef lowest3(Dq,B):\n    L=levels(Dq,B)\n    ex=[(e,d) for e,d in L if e>1e-3]\n    return ex[:4]\nobs=np.array([29360.,29620.,31640.])\nprint(lowest3(2400,600))\ndef resid(p):\n    Dq,B=p\n    ex=lowest3(Dq,B)\n    return np.array([ex[0][0],ex[1][0],ex[2][0]])-obs\nsol=least_squares(resid,[2400,600],x_scale=[1000,100])\nprint(\"fit Dq,B:\",sol.x, \"C=\",4.4*sol.x[1], \"resid\", resid(sol.x))\nprint(\"levels:\",[(round(e,1),d) for e,d in lowest3(*sol.x)])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[(np.float64(20788.04514021884), 1), (np.float64(20995.31605534439), 3), (np.float64(22582.50127406946), 3), (np.float64(23998.696400976667), 2)]\nfit Dq,B: [3343.09714733  739.19231314] C= 3252.4461778165196 resid [ 1.61430886 -1.87832588  0.26023092]\nlevels: [(np.float64(29361.6), 1), (np.float64(29618.1), 3), (np.float64(31640.3), 3), (np.float64(33375.5), 2)]\nShell cwd was reset to /tmp/tsbench-run-llrka3xb",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 40,
+     "method": "matrix",
+     "text": "M2=np.zeros((nd,nd)); M4=np.zeros((nd,nd)); OD=np.zeros((nd,nd)); Sp=np.zeros((nd,nd))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 57,
+     "method": "eigen_solver",
+     "text": "w,U=np.linalg.eigh(S2)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "e=np.sort(np.linalg.eigvalsh(Dq*Md[0]+F2*Md[1]+F4*Md[2]))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 80,
+     "method": "least_squares",
+     "text": "sol=least_squares(resid,[2400,600],x_scale=[1000,100])"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B",
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 3343.0,
+   "weak": false,
+   "steps": [
+    16
+   ],
+   "typed_in_steps": [],
+   "source_step": 16
+  },
+  {
+   "path": "B",
+   "value": 739.0,
+   "weak": false,
+   "steps": [
+    16
+   ],
+   "typed_in_steps": [],
+   "source_step": 16
+  },
+  {
+   "path": "C",
+   "value": 3252.0,
+   "weak": false,
+   "steps": [
+    16
+   ],
+   "typed_in_steps": [],
+   "source_step": 16
+  }
+ ],
+ "summary": {
+  "n_steps": 17,
+  "n_scripts": 20,
+  "n_failed_steps": 5,
+  "n_values": 3,
+  "n_linked": 3,
+  "n_weak": 0,
+  "source_steps": [
+   16
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

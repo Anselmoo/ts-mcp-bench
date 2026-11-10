@@ -1,0 +1,1 @@
+cd ~ && pwd && touch testfile && echo writable_home; ls -ld /tmp; df -h /tmp | tail -1

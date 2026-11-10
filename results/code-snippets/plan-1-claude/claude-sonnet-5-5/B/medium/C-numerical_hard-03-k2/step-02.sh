@@ -1,0 +1,1 @@
+mkdir -p ~/w 2>/dev/null || true; cd ~/w 2>/dev/null && pwd; ls -ld . ; echo $TMPDIR

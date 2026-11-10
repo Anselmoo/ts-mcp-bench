@@ -1,0 +1,402 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-opus-5-5/B/medium/C-numerical_hard-02-k1.jsonl",
+ "transcript_sha256": "c7fce456635d8ae1d80f9fdf3c6a636817763cadb22b9efb874dd4d3d9163208",
+ "answer": {
+  "Dq": 2580.0,
+  "B": 756.0,
+  "C": 3252.0,
+  "out_of_scope": false,
+  "reason": "Full d4 ligand-field diagonalization with C=4.3B reproduces the three triplet bands exactly at Dq=2580 and B=756 cm^-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy|sympy\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(Bash completed with no output)",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "pip install numpy scipy sympy 2>&1 | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 1: pip: command not found",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "which python3; python3 -c \"import numpy\"; python3 -m pip --version; ls /usr/bin | grep -i py | head",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "<B_VENV>/bin/python3\n<B_VENV>/bin/python3: No module named pip\ndebconf-copydb\ndvicopy\nllvm-objcopy\nllvm-objcopy-14\nmesa-overlay-control.py\nobjcopy\nodvicopy\npy3clean\npy3compile\npy3versions",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > d4.py <<'EOF'\nimport numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    t=lambda x:f(x)\n    pre=(-1)**(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,100):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp,l=2):\n    return (-1)**m*(2*l+1)*w3j(l,k,l,0,0,0)*w3j(l,k,l,-m,m-mp,mp)\norbs=[(m,s) for m in range(-2,3) for s in (0,1)]\ndef g(a,b,c,d,F):  # <ab|cd>\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=[orbs[i] for i in (a,b,c,d)]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: return 0.0\n    return sum(ck(k,m1,m3)*ck(k,m4,m2)*F[k] for k in (2,4))\ndef H(Dq,B,C,MS2=2):\n    F={2:49*(B+C/7),4:441*C/35}\n    V=np.zeros((5,5));idx={m:m+2 for m in range(-2,3)}\n    for m,v in [(0,6),(1,-4),(-1,-4),(2,1),(-2,1)]: V[idx[m],idx[m]]=v*Dq\n    V[idx[2],idx[-2]]=V[idx[-2],idx[2]]=5*Dq\n    h1=np.zeros((10,10))\n    for i,(mi,si) in enumerate(orbs):\n        for j,(mj,sj) in enumerate(orbs):\n            if si==sj: h1[i,j]=V[mi+2,mj+2]\n    dets=[d for d in itertools.combinations(range(10),4) if sum(1 if orbs[i][1]==0 else -1 for i in d)==MS2]\n    n=len(dets);Hm=np.zeros((n,n))\n    # second quantization\n    def apply(ops,det):\n        # ops list of (dag,i) applied right to left\n        occ=list(det);sign=1\n        for dag,i in reversed(ops):\n            if dag:\n                if i in occ: return None,0\n                p=sum(1 for x in occ if x<i);occ.append(i);occ.sort()\n            else:\n                if i not in occ: return None,0\n                p=sum(1 for x in occ if x<i);occ.remove(i)\n            sign*=(-1)**p\n        return tuple(occ),sign\n    di={d:k for k,d in enumerate(dets)}\n    G={}\n    for a in range(10):\n      for b in range(10):\n        for c in range(10):\n          for d in range(10):\n            v=g(a,b,c,d,F)\n            if abs(v)>1e-12: G[(a,b,c,d)]=v\n    for k,det in enumerate(dets):\n        for i in range(10):\n            for j in range(10):\n                if abs(h1[i,j])>1e-12:\n                    nd,s=apply([(1,i),(0,j)],det)\n                    if nd in di: Hm[di[nd],k]+=s*h1[i,j]\n        for (a,b,c,d),v in G.items():\n            nd,s=apply([(1,a),(1,b),(0,d),(0,c)],det)\n            if nd in di: Hm[di[nd],k]+=0.5*s*v\n    return Hm\ndef levels(Dq,B,C):\n    e1=np.linalg.eigvalsh(H(Dq,B,C,2)); e2=np.linalg.eigvalsh(H(Dq,B,C,4))\n    # triplets: in MS=1 but not MS=2 ; remove quintet energies\n    e1=list(np.round(e1,4)); \n    for x in np.round(e2,4):\n        # remove one copy\n        i=np.argmin(np.abs(np.array(e1)-x)); e1.pop(i)\n    return np.array(sorted(e1)), np.array(sorted(e2))\nEOF\ncat > run.py <<'EOF'\nfrom d4 import *\nimport numpy as np\ndef trip_terms(Dq,B):\n    t,q=levels(Dq,B,4.3*B)\n    # group degeneracies\n    g=[];\n    for x in t:\n        if g and abs(x-g[-1][0])<1e-2: g[-1][1]+=1\n        else: g.append([x,1])\n    return g,q\ng,q=trip_terms(2500,600)\nprint([(round(x-g[0][0]),n) for x,n in g][:10]); print(round(q[0]-g[0][0]))\nEOF\npython3 run.py",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "83c5ecccfb7f95801d72010a52f924bab4eac52d0c974595693cd7bee5441304",
+     "lines": 70,
+     "code": "import numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    t=lambda x:f(x)\n    pre=(-1)**(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,100):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp,l=2):\n    return (-1)**m*(2*l+1)*w3j(l,k,l,0,0,0)*w3j(l,k,l,-m,m-mp,mp)\norbs=[(m,s) for m in range(-2,3) for s in (0,1)]\ndef g(a,b,c,d,F):  # <ab|cd>\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=[orbs[i] for i in (a,b,c,d)]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: return 0.0\n    return sum(ck(k,m1,m3)*ck(k,m4,m2)*F[k] for k in (2,4))\ndef H(Dq,B,C,MS2=2):\n    F={2:49*(B+C/7),4:441*C/35}\n    V=np.zeros((5,5));idx={m:m+2 for m in range(-2,3)}\n    for m,v in [(0,6),(1,-4),(-1,-4),(2,1),(-2,1)]: V[idx[m],idx[m]]=v*Dq\n    V[idx[2],idx[-2]]=V[idx[-2],idx[2]]=5*Dq\n    h1=np.zeros((10,10))\n    for i,(mi,si) in enumerate(orbs):\n        for j,(mj,sj) in enumerate(orbs):\n            if si==sj: h1[i,j]=V[mi+2,mj+2]\n    dets=[d for d in itertools.combinations(range(10),4) if sum(1 if orbs[i][1]==0 else -1 for i in d)==MS2]\n    n=len(dets);Hm=np.zeros((n,n))\n    # second quantization\n    def apply(ops,det):\n        # ops list of (dag,i) applied right to left\n        occ=list(det);sign=1\n        for dag,i in reversed(ops):\n            if dag:\n                if i in occ: return None,0\n                p=sum(1 for x in occ if x<i);occ.append(i);occ.sort()\n            else:\n                if i not in occ: return None,0\n                p=sum(1 for x in occ if x<i);occ.remove(i)\n            sign*=(-1)**p\n        return tuple(occ),sign\n    di={d:k for k,d in enumerate(dets)}\n    G={}\n    for a in range(10):\n      for b in range(10):\n        for c in range(10):\n          for d in range(10):\n            v=g(a,b,c,d,F)\n            if abs(v)>1e-12: G[(a,b,c,d)]=v\n    for k,det in enumerate(dets):\n        for i in range(10):\n            for j in range(10):\n                if abs(h1[i,j])>1e-12:\n                    nd,s=apply([(1,i),(0,j)],det)\n                    if nd in di: Hm[di[nd],k]+=s*h1[i,j]\n        for (a,b,c,d),v in G.items():\n            nd,s=apply([(1,a),(1,b),(0,d),(0,c)],det)\n            if nd in di: Hm[di[nd],k]+=0.5*s*v\n    return Hm\ndef levels(Dq,B,C):\n    e1=np.linalg.eigvalsh(H(Dq,B,C,2)); e2=np.linalg.eigvalsh(H(Dq,B,C,4))\n    # triplets: in MS=1 but not MS=2 ; remove quintet energies\n    e1=list(np.round(e1,4)); \n    for x in np.round(e2,4):\n        # remove one copy\n        i=np.argmin(np.abs(np.array(e1)-x)); e1.pop(i)\n    return np.array(sorted(e1)), np.array(sorted(e2))\n"
+    },
+    {
+     "name": "run.py",
+     "sha256": "2f14c89f5eddfe3d1f43a203a31726cee714c245f628af7c58e2d4dae594d45e",
+     "lines": 12,
+     "code": "from d4 import *\nimport numpy as np\ndef trip_terms(Dq,B):\n    t,q=levels(Dq,B,4.3*B)\n    # group degeneracies\n    g=[];\n    for x in t:\n        if g and abs(x-g[-1][0])<1e-2: g[-1][1]+=1\n        else: g.append([x,1])\n    return g,q\ng,q=trip_terms(2500,600)\nprint([(round(x-g[0][0]),n) for x,n in g][:10]); print(round(q[0]-g[0][0]))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\nTraceback (most recent call last):\n  File \"/tmp/tsbench-run-as_bogom/run.py\", line 1, in <module>\n    from d4 import *\nModuleNotFoundError: No module named 'd4'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 23,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5));idx={m:m+2 for m in range(-2,3)}"
+    },
+    {
+     "script": "d4.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "h1=np.zeros((10,10))"
+    },
+    {
+     "script": "d4.py",
+     "line": 31,
+     "method": "matrix",
+     "text": "n=len(dets);Hm=np.zeros((n,n))"
+    },
+    {
+     "script": "d4.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "e1=np.linalg.eigvalsh(H(Dq,B,C,2)); e2=np.linalg.eigvalsh(H(Dq,B,C,4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "pwd; ls",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-run-as_bogom\nrun.py",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > d4.py <<'EOF'\nimport numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    t=lambda x:f(x)\n    pre=(-1)**(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,100):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp,l=2):\n    return (-1)**m*(2*l+1)*w3j(l,k,l,0,0,0)*w3j(l,k,l,-m,m-mp,mp)\norbs=[(m,s) for m in range(-2,3) for s in (0,1)]\ndef g(a,b,c,d,F):\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=[orbs[i] for i in (a,b,c,d)]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: return 0.0\n    return sum(ck(k,m1,m3)*ck(k,m4,m2)*F[k] for k in (2,4))\ndef apply(ops,det):\n    occ=list(det);sign=1\n    for dag,i in reversed(ops):\n        if dag:\n            if i in occ: return None,0\n            p=sum(1 for x in occ if x<i);occ.append(i);occ.sort()\n        else:\n            if i not in occ: return None,0\n            p=sum(1 for x in occ if x<i);occ.remove(i)\n        sign*=(-1)**p\n    return tuple(occ),sign\ndef H(Dq,B,C,MS2=2):\n    F={2:49*(B+C/7),4:441*C/35}\n    V=np.zeros((5,5))\n    for m,v in [(0,6),(1,-4),(-1,-4),(2,1),(-2,1)]: V[m+2,m+2]=v*Dq\n    V[4,0]=V[0,4]=5*Dq\n    h1=np.zeros((10,10))\n    for i,(mi,si) in enumerate(orbs):\n        for j,(mj,sj) in enumerate(orbs):\n            if si==sj: h1[i,j]=V[mi+2,mj+2]\n    dets=[d for d in itertools.combinations(range(10),4) if sum(1 if orbs[i][1]==0 else -1 for i in d)==MS2]\n    n=len(dets);Hm=np.zeros((n,n));di={d:k for k,d in enumerate(dets)}\n    G={}\n    for a in range(10):\n      for b in range(10):\n        for c in range(10):\n          for d in range(10):\n            v=g(a,b,c,d,F)\n            if abs(v)>1e-12: G[(a,b,c,d)]=v\n    for k,det in enumerate(dets):\n        for i in range(10):\n            for j in range(10):\n                if abs(h1[i,j])>1e-12:\n                    nd,s=apply([(1,i),(0,j)],det)\n                    if nd in di: Hm[di[nd],k]+=s*h1[i,j]\n        for (a,b,c,d),v in G.items():\n            nd,s=apply([(1,a),(1,b),(0,d),(0,c)],det)\n            if nd in di: Hm[di[nd],k]+=0.5*s*v\n    return Hm\ndef levels(Dq,B,C):\n    e1=list(np.linalg.eigvalsh(H(Dq,B,C,2))); e2=np.linalg.eigvalsh(H(Dq,B,C,4))\n    for x in e2:\n        i=int(np.argmin(np.abs(np.array(e1)-x))); e1.pop(i)\n    return np.array(sorted(e1)), np.array(sorted(e2))\nEOF\npython3 run.py",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "247fd9639d48d207cab393cf622bdcc53e1e7c3bf210be51bd2f0bcb6806f13d",
+     "lines": 64,
+     "code": "import numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    t=lambda x:f(x)\n    pre=(-1)**(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,100):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp,l=2):\n    return (-1)**m*(2*l+1)*w3j(l,k,l,0,0,0)*w3j(l,k,l,-m,m-mp,mp)\norbs=[(m,s) for m in range(-2,3) for s in (0,1)]\ndef g(a,b,c,d,F):\n    (m1,s1),(m2,s2),(m3,s3),(m4,s4)=[orbs[i] for i in (a,b,c,d)]\n    if s1!=s3 or s2!=s4 or m1+m2!=m3+m4: return 0.0\n    return sum(ck(k,m1,m3)*ck(k,m4,m2)*F[k] for k in (2,4))\ndef apply(ops,det):\n    occ=list(det);sign=1\n    for dag,i in reversed(ops):\n        if dag:\n            if i in occ: return None,0\n            p=sum(1 for x in occ if x<i);occ.append(i);occ.sort()\n        else:\n            if i not in occ: return None,0\n            p=sum(1 for x in occ if x<i);occ.remove(i)\n        sign*=(-1)**p\n    return tuple(occ),sign\ndef H(Dq,B,C,MS2=2):\n    F={2:49*(B+C/7),4:441*C/35}\n    V=np.zeros((5,5))\n    for m,v in [(0,6),(1,-4),(-1,-4),(2,1),(-2,1)]: V[m+2,m+2]=v*Dq\n    V[4,0]=V[0,4]=5*Dq\n    h1=np.zeros((10,10))\n    for i,(mi,si) in enumerate(orbs):\n        for j,(mj,sj) in enumerate(orbs):\n            if si==sj: h1[i,j]=V[mi+2,mj+2]\n    dets=[d for d in itertools.combinations(range(10),4) if sum(1 if orbs[i][1]==0 else -1 for i in d)==MS2]\n    n=len(dets);Hm=np.zeros((n,n));di={d:k for k,d in enumerate(dets)}\n    G={}\n    for a in range(10):\n      for b in range(10):\n        for c in range(10):\n          for d in range(10):\n            v=g(a,b,c,d,F)\n            if abs(v)>1e-12: G[(a,b,c,d)]=v\n    for k,det in enumerate(dets):\n        for i in range(10):\n            for j in range(10):\n                if abs(h1[i,j])>1e-12:\n                    nd,s=apply([(1,i),(0,j)],det)\n                    if nd in di: Hm[di[nd],k]+=s*h1[i,j]\n        for (a,b,c,d),v in G.items():\n            nd,s=apply([(1,a),(1,b),(0,d),(0,c)],det)\n            if nd in di: Hm[di[nd],k]+=0.5*s*v\n    return Hm\ndef levels(Dq,B,C):\n    e1=list(np.linalg.eigvalsh(H(Dq,B,C,2))); e2=np.linalg.eigvalsh(H(Dq,B,C,4))\n    for x in e2:\n        i=int(np.argmin(np.abs(np.array(e1)-x))); e1.pop(i)\n    return np.array(sorted(e1)), np.array(sorted(e2))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"/tmp/tsbench-run-as_bogom/run.py\", line 11, in <module>\n    g,q=trip_terms(2500,600)\n        ~~~~~~~~~~^^^^^^^^^^\n  File \"/tmp/tsbench-run-as_bogom/run.py\", line 4, in trip_terms\n    t,q=levels(Dq,B,4.3*B)\n        ~~~~~~^^^^^^^^^^^^\n  File \"/tmp/tsbench-run-as_bogom/d4.py\", line 61, in levels\n    e1=list(np.linalg.eigvalsh(H(Dq,B,C,2))); e2=np.linalg.eigvalsh(H(Dq,B,C,4))\n                               ~^^^^^^^^^^\n  File \"/tmp/tsbench-run-as_bogom/d4.py\", line 48, in H\n    v=g(a,b,c,d,F)\n  File \"/tmp/tsbench-run-as_bogom/d4.py\", line 20, in g\n    return sum(ck(k,m1,m3)*ck(k,m4,m2)*F[k] for k in (2,4))\n  File \"/tmp/tsbench-run-as_bogom/d4.py\", line 20, in <genexpr>\n    return sum(ck(k,m1,m3)*ck(k,m4,m2)*F[k] for k in (2,4))\n               ~~^^^^^^^^^\n  File \"/tmp/tsbench-run-as_bogom/d4.py\", line 15, in ck\n    return (-1)**m*(2*l+1)*w3j(l,k,l,0,0,0)*w3j(l,k,l,-m,m-mp,mp)\n                                            ~~~^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tsbench-run-as_bogom/d4.py\", line 7, in w3j\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n                                ~^^^^^^^\n  File \"/tmp/tsbench-run-as_bogom/d4.py\", line 5, in <lambda>\n    t=lambda x:f(x)\n               ~^^^\nValueError: factorial() not defined for negative values",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "V=np.zeros((5,5))"
+    },
+    {
+     "script": "d4.py",
+     "line": 36,
+     "method": "matrix",
+     "text": "V[4,0]=V[0,4]=5*Dq"
+    },
+    {
+     "script": "d4.py",
+     "line": 37,
+     "method": "matrix",
+     "text": "h1=np.zeros((10,10))"
+    },
+    {
+     "script": "d4.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "n=len(dets);Hm=np.zeros((n,n));di={d:k for k,d in enumerate(dets)}"
+    },
+    {
+     "script": "d4.py",
+     "line": 61,
+     "method": "eigen_solver",
+     "text": "e1=list(np.linalg.eigvalsh(H(Dq,B,C,2))); e2=np.linalg.eigvalsh(H(Dq,B,C,4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "",
+   "command": "sed -i 's/    if m1+m2+m3!=0: return 0.0/    if m1+m2+m3!=0 or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0.0/' d4.py && python3 run.py",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[(0, 3), (22600, 2), (23252, 3), (23946, 3), (24941, 1), (25966, 1), (27617, 2), (35289, 3), (35629, 3), (47732, 3)]\n9221",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > fit.py <<'EOF'\nfrom run import trip_terms\nimport numpy as np\nfrom scipy.optimize import least_squares\nEOF\npython3 -c \"import scipy\" ; cat > fit.py <<'EOF'\nfrom d4 import levels\nimport numpy as np\ndef terms(Dq,B):\n    t,q=levels(Dq,B,4.3*B); g=[]\n    for x in t:\n        if g and abs(x-g[-1][0])<1e-2: g[-1][1]+=1\n        else: g.append([x,1])\n    return [(x-g[0][0],n) for x,n in g], q[0]-g[0][0]\nprint([(round(x),n) for x,n in terms(0,600)[0]])\nobs=np.array([22900,23730,24580])\nbest=None\nfor Dq in np.arange(1800,4001,50):\n  for B in np.arange(200,1001,25):\n    g,q=terms(Dq,B)\n    if g[1][1]==3 and g[1][0]<1: continue\n    e=np.array([x for x,n in g[1:4]])\n    r=np.sum((e-obs)**2)\n    if best is None or r<best[0]: best=(r,Dq,B,[(round(x),n) for x,n in g[:5]],q)\nprint(best)\nEOF\npython3 fit.py",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "5826b0c107a1dbe3394d39b3f24141bd715c563dfe3b99eb7fbf0ab493d41948",
+     "lines": 3,
+     "code": "from run import trip_terms\nimport numpy as np\nfrom scipy.optimize import least_squares\n"
+    },
+    {
+     "name": "fit.py",
+     "sha256": "372c07bc153a333cc5ebe53cef62d08740a265161e5652aa8d35389225f2a170",
+     "lines": 19,
+     "code": "from d4 import levels\nimport numpy as np\ndef terms(Dq,B):\n    t,q=levels(Dq,B,4.3*B); g=[]\n    for x in t:\n        if g and abs(x-g[-1][0])<1e-2: g[-1][1]+=1\n        else: g.append([x,1])\n    return [(x-g[0][0],n) for x,n in g], q[0]-g[0][0]\nprint([(round(x),n) for x,n in terms(0,600)[0]])\nobs=np.array([22900,23730,24580])\nbest=None\nfor Dq in np.arange(1800,4001,50):\n  for B in np.arange(200,1001,25):\n    g,q=terms(Dq,B)\n    if g[1][1]==3 and g[1][0]<1: continue\n    e=np.array([x for x,n in g[1:4]])\n    r=np.sum((e-obs)**2)\n    if best is None or r<best[0]: best=(r,Dq,B,[(round(x),n) for x,n in g[:5]],q)\nprint(best)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 143,
+   "is_error": true,
+   "stdout": "Exit code 143\nCommand timed out after 2m 0s",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > fit.py <<'EOF'\nfrom d4 import H\nimport numpy as np\nM={}\nfor ms in (2,4):\n    M[ms]=[H(1,0,0,ms),H(0,1,0,ms),H(0,0,1,ms)]\ndef lev(Dq,B,C):\n    e1=list(np.linalg.eigvalsh(Dq*M[2][0]+B*M[2][1]+C*M[2][2]))\n    e2=np.linalg.eigvalsh(Dq*M[4][0]+B*M[4][1]+C*M[4][2])\n    for x in e2:\n        i=int(np.argmin(np.abs(np.array(e1)-x))); e1.pop(i)\n    t=sorted(e1); g=[]\n    for x in t:\n        if g and abs(x-g[-1][0])<1e-3: g[-1][1]+=1\n        else: g.append([x,1])\n    return [(x-g[0][0],n) for x,n in g], e2[0]-g[0][0]\nprint([(round(x),n) for x,n in lev(0,600,2580)[0]])\nobs=np.array([22900,23730,24580])\nbest=[]\nfor Dq in np.arange(1500,4001,25):\n  for B in np.arange(200,1201,10):\n    g,q=lev(Dq,B,4.3*B)\n    e=np.array([x for x,n in g[1:4]])\n    best.append((np.sum((e-obs)**2),Dq,B,[(round(x),n) for x,n in g[:6]],round(q)))\nbest.sort(key=lambda z:z[0])\nfor b in best[:8]: print(b)\nEOF\ntimeout 110 python3 fit.py",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "0a52753e9cf8fe426457ff36d48cde11cd87d4704d5db55b16b6903e3d57bdc1",
+     "lines": 25,
+     "code": "from d4 import H\nimport numpy as np\nM={}\nfor ms in (2,4):\n    M[ms]=[H(1,0,0,ms),H(0,1,0,ms),H(0,0,1,ms)]\ndef lev(Dq,B,C):\n    e1=list(np.linalg.eigvalsh(Dq*M[2][0]+B*M[2][1]+C*M[2][2]))\n    e2=np.linalg.eigvalsh(Dq*M[4][0]+B*M[4][1]+C*M[4][2])\n    for x in e2:\n        i=int(np.argmin(np.abs(np.array(e1)-x))); e1.pop(i)\n    t=sorted(e1); g=[]\n    for x in t:\n        if g and abs(x-g[-1][0])<1e-3: g[-1][1]+=1\n        else: g.append([x,1])\n    return [(x-g[0][0],n) for x,n in g], e2[0]-g[0][0]\nprint([(round(x),n) for x,n in lev(0,600,2580)[0]])\nobs=np.array([22900,23730,24580])\nbest=[]\nfor Dq in np.arange(1500,4001,25):\n  for B in np.arange(200,1201,10):\n    g,q=lev(Dq,B,4.3*B)\n    e=np.array([x for x,n in g[1:4]])\n    best.append((np.sum((e-obs)**2),Dq,B,[(round(x),n) for x,n in g[:6]],round(q)))\nbest.sort(key=lambda z:z[0])\nfor b in best[:8]: print(b)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 8
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[(0, 11), (1701, 3), (1905, 7), (3000, 9), (7200, 5), (20235, 7), (20439, 3)]\n(np.float64(1552.1075677729082), np.int64(2575), np.int64(730), [(0, 3), (22927, 2), (23727, 3), (24552, 3), (25791, 1), (26857, 1)], 6665)\n(np.float64(1884.2143157058542), np.int64(2575), np.int64(740), [(0, 3), (22897, 2), (23708, 3), (24543, 3), (25801, 1), (26867, 1)], 6413)\n(np.float64(3954.399377840093), np.int64(2575), np.int64(720), [(0, 3), (22958, 2), (23746, 3), (24561, 3), (25781, 1), (26848, 1)], 6917)\n(np.float64(4896.0924912634355), np.int64(2575), np.int64(750), [(0, 3), (22867, 2), (23690, 3), (24533, 3), (25812, 1), (26877, 1)], 6162)\n(np.float64(9147.060253029498), np.int64(2575), np.int64(710), [(0, 3), (22989, 2), (23765, 3), (24571, 3), (25771, 1), (26838, 1)], 7169)\n(np.float64(10534.421139997079), np.int64(2575), np.int64(760), [(0, 3), (22837, 2), (23671, 3), (24524, 3), (25822, 1), (26886, 1)], 5910)\n(np.float64(17187.44246513531), np.int64(2575), np.int64(700), [(0, 3), (23019, 2), (23784, 3), (24580, 3), (25761, 1), (26828, 1)], 7421)\n(np.float64(18747.149429774592), np.int64(2575), np.int64(770), [(0, 3), (22807, 2), (23653, 3), (24516, 3), (25833, 1), (26896, 1)], 5659)",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 7,
+     "method": "eigen_solver",
+     "text": "e1=list(np.linalg.eigvalsh(Dq*M[2][0]+B*M[2][1]+C*M[2][2]))"
+    },
+    {
+     "script": "fit.py",
+     "line": 8,
+     "method": "eigen_solver",
+     "text": "e2=np.linalg.eigvalsh(Dq*M[4][0]+B*M[4][1]+C*M[4][2])"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat >> fit.py <<'EOF'\nfrom scipy.optimize import least_squares\ndef res(p):\n    g,q=lev(p[0],p[1],4.3*p[1]); return np.array([x for x,n in g[1:4]])-obs\nfor s in best[:3]:\n    r=least_squares(res,[s[1],s[2]]); print(r.x, res(r.x), lev(r.x[0],r.x[1],4.3*r.x[1])[0][:4], lev(r.x[0],r.x[1],4.3*r.x[1])[1])\nEOF\nsed -i 's/np.arange(1500,4001,25)/np.arange(2500,2651,25)/; s/np.arange(200,1201,10)/np.arange(700,761,10)/' fit.py\ntimeout 110 python3 fit.py",
+   "scripts": [
+    {
+     "name": "fit.py",
+     "sha256": "e5c913588f55c235f0042d71ca3ffa630f125851615aad1456e0ad3062a8db8f",
+     "lines": 5,
+     "code": "from scipy.optimize import least_squares\ndef res(p):\n    g,q=lev(p[0],p[1],4.3*p[1]); return np.array([x for x,n in g[1:4]])-obs\nfor s in best[:3]:\n    r=least_squares(res,[s[1],s[2]]); print(r.x, res(r.x), lev(r.x[0],r.x[1],4.3*r.x[1])[0][:4], lev(r.x[0],r.x[1],4.3*r.x[1])[1])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "fit.py",
+     "written_in_step": 9
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[(0, 11), (1701, 3), (1905, 7), (3000, 9), (7200, 5), (20235, 7), (20439, 3)]\n(np.float64(1552.1075677729082), np.int64(2575), np.int64(730), [(0, 3), (22927, 2), (23727, 3), (24552, 3), (25791, 1), (26857, 1)], 6665)\n(np.float64(1884.2143157058542), np.int64(2575), np.int64(740), [(0, 3), (22897, 2), (23708, 3), (24543, 3), (25801, 1), (26867, 1)], 6413)\n(np.float64(3954.399377840093), np.int64(2575), np.int64(720), [(0, 3), (22958, 2), (23746, 3), (24561, 3), (25781, 1), (26848, 1)], 6917)\n(np.float64(4896.0924912634355), np.int64(2575), np.int64(750), [(0, 3), (22867, 2), (23690, 3), (24533, 3), (25812, 1), (26877, 1)], 6162)\n(np.float64(9147.060253029498), np.int64(2575), np.int64(710), [(0, 3), (22989, 2), (23765, 3), (24571, 3), (25771, 1), (26838, 1)], 7169)\n(np.float64(10534.421139997079), np.int64(2575), np.int64(760), [(0, 3), (22837, 2), (23671, 3), (24524, 3), (25822, 1), (26886, 1)], 5910)\n(np.float64(17187.44246513531), np.int64(2575), np.int64(700), [(0, 3), (23019, 2), (23784, 3), (24580, 3), (25761, 1), (26828, 1)], 7421)\n(np.float64(102510.38334730998), np.int64(2600), np.int64(760), [(0, 3), (23081, 2), (23915, 3), (24769, 3), (26065, 1), (27140, 1)], 6153)\n[2580.3376324   756.29432387] [-0.00977055  0.02181759 -0.0119604 ] [(np.float64(0.0), 3), (np.float64(22899.990229454525), 2), (np.float64(23730.021817589746), 3), (np.float64(24579.988039603806), 3)] 6055.139304963348\n[2580.33763243  756.29432389] [-0.00977033  0.02181783 -0.01196013] [(np.float64(0.0), 3), (np.float64(22899.990229666015), 2), (np.float64(23730.021817829853), 3), (np.float64(24579.98803986903), 3)] 6055.139304618424\n[2580.33763239  756.29432383] [-0.0097705   0.02181759 -0.01196044] [(np.float64(0.0), 3), (np.float64(22899.990229496456), 2), (np.float64(23730.021817586618), 3), (np.float64(24579.98803956376), 3)] 6055.139305866265",
+   "stdout_truncated": false,
+   "methods": [
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "fit.py",
+     "line": 1,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "fit.py",
+     "line": 5,
+     "method": "least_squares",
+     "text": "r=least_squares(res,[s[1],s[2]]); print(r.x, res(r.x), lev(r.x[0],r.x[1],4.3*r.x[1])[0][:4], lev(r.x[0],r.x[1],4.3*r.x[1])[1])"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 2580.0,
+   "weak": false,
+   "steps": [
+    8,
+    9
+   ],
+   "typed_in_steps": [
+    8
+   ],
+   "source_step": 9
+  },
+  {
+   "path": "B",
+   "value": 756.0,
+   "weak": false,
+   "steps": [
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "C",
+   "value": 3252.0,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 10,
+  "n_scripts": 7,
+  "n_failed_steps": 3,
+  "n_values": 3,
+  "n_linked": 2,
+  "n_weak": 0,
+  "source_steps": [
+   9
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": true
+ }
+}

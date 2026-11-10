@@ -1,0 +1,1 @@
+cd "$(mktemp -d /dev/shm/ldXXXX 2>/dev/null || echo /tmp)" && pwd && touch x && echo writable; df -h . | tail -1

@@ -1,0 +1,1 @@
+python3 -m pip install -q matplotlib numpy scipy

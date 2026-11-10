@@ -1,0 +1,1 @@
+cd ~ && pwd && touch t.txt && echo writable; python3 -c "import sys; print(sys.version)"

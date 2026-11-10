@@ -1,0 +1,1 @@
+touch y && echo ok; python3 -c "import sys; print(sys.version)"

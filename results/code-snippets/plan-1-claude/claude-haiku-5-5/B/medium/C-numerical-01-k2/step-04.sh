@@ -1,0 +1,1 @@
+pwd; echo $HOME; touch ./x_test && echo writable_cwd && rm ./x_test

@@ -1,0 +1,1 @@
+for d in /dev/shm /var/tmp $HOME /root; do touch $d/t 2>/dev/null && echo "ok $d"; done; echo done

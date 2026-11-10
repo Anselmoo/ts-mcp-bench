@@ -1,0 +1,1 @@
+pwd; echo $HOME; ls -ld $HOME 2>&1; touch $HOME/x 2>&1 && echo ok

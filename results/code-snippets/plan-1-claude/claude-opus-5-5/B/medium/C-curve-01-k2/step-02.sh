@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null || cd .; pwd; touch x && echo ok; ls -ld $TMPDIR /dev/shm 2>&1

@@ -1,0 +1,1 @@
+sed -i 's/for o in (s_,r):/for o in (r,s_):/; s/(-1)\*\*m1\*5\*np.sqrt/(-1)**m1*np.sqrt/' ts.py && MPLCONFIGDIR=<SANDBOX_TMP> python ts.py && sha256sum diagram.png

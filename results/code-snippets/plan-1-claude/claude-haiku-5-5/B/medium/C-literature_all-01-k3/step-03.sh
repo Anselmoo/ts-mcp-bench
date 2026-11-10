@@ -1,0 +1,1 @@
+pwd; ls -ld . ; touch ./x_test && echo ok; df -h . | tail -1; echo $HOME

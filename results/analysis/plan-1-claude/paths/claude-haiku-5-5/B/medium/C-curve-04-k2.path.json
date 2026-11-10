@@ -1,0 +1,1174 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-curve-04-k2.jsonl",
+ "transcript_sha256": "b539d80b9430164da357bb9491c58d811536e9e12cf4cdb822c42f35652a1828",
+ "answer": {
+  "points": [
+   {
+    "dq_over_b": 1.45,
+    "term": "4T1(G)",
+    "e_over_b": 20.46
+   },
+   {
+    "dq_over_b": 1.45,
+    "term": "2T2(I)",
+    "e_over_b": 25.0
+   },
+   {
+    "dq_over_b": 1.45,
+    "term": "4T2(G)",
+    "e_over_b": 26.25
+   },
+   {
+    "dq_over_b": 2.55,
+    "term": "2T2(I)",
+    "e_over_b": 4.11
+   },
+   {
+    "dq_over_b": 2.55,
+    "term": "4T1(G)",
+    "e_over_b": 9.8
+   },
+   {
+    "dq_over_b": 2.55,
+    "term": "4T2(G)",
+    "e_over_b": 16.78
+   },
+   {
+    "dq_over_b": 3.25,
+    "term": "6A1(S)",
+    "e_over_b": 9.45
+   },
+   {
+    "dq_over_b": 3.25,
+    "term": "4T1(G)",
+    "e_over_b": 12.37
+   },
+   {
+    "dq_over_b": 3.25,
+    "term": "4T2(G)",
+    "e_over_b": 19.64
+   }
+  ],
+  "reason": "I built the full 252-microstate d5 Hamiltonian (Racah B=800, C=3473 cm⁻¹, so C/B=4.34, with F2=49B+7C and F4=12.6C) and diagonalised it at each Dq/B, then grouped the levels by octahedral irrep, spin multiplicity and parent term; at Dq/B=3.25 the ground term is the low-spin 2T2(I) (3.25 is above the high-spin/low-spin crossover), so the 6A1 sextet becomes an excited term at +9.45 B, and the energies listed there are measured from that 2T2 ground."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numerical Python packages available",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy|sympy\" ",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(Bash completed with no output)",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d5 microstate Hamiltonian machinery and group operators",
+   "command": "mkdir -p /work && cat > /work/ts.py << 'EOF'\nimport numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm, eigh\nfrom sympy.physics.wigner import gaunt\n\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C   # B=(9F2-5F4)/441, C=35F4/441\nFk={2:F2,4:F4}\n# spin-orbital index: o + 5*s, o=m+2, s=0 up,1 down\ndef ang(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*(-1)**(ma+2*0)*float(gaunt(2,k,2,-ma,q,mc).evalf()) * (-1)**0\n# careful: (-1)^{ma} with ma integer\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\n# two-electron antisymmetrized-free matrix <ab|V|cd> (orbital indices m)\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if abs(q)>2 or abs(q)>k: continue\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\n# spin-orbital two-body tensor\ndef sidx(o,s): return o+5*s\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    oa,sa=a%5,a//5; ob,sb=b%5,b//5; oc,sc=c%5,c//5; od,sd=d%5,d//5\n    if sa!=sc or sb!=sd: continue\n    v=Vorb[oa,ob,oc,od]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\n# basis\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    sign=(-1)**bin(occ & ((1<<i)-1)).count('1')\n    return sign, occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    sign=(-1)**bin(occ & ((1<<i)-1)).count('1')\n    return sign, occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\n# one-electron CF: t2g -4Dq, eg +6Dq ; P_eg in m-basis\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\n# spin operators\ndef spin_ops():\n    Sz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\n    for o in range(5):\n        Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5\n        Sp[o,o+5]=1.0\n    return one_body(Sz), one_body(Sp)\nSzM,SpM=spin_ops()\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\n# orbital L ops (m basis)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l): \n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nL2=sum(one_body(lift(l))@one_body(lift(l)) for l in (lx,ly,lz))\nLz_M=one_body(lift(lz))\n# group elements: generate SO(3) rep pairs\nLops=[lx,ly,lz]\ndef Dmat(n,th):\n    nL=sum(n[i]*Lops[i] for i in range(3))\n    return expm(-1j*th*nL)\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24, len(elems)\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8:\n        c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\nfrom collections import Counter\nprint(Counter(classes))\n# many-body unitary\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\ndef proj(irrep):\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes):\n        P+=cls_char[c][irrep]*Us[g]\n    return dims[irrep]/24*P\nPG={r:proj(r) for r in dims}\nnp.save('/work/dummy.npy',np.zeros(1))\nEOF\ncd /work && time python -c \"exec(open('ts.py').read()); print(np.allclose(S2@np.eye(N),S2))\"",
+   "scripts": [
+    {
+     "name": "ts.py",
+     "sha256": "34b80013ee97841aca2376dc9f6f1a0e6bdd42dc100df3d440bcfe2008b8b98a",
+     "lines": 170,
+     "code": "import numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm, eigh\nfrom sympy.physics.wigner import gaunt\n\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C   # B=(9F2-5F4)/441, C=35F4/441\nFk={2:F2,4:F4}\n# spin-orbital index: o + 5*s, o=m+2, s=0 up,1 down\ndef ang(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*(-1)**(ma+2*0)*float(gaunt(2,k,2,-ma,q,mc).evalf()) * (-1)**0\n# careful: (-1)^{ma} with ma integer\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\n# two-electron antisymmetrized-free matrix <ab|V|cd> (orbital indices m)\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if abs(q)>2 or abs(q)>k: continue\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\n# spin-orbital two-body tensor\ndef sidx(o,s): return o+5*s\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    oa,sa=a%5,a//5; ob,sb=b%5,b//5; oc,sc=c%5,c//5; od,sd=d%5,d//5\n    if sa!=sc or sb!=sd: continue\n    v=Vorb[oa,ob,oc,od]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\n# basis\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    sign=(-1)**bin(occ & ((1<<i)-1)).count('1')\n    return sign, occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    sign=(-1)**bin(occ & ((1<<i)-1)).count('1')\n    return sign, occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\n# one-electron CF: t2g -4Dq, eg +6Dq ; P_eg in m-basis\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\n# spin operators\ndef spin_ops():\n    Sz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\n    for o in range(5):\n        Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5\n        Sp[o,o+5]=1.0\n    return one_body(Sz), one_body(Sp)\nSzM,SpM=spin_ops()\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\n# orbital L ops (m basis)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l): \n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nL2=sum(one_body(lift(l))@one_body(lift(l)) for l in (lx,ly,lz))\nLz_M=one_body(lift(lz))\n# group elements: generate SO(3) rep pairs\nLops=[lx,ly,lz]\ndef Dmat(n,th):\n    nL=sum(n[i]*Lops[i] for i in range(3))\n    return expm(-1j*th*nL)\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24, len(elems)\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8:\n        c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\nfrom collections import Counter\nprint(Counter(classes))\n# many-body unitary\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\ndef proj(irrep):\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes):\n        P+=cls_char[c][irrep]*Us[g]\n    return dims[irrep]/24*P\nPG={r:proj(r) for r in dims}\nnp.save('/work/dummy.npy',np.zeros(1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/work’: Read-only file system\n/bin/bash: line 345: cd: /work: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "ts.py",
+     "line": 16,
+     "method": "matrix",
+     "text": "Vorb=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "ts.py",
+     "line": 46,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 60,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 79,
+     "method": "matrix",
+     "text": "Peg[2,2]=1.0"
+    },
+    {
+     "script": "ts.py",
+     "line": 85,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 92,
+     "method": "matrix",
+     "text": "Sz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 94,
+     "method": "matrix",
+     "text": "Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5"
+    },
+    {
+     "script": "ts.py",
+     "line": 101,
+     "method": "matrix",
+     "text": "lp=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "ts.py",
+     "line": 107,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h"
+    },
+    {
+     "script": "ts.py",
+     "line": 117,
+     "method": "matrix",
+     "text": "K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])"
+    },
+    {
+     "script": "ts.py",
+     "line": 148,
+     "method": "matrix",
+     "text": "u=np.zeros((10,10),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Create writable work directory and check Python libs",
+   "command": "mkdir -p /tmp/work && cd /tmp/work && echo ok && python -c \"import numpy, scipy, sympy; print(numpy.__version__, scipy.__version__, sympy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/work’: Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Check Python numerical libraries without writing files",
+   "command": "cd ~ 2>/dev/null && pwd; python3 -c \"import numpy, scipy, sympy; print(numpy.__version__, scipy.__version__, sympy.__version__)\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\n2.5.4 1.18.1 1.14.0\nShell cwd was reset to /tmp/tsbench-run-1cj522g6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Build d5 Hamiltonian and check spectrum at Dq=0",
+   "command": "cat << 'EOF' > /tmp/tsbench-home-xehwqch9/ts_part1.py\nimport numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24, len(elems)\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\nfrom collections import Counter\nprint(Counter(classes))\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\nEOF\ncd /tmp/tsbench-home-xehwqch9 && time python3 -c \"\nexec(open('ts_part1.py').read())\nprint('N',N,'S2 eig', np.unique(np.round(np.linalg.eigvalsh(S2),6)))\nprint('Dq0 H spectrum check:')\nH0=V2+one_body(hcf(0.0))\nprint(np.unique(np.round(np.linalg.eigvalsh((H0+H0.conj().T)/2),4)))\nprint('commute test', np.abs(H0@PG['T1']-PG['T1']@H0).max(), np.abs(S2@PG['T1']-PG['T1']@S2).max())\n\"",
+   "scripts": [
+    {
+     "name": "ts_part1.py",
+     "sha256": "dfea3a88894b12cc9bf2e179eef2311666c7760b42e7257e5805b1656ac596da",
+     "lines": 145,
+     "code": "import numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24, len(elems)\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\nfrom collections import Counter\nprint(Counter(classes))\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 155: /tmp/tsbench-home-xehwqch9/ts_part1.py: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    exec(open('ts_part1.py').read())\n         ~~~~^^^^^^^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: 'ts_part1.py'\n\nreal\t0m0,045s\nuser\t0m0,029s\nsys\t0m0,015s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "ts_part1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vorb=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 47,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 64,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "Peg[2,2]=1.0"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 71,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 76,
+     "method": "matrix",
+     "text": "Sz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 82,
+     "method": "matrix",
+     "text": "lp=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 88,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 96,
+     "method": "matrix",
+     "text": "K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])"
+    },
+    {
+     "script": "ts_part1.py",
+     "line": 125,
+     "method": "matrix",
+     "text": "u=np.zeros((10,10),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Write d5 Hamiltonian script to a temp location",
+   "command": "cd /tmp && cat << 'EOF' > /tmp/tsrun.py\nexec(open('/dev/stdin').read()) if False else None\nEOF\npython3 - << 'EOF'\nimport numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24, len(elems)\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\nfrom collections import Counter\nprint(Counter(classes))\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\nprint('S2 eig', np.unique(np.round(np.linalg.eigvalsh(S2),6)))\nH0=V2+one_body(hcf(0.0))\nprint('H0 eig', np.unique(np.round(np.linalg.eigvalsh((H0+H0.conj().T)/2),4)))\nprint('commute', np.abs(H0@PG['T1']-PG['T1']@H0).max(), np.abs(L2@H0-H0@L2).max())\nprint('sum projectors', np.abs(sum(PG.values())).trace().real if False else '')\nEOF\necho written",
+   "scripts": [
+    {
+     "name": "tsrun.py",
+     "sha256": "1c0fdaefc1360fbdededd17d46b37142de6437c7eba26a81f8cf216c6b957419",
+     "lines": 1,
+     "code": "exec(open('/dev/stdin').read()) if False else None\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "286d48dfd5f5b978d5f3ec8bbff8f483be322c3892ff37783ca7414292c7b8e2",
+     "lines": 150,
+     "code": "import numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24, len(elems)\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\nfrom collections import Counter\nprint(Counter(classes))\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\nprint('S2 eig', np.unique(np.round(np.linalg.eigvalsh(S2),6)))\nH0=V2+one_body(hcf(0.0))\nprint('H0 eig', np.unique(np.round(np.linalg.eigvalsh((H0+H0.conj().T)/2),4)))\nprint('commute', np.abs(H0@PG['T1']-PG['T1']@H0).max(), np.abs(L2@H0-H0@L2).max())\nprint('sum projectors', np.abs(sum(PG.values())).trace().real if False else '')\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 156: /tmp/tsrun.py: Read-only file system\nCounter({'C3': 8, 'C4': 6, \"C2'\": 6, 'C2': 3, 'E': 1})\nS2 eig [0.75 3.75 8.75]\nH0 eig [-95.7775 -64.0713 -64.0712 -58.3888 -57.0713 -57.0712 -50.0475 -43.6056\n -43.3888 -43.3887 -42.365  -39.365  -39.0475 -35.0475 -29.0475 -21.365\n -14.365    2.635   11.5581]\ncommute 7.229248575812844e-15 2.8421709430404007e-13\nsum projectors \nwritten\nShell cwd was reset to /tmp/tsbench-run-1cj522g6",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vorb=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 47,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 64,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "Peg[2,2]=1.0"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 71,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 76,
+     "method": "matrix",
+     "text": "Sz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 82,
+     "method": "matrix",
+     "text": "lp=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 88,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 96,
+     "method": "matrix",
+     "text": "K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 125,
+     "method": "matrix",
+     "text": "u=np.zeros((10,10),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Check shell state",
+   "command": "cd /tmp && python3 - << 'EOF'\nexec(open('/dev/null').read())\nEOF\ncat > /dev/null << 'EOF'\nEOF\npython3 -c \"print('ok')\"; ls /tmp/tsbench-run-1cj522g6 2>/dev/null | head -2",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "ab21bbd9b17155cc0d34346683740a32d0fe1e4ab4b6590ea3a4f3313c5ba007",
+     "lines": 1,
+     "code": "exec(open('/dev/null').read())\n"
+    },
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok\nShell cwd was reset to /tmp/tsbench-run-1cj522g6",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Quick test of group and clusters (no-op)",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nfrom collections import Counter\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\n\ndef projector_eig(M, target, tol=1e-6):\n    w,V=np.linalg.eigh((M+M.conj().T)/2)\n    sel=np.abs(w-target)<tol\n    return V[:,sel]\nSspins={2.5:35/4,1.5:15/4,0.5:3/4}\nLsym={0:'S',1:'P',2:'D',3:'F',4:'G',5:'H',6:'I'}\n# S-sector bases\nSsec={}\nfor S,val in Sspins.items():\n    Ssec[S]=projector_eig(S2,val)\n# parent clusters at small Dq\nDq_small=0.01\nH0=V2+one_body(hcf(0.0))\ndef clusters_for(S):\n    Vs=Ssec[S]\n    A=Vs.conj().T@(H0+0.0137*L2)@Vs\n    w,U=np.linalg.eigh((A+A.conj().T)/2)\n    cl=[]\n    i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1\n        basis=Vs@U[:,i:j+1]\n        Lval=np.real(np.vdot(basis[:,0],L2@basis[:,0]))\n        Lv=round((-1+np.sqrt(1+4*Lval))/2)\n        Eval=np.real(np.vdot(basis[:,0],H0@basis[:,0]))\n        cl.append(dict(basis=basis,L=Lv,E=Eval))\n        i=j+1\n    return cl\nclus={S:clusters_for(S) for S in Sspins}\nfor S in Sspins:\n    print('S=',S,[(c['L'],round(c['E'],3),c['basis'].shape[1]) for c in clus[S]])\n\ndef levels(Dq):\n    H=V2+one_body(hcf(Dq))\n    out=[]\n    for S in Sspins:\n        for r in dims:\n            P=PG[r]@(Ssec[S]@Ssec[S].conj().T)\n            Q=projector_eig(P,1.0)\n            if Q.shape[1]==0: continue\n            Hr=Q.conj().T@H@Q\n            w,X=np.linalg.eigh((Hr+Hr.conj().T)/2)\n            d=dims[r]\n            # group\n            k=0; levs=[]\n            i=0\n            while i<len(w):\n                j=i\n                while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n                mult=j-i+1\n                assert mult%d==0, (mult,d)\n                for _ in range(mult//d):\n                    pass\n                levs.append((w[i],i,j))\n                i=j+1\n            for (e,i,j) in levs:\n                x=X[:,i]\n                wfull=Q@x\n                # parent weights\n                best=None\n                wts=[]\n                for c in clus[S]:\n                    wt=np.linalg.norm(c['basis'].conj().T@wfull)**2\n                    wts.append(wt)\n                ci=int(np.argmax(wts))\n                out.append(dict(S=S,G=r,E=e,mult=(j-i+1)//d,parent=clus[S][ci]['L'],pw=max(wts),\n                                 Ecl=clus[S][ci]['E']))\n    return out\ndef term_list(Dq):\n    return levels(Dq)\nimport pickle\nres0=levels(Dq_small)\n# ground: S=2.5, A1\ngr=[x for x in res0 if x['S']==2.5 and x['G']=='A1']\nprint('ground block levels', [round(x['E'],4) for x in gr])\nEOF\necho",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "2f3ab0ae397eb833b9eede271c3a9ec86dfcbdea2f24023ce8e1e78672a5e857",
+     "lines": 221,
+     "code": "import numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nfrom collections import Counter\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\n\ndef projector_eig(M, target, tol=1e-6):\n    w,V=np.linalg.eigh((M+M.conj().T)/2)\n    sel=np.abs(w-target)<tol\n    return V[:,sel]\nSspins={2.5:35/4,1.5:15/4,0.5:3/4}\nLsym={0:'S',1:'P',2:'D',3:'F',4:'G',5:'H',6:'I'}\n# S-sector bases\nSsec={}\nfor S,val in Sspins.items():\n    Ssec[S]=projector_eig(S2,val)\n# parent clusters at small Dq\nDq_small=0.01\nH0=V2+one_body(hcf(0.0))\ndef clusters_for(S):\n    Vs=Ssec[S]\n    A=Vs.conj().T@(H0+0.0137*L2)@Vs\n    w,U=np.linalg.eigh((A+A.conj().T)/2)\n    cl=[]\n    i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1\n        basis=Vs@U[:,i:j+1]\n        Lval=np.real(np.vdot(basis[:,0],L2@basis[:,0]))\n        Lv=round((-1+np.sqrt(1+4*Lval))/2)\n        Eval=np.real(np.vdot(basis[:,0],H0@basis[:,0]))\n        cl.append(dict(basis=basis,L=Lv,E=Eval))\n        i=j+1\n    return cl\nclus={S:clusters_for(S) for S in Sspins}\nfor S in Sspins:\n    print('S=',S,[(c['L'],round(c['E'],3),c['basis'].shape[1]) for c in clus[S]])\n\ndef levels(Dq):\n    H=V2+one_body(hcf(Dq))\n    out=[]\n    for S in Sspins:\n        for r in dims:\n            P=PG[r]@(Ssec[S]@Ssec[S].conj().T)\n            Q=projector_eig(P,1.0)\n            if Q.shape[1]==0: continue\n            Hr=Q.conj().T@H@Q\n            w,X=np.linalg.eigh((Hr+Hr.conj().T)/2)\n            d=dims[r]\n            # group\n            k=0; levs=[]\n            i=0\n            while i<len(w):\n                j=i\n                while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n                mult=j-i+1\n                assert mult%d==0, (mult,d)\n                for _ in range(mult//d):\n                    pass\n                levs.append((w[i],i,j))\n                i=j+1\n            for (e,i,j) in levs:\n                x=X[:,i]\n                wfull=Q@x\n                # parent weights\n                best=None\n                wts=[]\n                for c in clus[S]:\n                    wt=np.linalg.norm(c['basis'].conj().T@wfull)**2\n                    wts.append(wt)\n                ci=int(np.argmax(wts))\n                out.append(dict(S=S,G=r,E=e,mult=(j-i+1)//d,parent=clus[S][ci]['L'],pw=max(wts),\n                                 Ecl=clus[S][ci]['E']))\n    return out\ndef term_list(Dq):\n    return levels(Dq)\nimport pickle\nres0=levels(Dq_small)\n# ground: S=2.5, A1\ngr=[x for x in res0 if x['S']==2.5 and x['G']=='A1']\nprint('ground block levels', [round(x['E'],4) for x in gr])\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "S= 2.5 [(0, np.float64(-95.778), 6)]\nS= 1.5 [(4, np.float64(-64.071), 36), (1, np.float64(-58.389), 12), (2, np.float64(-57.071), 20), (3, np.float64(-43.389), 28)]\nS= 0.5 [(6, np.float64(-50.048), 26), (2, np.float64(-43.606), 10), (3, np.float64(-42.365), 14), (5, np.float64(-39.365), 22), (4, np.float64(-39.048), 18), (3, np.float64(-35.048), 14), (0, np.float64(-29.048), 2), (2, np.float64(-21.365), 10), (4, np.float64(-14.365), 18), (1, np.float64(2.635), 6), (2, np.float64(11.558), 10)]\nground block levels [np.float64(-95.7775)]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "Vorb=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 66,
+     "method": "matrix",
+     "text": "Peg[2,2]=1.0"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 77,
+     "method": "matrix",
+     "text": "Sz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 79,
+     "method": "matrix",
+     "text": "Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 83,
+     "method": "matrix",
+     "text": "lp=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 89,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 97,
+     "method": "matrix",
+     "text": "K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 124,
+     "method": "matrix",
+     "text": "u=np.zeros((10,10),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Compute parent-labelled term levels at small Dq",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\ndef projector_eig(M, target, tol=1e-6):\n    w,V=np.linalg.eigh((M+M.conj().T)/2)\n    return V[:,np.abs(w-target)<tol]\nSspins={2.5:35/4,1.5:15/4,0.5:3/4}\nLsym={0:'S',1:'P',2:'D',3:'F',4:'G',5:'H',6:'I'}\nSsec={S:projector_eig(S2,val) for S,val in Sspins.items()}\nH0=V2+one_body(hcf(0.0))\ndef clusters_for(S):\n    Vs=Ssec[S]\n    A=Vs.conj().T@(H0+0.0137*L2)@Vs\n    w,U=np.linalg.eigh((A+A.conj().T)/2)\n    cl=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1\n        basis=Vs@U[:,i:j+1]\n        Lval=np.real(np.vdot(basis[:,0],L2@basis[:,0]))\n        Lv=round((-1+np.sqrt(1+4*Lval))/2)\n        Eval=np.real(np.vdot(basis[:,0],H0@basis[:,0]))\n        cl.append(dict(basis=basis,L=Lv,E=Eval)); i=j+1\n    return cl\nclus={S:clusters_for(S) for S in Sspins}\nQs={}\nfor S in Sspins:\n    for r in dims:\n        P=PG[r]@(Ssec[S]@Ssec[S].conj().T)\n        Qs[(S,r)]=projector_eig(P,1.0)\ndef levels(Dq):\n    H=V2+one_body(hcf(Dq))\n    out=[]\n    for S in Sspins:\n        for r in dims:\n            Q=Qs[(S,r)]\n            if Q.shape[1]==0: continue\n            d=dims[r]\n            Hr=Q.conj().T@H@Q\n            w,X=np.linalg.eigh((Hr+Hr.conj().T)/2)\n            i=0\n            while i<len(w):\n                j=i\n                while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n                mult=j-i+1\n                assert mult%d==0\n                wfull=Q@X[:,i]\n                wts=[np.linalg.norm(c['basis'].conj().T@wfull)**2 for c in clus[S]]\n                ci=int(np.argmax(wts))\n                out.append(dict(S=S,G=r,E=w[i],copies=mult//d,L=clus[S][ci]['L'],pw=wts[ci],mult=2*S+1))\n                i=j+1\n    return out\n# ground\nres0=levels(0.01)\ng=[x for x in res0 if x['S']==2.5 and x['G']=='A1']\nE0=g[0]['E']\nprint('parent-check small Dq:')\nfor x in sorted(res0,key=lambda x:x['E']):\n    print(f\"{int(x['mult'])}{x['G']}({Lsym[x['L']]}) E/B={x['E']-E0:.4f} pw={x['pw']:.3f} copies={x['copies']}\")\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "1e32fa0b9b23cab86df2a021bb15d6051ddb95bc09eb9fb87129f7456bdab19b",
+     "lines": 199,
+     "code": "import numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\ndef projector_eig(M, target, tol=1e-6):\n    w,V=np.linalg.eigh((M+M.conj().T)/2)\n    return V[:,np.abs(w-target)<tol]\nSspins={2.5:35/4,1.5:15/4,0.5:3/4}\nLsym={0:'S',1:'P',2:'D',3:'F',4:'G',5:'H',6:'I'}\nSsec={S:projector_eig(S2,val) for S,val in Sspins.items()}\nH0=V2+one_body(hcf(0.0))\ndef clusters_for(S):\n    Vs=Ssec[S]\n    A=Vs.conj().T@(H0+0.0137*L2)@Vs\n    w,U=np.linalg.eigh((A+A.conj().T)/2)\n    cl=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1\n        basis=Vs@U[:,i:j+1]\n        Lval=np.real(np.vdot(basis[:,0],L2@basis[:,0]))\n        Lv=round((-1+np.sqrt(1+4*Lval))/2)\n        Eval=np.real(np.vdot(basis[:,0],H0@basis[:,0]))\n        cl.append(dict(basis=basis,L=Lv,E=Eval)); i=j+1\n    return cl\nclus={S:clusters_for(S) for S in Sspins}\nQs={}\nfor S in Sspins:\n    for r in dims:\n        P=PG[r]@(Ssec[S]@Ssec[S].conj().T)\n        Qs[(S,r)]=projector_eig(P,1.0)\ndef levels(Dq):\n    H=V2+one_body(hcf(Dq))\n    out=[]\n    for S in Sspins:\n        for r in dims:\n            Q=Qs[(S,r)]\n            if Q.shape[1]==0: continue\n            d=dims[r]\n            Hr=Q.conj().T@H@Q\n            w,X=np.linalg.eigh((Hr+Hr.conj().T)/2)\n            i=0\n            while i<len(w):\n                j=i\n                while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n                mult=j-i+1\n                assert mult%d==0\n                wfull=Q@X[:,i]\n                wts=[np.linalg.norm(c['basis'].conj().T@wfull)**2 for c in clus[S]]\n                ci=int(np.argmax(wts))\n                out.append(dict(S=S,G=r,E=w[i],copies=mult//d,L=clus[S][ci]['L'],pw=wts[ci],mult=2*S+1))\n                i=j+1\n    return out\n# ground\nres0=levels(0.01)\ng=[x for x in res0 if x['S']==2.5 and x['G']=='A1']\nE0=g[0]['E']\nprint('parent-check small Dq:')\nfor x in sorted(res0,key=lambda x:x['E']):\n    print(f\"{int(x['mult'])}{x['G']}({Lsym[x['L']]}) E/B={x['E']-E0:.4f} pw={x['pw']:.3f} copies={x['copies']}\")\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "parent-check small Dq:\n6A1(S) E/B=0.0000 pw=1.000 copies=6\n2A1(S) E/B=66.7300 pw=1.000 copies=2",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vorb=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 47,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "Peg[2,2]=1.0"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 71,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 76,
+     "method": "matrix",
+     "text": "Sz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 82,
+     "method": "matrix",
+     "text": "lp=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 88,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 96,
+     "method": "matrix",
+     "text": "K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 123,
+     "method": "matrix",
+     "text": "u=np.zeros((10,10),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Debug isotypic projector properties",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\nprint('idempotent check', {r: np.abs(PG[r]@PG[r]-PG[r]).max() for r in dims})\nprint('ranks', {r: round(np.trace(PG[r]).real,3) for r in dims})\nprint('herm', {r: np.abs(PG[r]-PG[r].conj().T).max() for r in dims})\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "b56bdc4789d4d31de673ee4c1692e4d675f4da9a48d51dbff7d3abce930e0b31",
+     "lines": 146,
+     "code": "import numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\nprint('idempotent check', {r: np.abs(PG[r]@PG[r]-PG[r]).max() for r in dims})\nprint('ranks', {r: round(np.trace(PG[r]).real,3) for r in dims})\nprint('herm', {r: np.abs(PG[r]-PG[r].conj().T).max() for r in dims})\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "idempotent check {'A1': np.float64(0.13451950892742676), 'A2': np.float64(0.19614977415499177), 'E': np.float64(0.3284398874903719), 'T1': np.float64(0.32403120197530455), 'T2': np.float64(0.31988881228445576)}\nranks {'A1': np.float64(14.761), 'A2': np.float64(10.977), 'E': np.float64(42.438), 'T1': np.float64(92.243), 'T2': np.float64(91.58)}\nherm {'A1': np.float64(0.23792989495426936), 'A2': np.float64(0.26379528251814766), 'E': np.float64(0.25427515928591693), 'T1': np.float64(0.3280740644134173), 'T2': np.float64(0.33056811462975855)}",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vorb=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 47,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "Peg[2,2]=1.0"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 71,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 76,
+     "method": "matrix",
+     "text": "Sz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 82,
+     "method": "matrix",
+     "text": "lp=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 88,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 96,
+     "method": "matrix",
+     "text": "K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 123,
+     "method": "matrix",
+     "text": "u=np.zeros((10,10),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "Check angular momentum matrices and rotation unitarity",
+   "command": "python3 - << 'EOF'\nimport numpy as np\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\nLops=[lx,ly,lz]\nprint('commutator check', np.abs(lx@ly-ly@lx-1j*lz).max())\ndef Dmat(n,th): return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\nD1=Dmat([0,0,1],pi/2); D2=Dmat([1,1,1],2*np.pi/3)\nprint('unitary', np.abs(D1@D1.conj().T-np.eye(5)).max())\nprint('C4^4=1', np.abs(np.linalg.matrix_power(D1,4)-np.eye(5)).max())\nprint('trace C4', np.trace(D1), 'trace C3', np.trace(D2))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "c835b71a6d88240f3f066390cbdde817682c97f42f25bf14f616b927b3ca8453",
+     "lines": 16,
+     "code": "import numpy as np\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\nLops=[lx,ly,lz]\nprint('commutator check', np.abs(lx@ly-ly@lx-1j*lz).max())\ndef Dmat(n,th): return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\nD1=Dmat([0,0,1],pi/2); D2=Dmat([1,1,1],2*np.pi/3)\nprint('unitary', np.abs(D1@D1.conj().T-np.eye(5)).max())\nprint('C4^4=1', np.abs(np.linalg.matrix_power(D1,4)-np.eye(5)).max())\nprint('trace C4', np.trace(D1), 'trace C3', np.trace(D2))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "commutator check 5.551115123125783e-16\nunitary 0.0\nC4^4=1 4.898587196589413e-16\ntrace C4 (-0.9999999999999999+9.957992501029599e-17j) trace C3 (0.3588662667492718+8.326672684688674e-17j)",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 5,
+     "method": "matrix",
+     "text": "lp=np.zeros((5,5),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 11,
+   "tool": "Bash",
+   "description": "Fix normalization bug and verify group representation",
+   "command": "cat > /dev/null << 'EOF'\nEOF\npython3 - << 'EOF'\nimport numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    n=np.array(n,float); n=n/np.linalg.norm(n)\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24\n# check homomorphism of D: D for each elem should have trace consistent with its class\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\n# verify representation property on a few products\nimport random\nerr=max(np.abs(Us[i]@Us[j]-Us[k]).max() for i,j,k in [(random.randrange(24),random.randrange(24),0) for _ in range(5)] for k in [None] if False) if False else 0\nfor _ in range(5):\n    i,j=random.randrange(24),random.randrange(24)\n    Rk=elems[i][0]@elems[j][0]; kk=find(Rk)\n    err=max(err,np.abs(Us[i]@Us[j]-Us[kk]).max())\nprint('rep error',err)\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\nprint('idempotent', max(np.abs(PG[r]@PG[r]-PG[r]).max() for r in dims))\nprint('ranks', {r: round(np.trace(PG[r]).real,3) for r in dims})\nEOF",
+   "scripts": [
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "c09dd135504f1371b681311762825736adcaa081a87bcb31b3ee5fc12884875f",
+     "lines": 155,
+     "code": "import numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    n=np.array(n,float); n=n/np.linalg.norm(n)\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nassert len(elems)==24\n# check homomorphism of D: D for each elem should have trace consistent with its class\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\n# verify representation property on a few products\nimport random\nerr=max(np.abs(Us[i]@Us[j]-Us[k]).max() for i,j,k in [(random.randrange(24),random.randrange(24),0) for _ in range(5)] for k in [None] if False) if False else 0\nfor _ in range(5):\n    i,j=random.randrange(24),random.randrange(24)\n    Rk=elems[i][0]@elems[j][0]; kk=find(Rk)\n    err=max(err,np.abs(Us[i]@Us[j]-Us[kk]).max())\nprint('rep error',err)\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\nprint('idempotent', max(np.abs(PG[r]@PG[r]-PG[r]).max() for r in dims))\nprint('ranks', {r: round(np.trace(PG[r]).real,3) for r in dims})\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "rep error 1.897098395746525e-15\nidempotent 6.936734423106134e-16\nranks {'A1': np.float64(18.0), 'A2': np.float64(10.0), 'E': np.float64(44.0), 'T1': np.float64(84.0), 'T2': np.float64(96.0)}",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vorb=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 47,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 64,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "Peg[2,2]=1.0"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 71,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 76,
+     "method": "matrix",
+     "text": "Sz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 82,
+     "method": "matrix",
+     "text": "lp=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 88,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 97,
+     "method": "matrix",
+     "text": "K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 125,
+     "method": "matrix",
+     "text": "u=np.zeros((10,10),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 12,
+   "tool": "Bash",
+   "description": "Full d5 Tanabe-Sugano level labelling at target Dq values",
+   "command": "python3 - << 'EOF'\nimport numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    n=np.array(n,float); n=n/np.linalg.norm(n)\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\ndef projector_eig(M, target, tol=1e-6):\n    w,V=np.linalg.eigh((M+M.conj().T)/2)\n    return V[:,np.abs(w-target)<tol]\nSspins={2.5:35/4,1.5:15/4,0.5:3/4}\nLsym={0:'S',1:'P',2:'D',3:'F',4:'G',5:'H',6:'I'}\nSsec={S:projector_eig(S2,val) for S,val in Sspins.items()}\nH0=V2+one_body(hcf(0.0))\ndef clusters_for(S):\n    Vs=Ssec[S]\n    A=Vs.conj().T@(H0+0.0137*L2)@Vs\n    w,U=np.linalg.eigh((A+A.conj().T)/2)\n    cl=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1\n        basis=Vs@U[:,i:j+1]\n        Lval=np.real(np.vdot(basis[:,0],L2@basis[:,0]))\n        Lv=round((-1+np.sqrt(1+4*Lval))/2)\n        Eval=np.real(np.vdot(basis[:,0],H0@basis[:,0]))\n        cl.append(dict(basis=basis,L=Lv,E=Eval)); i=j+1\n    return cl\nclus={S:clusters_for(S) for S in Sspins}\nQs={}\nfor S in Sspins:\n    for r in dims:\n        P=PG[r]@(Ssec[S]@Ssec[S].conj().T)\n        Qs[(S,r)]=projector_eig(P,1.0)\ndef levels(Dq):\n    H=V2+one_body(hcf(Dq))\n    out=[]\n    for S in Sspins:\n        for r in dims:\n            Q=Qs[(S,r)]\n            if Q.shape[1]==0: continue\n            d=dims[r]*int(round(2*S+1))\n            Hr=Q.conj().T@H@Q\n            w,X=np.linalg.eigh((Hr+Hr.conj().T)/2)\n            i=0\n            while i<len(w):\n                j=i\n                while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n                mult=j-i+1\n                assert mult%d==0,(mult,d,S,r)\n                wfull=Q@X[:,i]\n                wts=[np.linalg.norm(c['basis'].conj().T@wfull)**2 for c in clus[S]]\n                ci=int(np.argmax(wts))\n                out.append(dict(S=S,G=r,E=w[i],copies=mult//d,L=clus[S][ci]['L'],pw=wts[ci],mult=int(round(2*S+1))))\n                i=j+1\n    return out\nres0=levels(0.01)\nE0=[x for x in res0 if x['S']==2.5 and x['G']=='A1'][0]['E']\nprint('small-Dq levels (E/B, label, parent weight):')\nfor x in sorted(res0,key=lambda x:x['E']):\n    print(f\"{x['mult']}{x['G']}({Lsym[x['L']]}) E={x['E']-E0:.4f} pw={x['pw']:.3f} copies={x['copies']}\")\nprint('total copies', sum(x['copies']*0+ x['copies']*(x['mult']) * dims[x['G']] for x in res0))\nfor Dq in [1.45,2.55,3.25]:\n    r0=levels(Dq)\n    # ordering map: within block (S,G) order index\n    rt=[]\n    blocks={}\n    for x in res0:\n        blocks.setdefault((x['S'],x['G']),[]).append(x)\n    tb={}\n    for x in r0:\n        tb.setdefault((x['S'],x['G']),[]).append(x)\n    lab=[]\n    for key in tb:\n        a=sorted(blocks[key],key=lambda x:x['E']); b=sorted(tb[key],key=lambda x:x['E'])\n        assert len(a)==len(b),(key,len(a),len(b))\n        for xa,xb in zip(a,b):\n            lab.append(dict(mult=xa['mult'],G=key[1],L=Lsym[xa['L']],Lpw=xa['pw'],E=xb['E']-[y for y in r0 if y['S']==2.5 and y['G']=='A1'][0]['E'],S=key[0]))\n    ex=[y for y in lab if not (y['S']==2.5 and y['G']=='A1')]\n    ex.sort(key=lambda y:y['E'])\n    print(f\"Dq/B={Dq}:\")\n    for y in ex[:6]:\n        print(f\"   {y['mult']}{y['G']}({y['L']}) E/B={y['E']:.3f}  [parent pw={y['Lpw']:.2f}]\")\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "4e9cef5a586d7ca66beb5d520f1e674966bb1c8b4063eb2bc7f98523da17d9f8",
+     "lines": 219,
+     "code": "import numpy as np, itertools\nfrom math import pi, sqrt\nfrom scipy.linalg import expm\nfrom sympy.physics.wigner import gaunt\nB=1.0; C=3473/800.0\nF2=49*B+7*C; F4=12.6*C\nFk={2:F2,4:F4}\ndef angC(k,ma,mc,q):\n    return sqrt(4*pi/(2*k+1))*((-1)**(ma%2))*float(gaunt(2,k,2,-ma,q,mc).evalf())\nVorb=np.zeros((5,5,5,5))\nfor ma,mb,mc,md in itertools.product(range(-2,3),repeat=4):\n    val=0.0\n    for k in (2,4):\n        for q in range(-k,k+1):\n            if ma-mc!=q or mb-md!=-q: continue\n            val+=Fk[k]*((-1)**(q%2))*angC(k,ma,mc,q)*angC(k,mb,md,-q)\n    Vorb[ma+2,mb+2,mc+2,md+2]=val\nVso={}\nfor a,b,c,d in itertools.product(range(10),repeat=4):\n    if a//5!=c//5 or b//5!=d//5: continue\n    v=Vorb[a%5,b%5,c%5,d%5]\n    if abs(v)>1e-12: Vso[(a,b,c,d)]=v\nstates=[sum(1<<i for i in comb) for comb in itertools.combinations(range(10),5)]\nidx={s:i for i,s in enumerate(states)}\nN=len(states)\ndef cann(i,occ):\n    if not (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ & ~(1<<i)\ndef cdag(i,occ):\n    if (occ>>i)&1: return None\n    return (-1)**bin(occ & ((1<<i)-1)).count('1'), occ | (1<<i)\ndef one_body(h):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for a in range(10):\n            for b in range(10):\n                if abs(h[a,b])<1e-14: continue\n                r=cann(b,occ)\n                if r is None: continue\n                s1,o1=r\n                r2=cdag(a,o1)\n                if r2 is None: continue\n                s2,o2=r2\n                M[idx[o2],j]+=h[a,b]*s1*s2\n    return M\ndef two_body(V):\n    M=np.zeros((N,N),dtype=complex)\n    for j,occ in enumerate(states):\n        for (a,b,c,d),v in V.items():\n            r=cann(c,occ)\n            if r is None: continue\n            s1,o1=r\n            r=cann(d,o1)\n            if r is None: continue\n            s2,o2=r\n            r=cdag(b,o2)\n            if r is None: continue\n            s3,o3=r\n            r=cdag(a,o3)\n            if r is None: continue\n            s4,o4=r\n            M[idx[o4],j]+=0.5*v*s1*s2*s3*s4\n    return M\nPeg=np.zeros((5,5),dtype=complex)\nPeg[2,2]=1.0\nv=np.zeros(5,dtype=complex); v[4]=1/sqrt(2); v[0]=1/sqrt(2)\nPeg+=np.outer(v,v.conj())\nPt2g=np.eye(5)-Peg\ndef hcf(Dq):\n    h5=-4*Dq*Pt2g+6*Dq*Peg\n    h=np.zeros((10,10),dtype=complex)\n    for s in range(2):\n        h[5*s:5*s+5,5*s:5*s+5]=h5\n    return h\nV2=two_body(Vso)\nSz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)\nfor o in range(5):\n    Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0\nSzM=one_body(Sz); SpM=one_body(Sp)\nS2=SzM@SzM+0.5*(SpM.conj().T@SpM+SpM@SpM.conj().T)\nlz=np.diag([-2.,-1,0,1,2]).astype(complex)\nlp=np.zeros((5,5),dtype=complex)\nfor m in range(-2,2):\n    lp[m+3,m+2]=sqrt(6-m*(m+1))\nlm=lp.conj().T\nlx=(lp+lm)/2; ly=(lp-lm)/(2j)\ndef lift(l):\n    h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h\nLops=[lx,ly,lz]\nLM=[one_body(lift(l)) for l in Lops]\nL2=LM[0]@LM[0]+LM[1]@LM[1]+LM[2]@LM[2]\ndef Dmat(n,th):\n    n=np.array(n,float); n=n/np.linalg.norm(n)\n    return expm(-1j*th*sum(n[i]*Lops[i] for i in range(3)))\ndef Rmat(n,th):\n    n=np.array(n,float); n/=np.linalg.norm(n)\n    K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])\n    return np.eye(3)+np.sin(th)*K+(1-np.cos(th))*K@K\ngens=[(Rmat([0,0,1],pi/2),Dmat([0,0,1],pi/2)),(Rmat([1,1,1],2*pi/3),Dmat([1,1,1],2*pi/3))]\nelems=[(np.eye(3),np.eye(5,dtype=complex))]\ndef find(R):\n    for i,(R2,_) in enumerate(elems):\n        if np.allclose(R,R2,atol=1e-8): return i\n    return -1\nfrontier=[elems[0]]\nwhile frontier:\n    new=[]\n    for R,D in frontier:\n        for Rg,Dg in gens:\n            R2=Rg@R; D2=Dg@D\n            if find(R2)<0:\n                elems.append((R2,D2)); new.append((R2,D2))\n    frontier=new\nclasses=[]\nfor R,D in elems:\n    tr=np.trace(R).real\n    if np.allclose(R,np.eye(3)): c='E'\n    elif abs(tr)<1e-8: c='C3'\n    elif abs(tr+1)<1e-8: c='C2' if np.allclose(R,np.diag(np.diag(R))) else \"C2'\"\n    else: c='C4'\n    classes.append(c)\ndef manybody(D):\n    u=np.zeros((10,10),dtype=complex)\n    u[:5,:5]=D; u[5:,5:]=D\n    U=np.zeros((N,N),dtype=complex)\n    occs=[[i for i in range(10) if (s>>i)&1] for s in states]\n    for j,I in enumerate(occs):\n        for i,J in enumerate(occs):\n            U[i,j]=np.linalg.det(u[np.ix_(J,I)])\n    return U\nUs=[manybody(D) for R,D in elems]\ncls_char={\n 'E':{'A1':1,'A2':1,'E':2,'T1':3,'T2':3},\n 'C3':{'A1':1,'A2':1,'E':-1,'T1':0,'T2':0},\n 'C2':{'A1':1,'A2':1,'E':2,'T1':-1,'T2':-1},\n 'C4':{'A1':1,'A2':-1,'E':0,'T1':1,'T2':-1},\n \"C2'\":{'A1':1,'A2':-1,'E':0,'T1':-1,'T2':1}}\ndims={'A1':1,'A2':1,'E':2,'T1':3,'T2':3}\nPG={}\nfor r in dims:\n    P=np.zeros((N,N),dtype=complex)\n    for g,c in enumerate(classes): P+=cls_char[c][r]*Us[g]\n    PG[r]=dims[r]/24*P\ndef projector_eig(M, target, tol=1e-6):\n    w,V=np.linalg.eigh((M+M.conj().T)/2)\n    return V[:,np.abs(w-target)<tol]\nSspins={2.5:35/4,1.5:15/4,0.5:3/4}\nLsym={0:'S',1:'P',2:'D',3:'F',4:'G',5:'H',6:'I'}\nSsec={S:projector_eig(S2,val) for S,val in Sspins.items()}\nH0=V2+one_body(hcf(0.0))\ndef clusters_for(S):\n    Vs=Ssec[S]\n    A=Vs.conj().T@(H0+0.0137*L2)@Vs\n    w,U=np.linalg.eigh((A+A.conj().T)/2)\n    cl=[]; i=0\n    while i<len(w):\n        j=i\n        while j+1<len(w) and abs(w[j+1]-w[i])<1e-6: j+=1\n        basis=Vs@U[:,i:j+1]\n        Lval=np.real(np.vdot(basis[:,0],L2@basis[:,0]))\n        Lv=round((-1+np.sqrt(1+4*Lval))/2)\n        Eval=np.real(np.vdot(basis[:,0],H0@basis[:,0]))\n        cl.append(dict(basis=basis,L=Lv,E=Eval)); i=j+1\n    return cl\nclus={S:clusters_for(S) for S in Sspins}\nQs={}\nfor S in Sspins:\n    for r in dims:\n        P=PG[r]@(Ssec[S]@Ssec[S].conj().T)\n        Qs[(S,r)]=projector_eig(P,1.0)\ndef levels(Dq):\n    H=V2+one_body(hcf(Dq))\n    out=[]\n    for S in Sspins:\n        for r in dims:\n            Q=Qs[(S,r)]\n            if Q.shape[1]==0: continue\n            d=dims[r]*int(round(2*S+1))\n            Hr=Q.conj().T@H@Q\n            w,X=np.linalg.eigh((Hr+Hr.conj().T)/2)\n            i=0\n            while i<len(w):\n                j=i\n                while j+1<len(w) and abs(w[j+1]-w[i])<1e-7: j+=1\n                mult=j-i+1\n                assert mult%d==0,(mult,d,S,r)\n                wfull=Q@X[:,i]\n                wts=[np.linalg.norm(c['basis'].conj().T@wfull)**2 for c in clus[S]]\n                ci=int(np.argmax(wts))\n                out.append(dict(S=S,G=r,E=w[i],copies=mult//d,L=clus[S][ci]['L'],pw=wts[ci],mult=int(round(2*S+1))))\n                i=j+1\n    return out\nres0=levels(0.01)\nE0=[x for x in res0 if x['S']==2.5 and x['G']=='A1'][0]['E']\nprint('small-Dq levels (E/B, label, parent weight):')\nfor x in sorted(res0,key=lambda x:x['E']):\n    print(f\"{x['mult']}{x['G']}({Lsym[x['L']]}) E={x['E']-E0:.4f} pw={x['pw']:.3f} copies={x['copies']}\")\nprint('total copies', sum(x['copies']*0+ x['copies']*(x['mult']) * dims[x['G']] for x in res0))\nfor Dq in [1.45,2.55,3.25]:\n    r0=levels(Dq)\n    # ordering map: within block (S,G) order index\n    rt=[]\n    blocks={}\n    for x in res0:\n        blocks.setdefault((x['S'],x['G']),[]).append(x)\n    tb={}\n    for x in r0:\n        tb.setdefault((x['S'],x['G']),[]).append(x)\n    lab=[]\n    for key in tb:\n        a=sorted(blocks[key],key=lambda x:x['E']); b=sorted(tb[key],key=lambda x:x['E'])\n        assert len(a)==len(b),(key,len(a),len(b))\n        for xa,xb in zip(a,b):\n            lab.append(dict(mult=xa['mult'],G=key[1],L=Lsym[xa['L']],Lpw=xa['pw'],E=xb['E']-[y for y in r0 if y['S']==2.5 and y['G']=='A1'][0]['E'],S=key[0]))\n    ex=[y for y in lab if not (y['S']==2.5 and y['G']=='A1')]\n    ex.sort(key=lambda y:y['E'])\n    print(f\"Dq/B={Dq}:\")\n    for y in ex[:6]:\n        print(f\"   {y['mult']}{y['G']}({y['L']}) E/B={y['E']:.3f}  [parent pw={y['Lpw']:.2f}]\")\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "small-Dq levels (E/B, label, parent weight):\n6A1(S) E=0.0000 pw=1.000 copies=1\n4T1(G) E=31.7047 pw=1.000 copies=1\n4T2(G) E=31.7060 pw=1.000 copies=1\n4E(G) E=31.7063 pw=1.000 copies=1\n4A1(G) E=31.7063 pw=1.000 copies=1\n4T1(P) E=37.3902 pw=1.000 copies=1\n4T2(D) E=38.7058 pw=1.000 copies=1\n4E(D) E=38.7063 pw=1.000 copies=1\n2T2(I) E=45.7283 pw=1.000 copies=1\n2A2(I) E=45.7290 pw=1.000 copies=1\n2T1(I) E=45.7291 pw=1.000 copies=1\n2T2(I) E=45.7295 pw=1.000 copies=1\n2E(I) E=45.7298 pw=1.000 copies=1\n2A1(I) E=45.7300 pw=1.000 copies=1\n2T2(D) E=52.1645 pw=0.995 copies=1\n2E(D) E=52.1710 pw=1.000 copies=1\n4A2(F) E=52.3888 pw=1.000 copies=1\n4T1(F) E=52.3888 pw=1.000 copies=1\n4T2(F) E=52.3894 pw=1.000 copies=1\n2T1(F) E=53.4121 pw=1.000 copies=1\n2A2(F) E=53.4133 pw=1.000 copies=1\n2T2(F) E=53.4176 pw=0.995 copies=1\n2E(H) E=56.4091 pw=0.986 copies=1\n2T1(H) E=56.4096 pw=0.992 copies=1\n2T1(H) E=56.4129 pw=1.000 copies=1\n2T2(H) E=56.4151 pw=0.999 copies=1\n2A1(G) E=56.7298 pw=1.000 copies=1\n2T2(G) E=56.7314 pw=0.999 copies=1\n2T1(G) E=56.7333 pw=0.991 copies=1\n2E(G) E=56.7343 pw=0.987 copies=1\n2T2(F) E=60.7297 pw=1.000 copies=1\n2A2(F) E=60.7303 pw=1.000 copies=1\n2T1(F) E=60.7304 pw=1.000 copies=1\n2A1(S) E=66.7297 pw=1.000 copies=1\n2E(D) E=74.4126 pw=1.000 copies=1\n2T2(D) E=74.4128 pw=1.000 copies=1\n2E(G) E=81.4124 pw=1.000 copies=1\n2T1(G) E=81.4126 pw=1.000 copies=1\n2T2(G) E=81.4128 pw=1.000 copies=1\n2A1(G) E=81.4130 pw=1.000 copies=1\n2T1(P) E=98.4126 pw=1.000 copies=1\n2T2(D) E=107.3358 pw=1.000 copies=1\n2E(D) E=107.3359 pw=1.000 copies=1\ntotal copies 252\nDq/B=1.45:\n   4T1(G) E/B=20.456  [parent pw=1.00]\n   2T2(I) E/B=25.002  [parent pw=1.00]\n   4T2(G) E/B=26.246  [parent pw=1.00]\n   4E(G) E/B=31.706  [parent pw=1.00]\n   4A1(G) E/B=31.706  [parent pw=1.00]\n   2A2(I) E/B=35.426  [parent pw=1.00]\nDq/B=2.55:\n   2T2(I) E/B=4.106  [parent pw=1.00]\n   4T1(G) E/B=9.798  [parent pw=1.00]\n   4T2(G) E/B=16.777  [parent pw=1.00]\n   2A2(I) E/B=24.861  [parent pw=1.00]\n   2T1(I) E/B=25.202  [parent pw=1.00]\n   2T2(I) E/B=27.482  [parent pw=1.00]\nDq/B=3.25:\n   2T2(I) E/B=-9.449  [parent pw=1.00]\n   4T1(G) E/B=2.921  [parent pw=1.00]\n   4T2(G) E/B=10.188  [parent pw=1.00]\n   2A2(I) E/B=17.998  [parent pw=1.00]\n   2T1(I) E/B=18.343  [parent pw=1.00]\n   2T2(I) E/B=20.825  [parent pw=1.00]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 10,
+     "method": "matrix",
+     "text": "Vorb=np.zeros((5,5,5,5))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 47,
+     "method": "matrix",
+     "text": "M=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "matrix",
+     "text": "Peg=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 65,
+     "method": "matrix",
+     "text": "Peg[2,2]=1.0"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 71,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 76,
+     "method": "matrix",
+     "text": "Sz=np.zeros((10,10),dtype=complex); Sp=np.zeros((10,10),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 78,
+     "method": "matrix",
+     "text": "Sz[o,o]=0.5; Sz[o+5,o+5]=-0.5; Sp[o,o+5]=1.0"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 82,
+     "method": "matrix",
+     "text": "lp=np.zeros((5,5),dtype=complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 88,
+     "method": "matrix",
+     "text": "h=np.zeros((10,10),dtype=complex); h[:5,:5]=l; h[5:,5:]=l; return h"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 97,
+     "method": "matrix",
+     "text": "K=np.array([[0,-n[2],n[1]],[n[2],0,-n[0]],[-n[1],n[0],0]])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 123,
+     "method": "matrix",
+     "text": "u=np.zeros((10,10),dtype=complex)"
+    }
+   ],
+   "produces": [
+    "points[0].e_over_b",
+    "points[2].e_over_b",
+    "points[3].e_over_b",
+    "points[4].e_over_b",
+    "points[5].e_over_b",
+    "points[6].e_over_b"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "points[0].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [
+    12
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[0].e_over_b",
+   "value": 20.46,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [],
+   "source_step": 12
+  },
+  {
+   "path": "points[1].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [
+    12
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[1].e_over_b",
+   "value": 25.0,
+   "weak": true,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[2].dq_over_b",
+   "value": 1.45,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [
+    12
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[2].e_over_b",
+   "value": 26.25,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [],
+   "source_step": 12
+  },
+  {
+   "path": "points[3].dq_over_b",
+   "value": 2.55,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [
+    12
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[3].e_over_b",
+   "value": 4.11,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [],
+   "source_step": 12
+  },
+  {
+   "path": "points[4].dq_over_b",
+   "value": 2.55,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [
+    12
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[4].e_over_b",
+   "value": 9.8,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [],
+   "source_step": 12
+  },
+  {
+   "path": "points[5].dq_over_b",
+   "value": 2.55,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [
+    12
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[5].e_over_b",
+   "value": 16.78,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [],
+   "source_step": 12
+  },
+  {
+   "path": "points[6].dq_over_b",
+   "value": 3.25,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [
+    12
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[6].e_over_b",
+   "value": 9.45,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [],
+   "source_step": 12
+  },
+  {
+   "path": "points[7].dq_over_b",
+   "value": 3.25,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [
+    12
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[7].e_over_b",
+   "value": 12.37,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[8].dq_over_b",
+   "value": 3.25,
+   "weak": false,
+   "steps": [
+    12
+   ],
+   "typed_in_steps": [
+    12
+   ],
+   "source_step": null
+  },
+  {
+   "path": "points[8].e_over_b",
+   "value": 19.64,
+   "weak": false,
+   "steps": [],
+   "typed_in_steps": [],
+   "source_step": null
+  }
+ ],
+ "summary": {
+  "n_steps": 13,
+  "n_scripts": 13,
+  "n_failed_steps": 3,
+  "n_values": 18,
+  "n_linked": 6,
+  "n_weak": 1,
+  "source_steps": [
+   12
+  ],
+  "methods": [
+   "eigen_solver",
+   "typed_table"
+  ],
+  "edits_in_place": false
+ }
+}

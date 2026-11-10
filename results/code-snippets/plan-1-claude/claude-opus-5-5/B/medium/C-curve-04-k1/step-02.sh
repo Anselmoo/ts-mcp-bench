@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null || cd .; pwd; touch x.test && echo ok; echo $TMPDIR

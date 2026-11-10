@@ -1,0 +1,565 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-tetrahedral-01-k3.jsonl",
+ "transcript_sha256": "1872514faa3847763edb1188b16bc4ceefcd6b8f4034701f59f5fd995fedf5a5",
+ "answer": {
+  "Dq": 407.0,
+  "B": 748.0,
+  "C": null,
+  "out_of_scope": false,
+  "reason": "Fitted the three quartet d-d bands of tetrahedral d7 (ground 4A2) with a full d3-quartet ligand-field matrix; C does not enter quartet energies and is not determined."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy and scipy availability",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy\" ; python3 -c \"import numpy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d3 quartet Hamiltonian and check free-ion levels",
+   "command": "mkdir -p /w && cat > /w/lf.py << 'EOF'\nimport numpy as np\nfrom scipy.special import sph_harm\nfrom itertools import combinations\nfrom scipy.optimize import least_squares\n\n# angular grid\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm(m, l, PH, TH)  # scipy: (m, n, azimuth, polar)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\n\n# Coulomb angular factors A[k][a,c,b,d] = sum_q 4pi/(2k+1) <a|Y*kq|c><b|Ykq|d>\ndef Ykq(k,q): return Y(k,q)\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Ykq(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a])*Ykk*Yd[c])\n        # <a|Y*kq|c> = M1[a,c]; <b|Ykq|d> = M2[b,d]\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\n\n# one-body Oh field (electron), real d orbitals in m basis\ndef cvec(d):  # dict m->coef\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):  # Oh: eg +6Dq, t2g -4Dq\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\n\n# Fock space, 5 spin-orbitals, JW\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x.T for x in a]\n# restrict to N=3\nNop = sum(ad[i]@a[i] for i in range(nmode))\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\n\ndef build(Dq, F2, F4):\n    F = {2:F2, 4:F4}\n    h = hfield(Dq)\n    H1 = sum(h[i,j]*ad[i]@a[j] for i in range(5) for j in range(5))\n    V = np.zeros((5,5,5,5), complex)\n    for k in (2,4): V += F[k]*Ak[k]   # V[a,c,b,d] = <ab|1/r|cd>\n    # H2 = 1/2 sum V_abcd a+_a a+_b a_d a_c, with <ab|V|cd>: indices (a,b,c,d)\n    H2 = np.zeros_like(H1)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = V[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    H = (P.T@(H1+H2)@P)\n    return H\n\ndef B_of(F2,F4): return (9*F2-5*F4)/441\n\nif __name__ == \"__main__\":\n    F2, F4 = 1.0, 0.625\n    H = build(0.0, F2, F4)\n    H = (H+H.conj().T)/2\n    ev = np.linalg.eigvalsh(H)\n    print(\"free-ion quartet levels (units F2):\", np.round(ev - ev[0],5))\n    B = B_of(F2,F4)\n    print(\"B=\",B, \" gap/B:\", np.round((ev-ev[0])/B,4))\nEOF\ncd /w && python3 lf.py",
+   "scripts": [
+    {
+     "name": "lf.py",
+     "sha256": "b94d10a47120edbf6132f71ec5a535313dca36c3722823e6e1baf763c3b97bbf",
+     "lines": 91,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm\nfrom itertools import combinations\nfrom scipy.optimize import least_squares\n\n# angular grid\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm(m, l, PH, TH)  # scipy: (m, n, azimuth, polar)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\n\n# Coulomb angular factors A[k][a,c,b,d] = sum_q 4pi/(2k+1) <a|Y*kq|c><b|Ykq|d>\ndef Ykq(k,q): return Y(k,q)\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Ykq(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a])*Ykk*Yd[c])\n        # <a|Y*kq|c> = M1[a,c]; <b|Ykq|d> = M2[b,d]\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\n\n# one-body Oh field (electron), real d orbitals in m basis\ndef cvec(d):  # dict m->coef\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):  # Oh: eg +6Dq, t2g -4Dq\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\n\n# Fock space, 5 spin-orbitals, JW\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x.T for x in a]\n# restrict to N=3\nNop = sum(ad[i]@a[i] for i in range(nmode))\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\n\ndef build(Dq, F2, F4):\n    F = {2:F2, 4:F4}\n    h = hfield(Dq)\n    H1 = sum(h[i,j]*ad[i]@a[j] for i in range(5) for j in range(5))\n    V = np.zeros((5,5,5,5), complex)\n    for k in (2,4): V += F[k]*Ak[k]   # V[a,c,b,d] = <ab|1/r|cd>\n    # H2 = 1/2 sum V_abcd a+_a a+_b a_d a_c, with <ab|V|cd>: indices (a,b,c,d)\n    H2 = np.zeros_like(H1)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = V[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    H = (P.T@(H1+H2)@P)\n    return H\n\ndef B_of(F2,F4): return (9*F2-5*F4)/441\n\nif __name__ == \"__main__\":\n    F2, F4 = 1.0, 0.625\n    H = build(0.0, F2, F4)\n    H = (H+H.conj().T)/2\n    ev = np.linalg.eigvalsh(H)\n    print(\"free-ion quartet levels (units F2):\", np.round(ev - ev[0],5))\n    B = B_of(F2,F4)\n    print(\"B=\",B, \" gap/B:\", np.round((ev-ev[0])/B,4))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "lf.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 187: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "lf.py",
+     "line": 4,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "lf.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "lf.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "lf.py",
+     "line": 27,
+     "method": "matrix",
+     "text": "M1[i,j] = integ(np.conj(Yd[a])*np.conj(Ykk)*Yd[c])"
+    },
+    {
+     "script": "lf.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "M2[i,j] = integ(np.conj(Yd[a])*Ykk*Yd[c])"
+    },
+    {
+     "script": "lf.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "h = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "lf.py",
+     "line": 50,
+     "method": "matrix",
+     "text": "dim = 2**nmode; M = np.zeros((dim,dim))"
+    },
+    {
+     "script": "lf.py",
+     "line": 68,
+     "method": "matrix",
+     "text": "V = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "lf.py",
+     "line": 88,
+     "method": "eigen_solver",
+     "text": "ev = np.linalg.eigvalsh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d3 quartet Hamiltonian and check free-ion levels",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > lf.py << 'EOF'\nimport numpy as np\nfrom scipy.special import sph_harm\n\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm(m, l, PH, TH)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\n\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Y(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a_ in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\n\ndef cvec(d):\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\n\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x_.T for x_ in a]\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\n\ndef build(Dq, F2, F4):\n    F = {2:F2, 4:F4}\n    h = hfield(Dq)\n    H1 = sum(h[i,j]*ad[i]@a[j] for i in range(5) for j in range(5))\n    V = np.zeros((5,5,5,5), complex)\n    for k in (2,4): V += F[k]*Ak[k]\n    H2 = np.zeros_like(H1)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = V[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    return P.T@(H1+H2)@P\n\ndef B_of(F2,F4): return (9*F2-5*F4)/441\n\nif __name__ == \"__main__\":\n    F2, F4 = 1.0, 0.625\n    H = build(0.0, F2, F4)\n    H = (H+H.conj().T)/2\n    ev = np.linalg.eigvalsh(H)\n    B = B_of(F2,F4)\n    print(\"levels/B:\", np.round((ev-ev[0])/B,4))\nEOF\npython3 lf.py",
+   "scripts": [
+    {
+     "name": "lf.py",
+     "sha256": "52e282da30af6889940a0bffd728c58f2f6eb7d87b5bdb189b2e4df93ced4c76",
+     "lines": 78,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm\n\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm(m, l, PH, TH)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\n\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Y(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a_ in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\n\ndef cvec(d):\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\n\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x_.T for x_ in a]\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\n\ndef build(Dq, F2, F4):\n    F = {2:F2, 4:F4}\n    h = hfield(Dq)\n    H1 = sum(h[i,j]*ad[i]@a[j] for i in range(5) for j in range(5))\n    V = np.zeros((5,5,5,5), complex)\n    for k in (2,4): V += F[k]*Ak[k]\n    H2 = np.zeros_like(H1)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = V[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    return P.T@(H1+H2)@P\n\ndef B_of(F2,F4): return (9*F2-5*F4)/441\n\nif __name__ == \"__main__\":\n    F2, F4 = 1.0, 0.625\n    H = build(0.0, F2, F4)\n    H = (H+H.conj().T)/2\n    ev = np.linalg.eigvalsh(H)\n    B = B_of(F2,F4)\n    print(\"levels/B:\", np.round((ev-ev[0])/B,4))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "lf.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\npython3: can't open file '/tmp/tsbench-run-msm2dxen/lf.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "lf.py",
+     "line": 16,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "lf.py",
+     "line": 19,
+     "method": "matrix",
+     "text": "M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "lf.py",
+     "line": 22,
+     "method": "matrix",
+     "text": "M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])"
+    },
+    {
+     "script": "lf.py",
+     "line": 23,
+     "method": "matrix",
+     "text": "M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])"
+    },
+    {
+     "script": "lf.py",
+     "line": 35,
+     "method": "matrix",
+     "text": "h = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "lf.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "dim = 2**nmode; M = np.zeros((dim,dim))"
+    },
+    {
+     "script": "lf.py",
+     "line": 58,
+     "method": "matrix",
+     "text": "V = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "lf.py",
+     "line": 76,
+     "method": "eigen_solver",
+     "text": "ev = np.linalg.eigvalsh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Compute d3 quartet free-ion levels in-memory",
+   "command": "cd ~ 2>/dev/null; pwd; cat > /dev/null << 'EOF'\nEOF\npython3 - << 'EOF'\nimport numpy as np\nfrom scipy.special import sph_harm\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm(m, l, PH, TH)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Y(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a_ in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\ndef cvec(d):\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x_.T for x_ in a]\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\ndef build(Dq, F2, F4):\n    F = {2:F2, 4:F4}\n    h = hfield(Dq)\n    H1 = sum(h[i,j]*ad[i]@a[j] for i in range(5) for j in range(5))\n    V = np.zeros((5,5,5,5), complex)\n    for k in (2,4): V += F[k]*Ak[k]\n    H2 = np.zeros_like(H1)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = V[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    return P.T@(H1+H2)@P\ndef B_of(F2,F4): return (9*F2-5*F4)/441\nF2, F4 = 1.0, 0.625\nH = build(0.0, F2, F4)\nH = (H+H.conj().T)/2\nev = np.linalg.eigvalsh(H)\nB = B_of(F2,F4)\nprint(\"levels/B:\", np.round((ev-ev[0])/B,4))\nprint(\"F2/B\", F2/B)\nEOF",
+   "scripts": [
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "29d602a9398f78949975b43b26909b2c39eee2e38c197227af31099d1eb4b012",
+     "lines": 71,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm(m, l, PH, TH)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Y(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a_ in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\ndef cvec(d):\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x_.T for x_ in a]\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\ndef build(Dq, F2, F4):\n    F = {2:F2, 4:F4}\n    h = hfield(Dq)\n    H1 = sum(h[i,j]*ad[i]@a[j] for i in range(5) for j in range(5))\n    V = np.zeros((5,5,5,5), complex)\n    for k in (2,4): V += F[k]*Ak[k]\n    H2 = np.zeros_like(H1)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = V[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    return P.T@(H1+H2)@P\ndef B_of(F2,F4): return (9*F2-5*F4)/441\nF2, F4 = 1.0, 0.625\nH = build(0.0, F2, F4)\nH = (H+H.conj().T)/2\nev = np.linalg.eigvalsh(H)\nB = B_of(F2,F4)\nprint(\"levels/B:\", np.round((ev-ev[0])/B,4))\nprint(\"F2/B\", F2/B)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/tmp/tsbench-home-xehwqch9\nTraceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\nImportError: cannot import name 'sph_harm' from 'scipy.special' (<B_VENV>/lib/python3.14/site-packages/scipy/special/__init__.py)",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 17,
+     "method": "matrix",
+     "text": "M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 32,
+     "method": "matrix",
+     "text": "h = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "dim = 2**nmode; M = np.zeros((dim,dim))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 53,
+     "method": "matrix",
+     "text": "V = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 68,
+     "method": "eigen_solver",
+     "text": "ev = np.linalg.eigvalsh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Compute d3 quartet free-ion levels in-memory",
+   "command": "python3 - << 'EOF'\nimport numpy as np\nfrom scipy.special import sph_harm_y\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm_y(l, m, TH, PH)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Y(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a_ in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\ndef cvec(d):\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x_.T for x_ in a]\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\ndef build(Dq, F2, F4):\n    F = {2:F2, 4:F4}\n    h = hfield(Dq)\n    H1 = sum(h[i,j]*ad[i]@a[j] for i in range(5) for j in range(5))\n    V = np.zeros((5,5,5,5), complex)\n    for k in (2,4): V += F[k]*Ak[k]\n    H2 = np.zeros_like(H1)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = V[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    return P.T@(H1+H2)@P\ndef B_of(F2,F4): return (9*F2-5*F4)/441\nF2, F4 = 1.0, 0.625\nH = build(0.0, F2, F4)\nH = (H+H.conj().T)/2\nev = np.linalg.eigvalsh(H)\nB = B_of(F2,F4)\nprint(\"levels/B:\", np.round((ev-ev[0])/B,4))\nprint(\"F2/B\", F2/B)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "8f69c5a2c4b858b4a57d0cf85006443d647c95c454f76da73ecb766ce8589f75",
+     "lines": 71,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm_y\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm_y(l, m, TH, PH)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Y(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a_ in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\ndef cvec(d):\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x_.T for x_ in a]\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\ndef build(Dq, F2, F4):\n    F = {2:F2, 4:F4}\n    h = hfield(Dq)\n    H1 = sum(h[i,j]*ad[i]@a[j] for i in range(5) for j in range(5))\n    V = np.zeros((5,5,5,5), complex)\n    for k in (2,4): V += F[k]*Ak[k]\n    H2 = np.zeros_like(H1)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = V[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    return P.T@(H1+H2)@P\ndef B_of(F2,F4): return (9*F2-5*F4)/441\nF2, F4 = 1.0, 0.625\nH = build(0.0, F2, F4)\nH = (H+H.conj().T)/2\nev = np.linalg.eigvalsh(H)\nB = B_of(F2,F4)\nprint(\"levels/B:\", np.round((ev-ev[0])/B,4))\nprint(\"F2/B\", F2/B)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "levels/B: [ 0.  0.  0.  0.  0.  0.  0. 15. 15. 15.]\nF2/B 75.06382978723404",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 17,
+     "method": "matrix",
+     "text": "M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 32,
+     "method": "matrix",
+     "text": "h = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "dim = 2**nmode; M = np.zeros((dim,dim))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 53,
+     "method": "matrix",
+     "text": "V = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 68,
+     "method": "eigen_solver",
+     "text": "ev = np.linalg.eigvalsh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Build Oh d3 quartet energies with Dq and B",
+   "command": "python3 - << 'EOF'\nimport numpy as np\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm_y(l, m, TH, PH)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Y(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a_ in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\ndef cvec(d):\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x_.T for x_ in a]\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\n# precompute two-body operator pieces (Coulomb with F2,F4 separately)\ndef twobody(Fk):\n    H2 = np.zeros((32,32), complex)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = Fk[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    return P.T@H2@P\nT2 = twobody(Ak[2]); T4 = twobody(Ak[4])\nONE = [sum(ad[i]@a[j] for _ in [0]) for i in range(5) for j in range(5)]\nOH1 = {}\nfor i in range(5):\n    for j in range(5):\n        OH1[(i,j)] = P.T@(ad[i]@a[j])@P\ndef levels(Dq, B):\n    F2 = B/((9-5*0.625)/441); F4 = 0.625*F2\n    h = hfield(Dq)\n    H1 = sum(h[i,j]*OH1[(i,j)] for i in range(5) for j in range(5))\n    H = H1 + F2*T2 + F4*T4\n    H = (H+H.conj().T)/2\n    return np.linalg.eigvalsh(H)\n# levels: check degeneracy structure\nev = levels(1000.0, 1000.0)\nprint(np.round(ev - ev[0],2))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "90396bfff25e239c0116d2b965d75e05ad332d4b72d23bbf10014ccb8463eaba",
+     "lines": 76,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm_y(l, m, TH, PH)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Y(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a_ in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\ndef cvec(d):\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x_.T for x_ in a]\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\n# precompute two-body operator pieces (Coulomb with F2,F4 separately)\ndef twobody(Fk):\n    H2 = np.zeros((32,32), complex)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = Fk[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    return P.T@H2@P\nT2 = twobody(Ak[2]); T4 = twobody(Ak[4])\nONE = [sum(ad[i]@a[j] for _ in [0]) for i in range(5) for j in range(5)]\nOH1 = {}\nfor i in range(5):\n    for j in range(5):\n        OH1[(i,j)] = P.T@(ad[i]@a[j])@P\ndef levels(Dq, B):\n    F2 = B/((9-5*0.625)/441); F4 = 0.625*F2\n    h = hfield(Dq)\n    H1 = sum(h[i,j]*OH1[(i,j)] for i in range(5) for j in range(5))\n    H = H1 + F2*T2 + F4*T4\n    H = (H+H.conj().T)/2\n    return np.linalg.eigvalsh(H)\n# levels: check degeneracy structure\nev = levels(1000.0, 1000.0)\nprint(np.round(ev - ev[0],2))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "[    0.  10000.  10000.  10000.  16479.2 16479.2 16479.2 28520.8 28520.8\n 28520.8]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 22,
+     "method": "matrix",
+     "text": "M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "h = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 39,
+     "method": "matrix",
+     "text": "dim = 2**nmode; M = np.zeros((dim,dim))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 52,
+     "method": "matrix",
+     "text": "H2 = np.zeros((32,32), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 73,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Fit Dq and B to the three observed d-d bands",
+   "command": "cat << 'EOF' > /dev/null\nEOF\npython3 - << 'EOF'\nimport numpy as np\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm_y(l, m, TH, PH)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Y(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a_ in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\ndef cvec(d):\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x_.T for x_ in a]\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\ndef twobody(Fk):\n    H2 = np.zeros((32,32), complex)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = Fk[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    return P.T@H2@P\nT2 = twobody(Ak[2]); T4 = twobody(Ak[4])\nOH1 = {(i,j): P.T@(ad[i]@a[j])@P for i in range(5) for j in range(5)}\ndef levels(Dq, B):\n    F2 = B/((9-5*0.625)/441); F4 = 0.625*F2\n    h = hfield(Dq)\n    H = sum(h[i,j]*OH1[(i,j)] for i in range(5) for j in range(5)) + F2*T2 + F4*T4\n    H = (H+H.conj().T)/2\n    return np.linalg.eigvalsh(H)\nobs = np.array([4070., 7030., 16400.])\ndef trans(p):\n    Dq, B = p\n    ev = levels(Dq, B); ev = ev - ev[0]\n    # ev: [A2, T2 x3, T1 x3, T1 x3] sorted; identify T2 (3-fold) and T1 levels\n    # unique levels with multiplicities\n    vals=[]; \n    for e in ev:\n        if not vals or abs(e-vals[-1][0])>1e-6*max(1,abs(e)): vals.append([e,1])\n        else: vals[-1][1]+=1\n    return vals\nfor Dq,B in [(407,900),(407,1000),(407,700)]:\n    print(Dq,B,[ (round(v,1),m) for v,m in trans(( Dq,B))])\ndef res(p):\n    vals = trans(p)\n    # excited levels: those with multiplicity 3, sorted\n    ex = [v for v,m in vals if v>1e-6]\n    return np.array(ex[:3]) - obs\nsol = least_squares(lambda p: res(p)/obs, x0=[407,900])\nprint(\"Dq,B =\", sol.x, \"resid\", res(sol.x))\nEOF",
+   "scripts": [
+    {
+     "name": "null",
+     "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+     "lines": 0,
+     "code": "\n"
+    },
+    {
+     "name": "inline_2.py",
+     "sha256": "5b0b47d0725e0a1dd0e8970476bfe36576aaa10fb9ec45821950bbe9abc2ecb2",
+     "lines": 87,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm_y\nfrom scipy.optimize import least_squares\nnt, nphi = 40, 80\nx, wt = np.polynomial.legendre.leggauss(nt)\ntheta = np.arccos(x); phi = np.linspace(0, 2*np.pi, nphi, endpoint=False)\nTH, PH = np.meshgrid(theta, phi, indexing='ij')\nW = np.outer(wt, np.full(nphi, 2*np.pi/nphi))\ndef Y(l, m): return sph_harm_y(l, m, TH, PH)\nms = [-2,-1,0,1,2]\nYd = {m: Y(2,m) for m in ms}\ndef integ(f): return np.sum(W*f)\nAk = {}\nfor k in (2,4):\n    A = np.zeros((5,5,5,5), complex)\n    for q in range(-k,k+1):\n        Ykk = Y(k,q)\n        M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)\n        for i,a_ in enumerate(ms):\n            for j,c in enumerate(ms):\n                M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])\n                M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])\n        A += 4*np.pi/(2*k+1) * np.einsum('ac,bd->acbd', M1, M2)\n    Ak[k] = A\ndef cvec(d):\n    v = np.zeros(5, complex)\n    for m,c in d.items(): v[ms.index(m)] = c\n    return v\ns2 = np.sqrt(2)\norbs_eg = [cvec({-2:1/s2, 2:1/s2}), cvec({0:1})]\norbs_t2 = [cvec({-2:1j/s2, 2:-1j/s2}), cvec({-1:-1/s2, 1:1/s2}), cvec({-1:1j/s2, 1:1j/s2})]\ndef hfield(Dq):\n    h = np.zeros((5,5), complex)\n    for v in orbs_eg: h += 6*Dq*np.outer(v, v.conj())\n    for v in orbs_t2: h += -4*Dq*np.outer(v, v.conj())\n    return h\nnmode = 5\ndef op_a(i):\n    dim = 2**nmode; M = np.zeros((dim,dim))\n    for s in range(dim):\n        if (s>>i)&1:\n            sign = (-1)**bin(s & ((1<<i)-1)).count('1')\n            M[s ^ (1<<i), s] = sign\n    return M\na = [op_a(i) for i in range(nmode)]\nad = [x_.T for x_ in a]\nidx = [s for s in range(2**nmode) if bin(s).count('1')==3]\nP = np.zeros((2**nmode, len(idx)))\nfor j,s in enumerate(idx): P[s,j]=1\ndef twobody(Fk):\n    H2 = np.zeros((32,32), complex)\n    for A_ in range(5):\n     for B_ in range(5):\n      for C_ in range(5):\n       for D_ in range(5):\n        v = Fk[A_,C_,B_,D_]\n        if abs(v)>1e-12:\n            H2 += 0.5*v*(ad[A_]@ad[B_]@a[D_]@a[C_])\n    return P.T@H2@P\nT2 = twobody(Ak[2]); T4 = twobody(Ak[4])\nOH1 = {(i,j): P.T@(ad[i]@a[j])@P for i in range(5) for j in range(5)}\ndef levels(Dq, B):\n    F2 = B/((9-5*0.625)/441); F4 = 0.625*F2\n    h = hfield(Dq)\n    H = sum(h[i,j]*OH1[(i,j)] for i in range(5) for j in range(5)) + F2*T2 + F4*T4\n    H = (H+H.conj().T)/2\n    return np.linalg.eigvalsh(H)\nobs = np.array([4070., 7030., 16400.])\ndef trans(p):\n    Dq, B = p\n    ev = levels(Dq, B); ev = ev - ev[0]\n    # ev: [A2, T2 x3, T1 x3, T1 x3] sorted; identify T2 (3-fold) and T1 levels\n    # unique levels with multiplicities\n    vals=[]; \n    for e in ev:\n        if not vals or abs(e-vals[-1][0])>1e-6*max(1,abs(e)): vals.append([e,1])\n        else: vals[-1][1]+=1\n    return vals\nfor Dq,B in [(407,900),(407,1000),(407,700)]:\n    print(Dq,B,[ (round(v,1),m) for v,m in trans(( Dq,B))])\ndef res(p):\n    vals = trans(p)\n    # excited levels: those with multiplicity 3, sorted\n    ex = [v for v,m in vals if v>1e-6]\n    return np.array(ex[:3]) - obs\nsol = least_squares(lambda p: res(p)/obs, x0=[407,900])\nprint(\"Dq,B =\", sol.x, \"resid\", res(sol.x))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "407 900 [(np.float64(0.0), 1), (np.float64(4070.0), 3), (np.float64(7091.3), 3), (np.float64(18618.7), 3)]\n407 1000 [(np.float64(0.0), 1), (np.float64(4070.0), 3), (np.float64(7118.4), 3), (np.float64(20091.6), 3)]\n407 700 [(np.float64(0.0), 1), (np.float64(4070.0), 3), (np.float64(7009.5), 3), (np.float64(15700.5), 3)]\nDq,B = [406.88728173 748.34120907] resid [-1.12718266  2.10085996 -0.36427194]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_2.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 15,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 18,
+     "method": "matrix",
+     "text": "M1 = np.zeros((5,5), complex); M2 = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "M1[i,j] = integ(np.conj(Yd[a_])*np.conj(Ykk)*Yd[c])"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 22,
+     "method": "matrix",
+     "text": "M2[i,j] = integ(np.conj(Yd[a_])*Ykk*Yd[c])"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "h = np.zeros((5,5), complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 39,
+     "method": "matrix",
+     "text": "dim = 2**nmode; M = np.zeros((dim,dim))"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 51,
+     "method": "matrix",
+     "text": "H2 = np.zeros((32,32), complex)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 67,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(H)"
+    },
+    {
+     "script": "inline_2.py",
+     "line": 86,
+     "method": "least_squares",
+     "text": "sol = least_squares(lambda p: res(p)/obs, x0=[407,900])"
+    }
+   ],
+   "produces": [
+    "B"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 407.0,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [
+    6
+   ],
+   "source_step": null
+  },
+  {
+   "path": "B",
+   "value": 748.0,
+   "weak": false,
+   "steps": [
+    6
+   ],
+   "typed_in_steps": [],
+   "source_step": 6
+  }
+ ],
+ "summary": {
+  "n_steps": 7,
+  "n_scripts": 8,
+  "n_failed_steps": 3,
+  "n_values": 2,
+  "n_linked": 1,
+  "n_weak": 0,
+  "source_steps": [
+   6
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; echo $HOME; touch $HOME/x && echo writable_home

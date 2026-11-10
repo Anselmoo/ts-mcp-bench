@@ -1,0 +1,1 @@
+pwd; ls -ld . ; touch ./_w && echo writable && rm ./_w; python3 -c "import numpy,scipy,sympy,matplotlib;print('ok')"

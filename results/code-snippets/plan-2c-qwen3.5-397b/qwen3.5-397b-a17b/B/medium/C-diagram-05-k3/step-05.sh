@@ -1,0 +1,1 @@
+sha256sum diagram.png && ls -la diagram.png

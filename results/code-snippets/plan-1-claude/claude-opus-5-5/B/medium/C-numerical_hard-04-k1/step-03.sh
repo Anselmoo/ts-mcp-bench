@@ -1,0 +1,1 @@
+for d in /dev/shm /var/tmp $TMPDIR .; do touch $d/x 2>/dev/null && echo $d; done; python3 -c "import sympy,scipy;print('ok')"

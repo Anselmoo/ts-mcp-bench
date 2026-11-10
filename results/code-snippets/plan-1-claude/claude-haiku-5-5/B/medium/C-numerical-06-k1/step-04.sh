@@ -1,0 +1,1 @@
+mkdir -p /tmp/tsbench-run-s52fex8g/w && cd /tmp/tsbench-run-s52fex8g/w && pwd && touch t && ls

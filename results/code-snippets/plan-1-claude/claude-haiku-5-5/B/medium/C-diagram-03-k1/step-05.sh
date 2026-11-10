@@ -1,0 +1,1 @@
+sed -i 's/assert c % d == 0, (ir, c, d)/assert c % (d*mult) == 0, (ir, c, d, mult)/; s/for _ in range(c\/\/d):/for _ in range(c\/\/(d*mult)):/' ts_d5.py && python3 ts_d5.py 2>&1 | grep -v -i matplotlib

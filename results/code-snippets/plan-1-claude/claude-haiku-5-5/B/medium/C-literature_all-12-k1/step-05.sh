@@ -1,0 +1,1 @@
+cd /tmp/tsbench-run-xb4tbpze 2>/dev/null && touch t.txt && echo ok; pwd

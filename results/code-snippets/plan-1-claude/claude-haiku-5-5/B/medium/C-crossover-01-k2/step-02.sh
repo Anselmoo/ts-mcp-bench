@@ -1,0 +1,1 @@
+cd ~ && pwd && python3 -c "import sympy, numpy, scipy; print('ok')"

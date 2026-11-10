@@ -1,0 +1,1 @@
+cd . && sed -i 's/rs=np.round(np.arange(1.0,4.01,0.01),3)/rs=np.round(np.arange(1.6,2.61,0.02),3)/' fine.py && timeout 500 python3 fine.py >/dev/null 2>&1; python3 an2.py

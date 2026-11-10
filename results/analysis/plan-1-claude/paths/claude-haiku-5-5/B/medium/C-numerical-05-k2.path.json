@@ -1,0 +1,549 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-numerical-05-k2.jsonl",
+ "transcript_sha256": "9cd2e65839b855d6c402b6fb2dc13b9d94064719a8b7691fd577fb738b867dc2",
+ "answer": {
+  "Dq": 1702.0,
+  "B": 639.0,
+  "C": null,
+  "out_of_scope": false,
+  "reason": "Least-squares fit of the d2 triplet Hamiltonian (3T2, 3T1P, 3A2 assignment) to the three band maxima gives Dq and B with sub-cm-1 residuals; C is not determined by triplet bands."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numerical Python packages available",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|sympy|scipy\" ; python3 -c \"import numpy, sympy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d2 Hamiltonian and test free-ion spectrum",
+   "command": "mkdir -p /w && cat > /w/d2.py << 'EOF'\nimport numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.optimize import least_squares\nfrom scipy.integrate import quad\n\n# angular grid\nxg, wg = np.polynomial.legendre.leggauss(24)\nphis = np.linspace(0, 2*np.pi, 48, endpoint=False); wp = 2*np.pi/48\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef Y(l, m):  # scipy: sph_harm(m, l, azimuth, polar)\n    return sph_harm(m, l, PH, TH)\nms = list(range(-2, 3))\nYl = {m: Y(2, m) for m in ms}\ndef integ(f): return np.sum(W*f)\ndef Ykq(k, q): return Y(k, q)\n\n# angular coefficients A_k[m1,m2,m3,m4] = (4pi/(2k+1)) sum_q int Y*m1 Ym3 Y*kq  * int Y*m2 Ym4 Ykq\ndef ang(k):\n    A = np.zeros((5,5,5,5), complex)\n    qs = range(-k, k+1)\n    for i1,m1 in enumerate(ms):\n        for i3,m3 in enumerate(ms):\n            for q in qs:\n                a = integ(np.conj(Yl[m1])*Yl[m3]*np.conj(Ykq(k,q)))\n                for i2,m2 in enumerate(ms):\n                    for i4,m4 in enumerate(ms):\n                        b = integ(np.conj(Yl[m2])*Yl[m4]*Ykq(k,q))\n                        A[i1,i2,i3,i4] += 4*np.pi/(2*k+1)*a*b\n    return A\nA = {k: ang(k) for k in (0,2,4)}\n\n# cubic field one-electron matrix in m basis\nX = np.sin(TH)*np.cos(PH); Yc = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nt2fs = [X*Yc, Yc*Z*0+Yc*0+ (Yc*Z), X*Z]  # xy, yz, xz (unnormalized)\nt2fs = [X*Yc, Yc*Z, X*Z]\nefs = [X**2-Yc**2, 3*Z**2-1]\ndef proj_vecs(fs):\n    cs=[]\n    for f in fs:\n        c = np.array([integ(np.conj(Yl[m])*f) for m in ms])\n        cs.append(c)\n    # orthonormalize (Gram-Schmidt)\n    out=[]\n    for c in cs:\n        v=c.copy()\n        for u in out: v = v - np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef proj(vecs):\n    P=np.zeros((5,5),complex)\n    for v in vecs: P += np.outer(np.conj(v), v)\n    return P\nPt2 = proj(proj_vecs(t2fs)); Pe = proj(proj_vecs(efs))\nprint(\"trace Pt2,Pe:\", np.trace(Pt2).real, np.trace(Pe).real)\nhcf = -4*Pt2 + 6*Pe   # per unit Dq\n\n# spin-orbitals: (m index, spin) index s = 2*im + sp  (sp 0 up, 1 down)\ndef so(i_m, sp): return 2*i_m+sp\ndef build(Dq, Bv, Cv=None):\n    if Cv is None: Cv = 4*Bv\n    F4 = 441*Cv/35; F2 = (441*Bv+5*F4)/9\n    F = {0:0.0, 2:F2, 4:F4}\n    Vm = sum(F[k]*A[k] for k in (2,4))  # F0 term constant irrelevant for splittings (but include for completeness)\n    Vm = Vm + F[0]*A[0]\n    N=10\n    h = np.zeros((N,N),complex)\n    for a in range(5):\n        for b in range(5):\n            for sp in range(2):\n                h[so(a,sp), so(b,sp)] = Dq*hcf[a,b]\n    # Full 2-body V_{abcd}=<ab|1/r|cd> with spin deltas\n    V = np.zeros((N,N,N,N),complex)\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        for s1 in range(2):\n         for s2 in range(2):\n          V[so(a,s1),so(b,s2),so(c,s1),so(d,s2)] = Vm[a,b,c,d]\n    # basis: pairs i<j\n    basis = list(itertools.combinations(range(N),2))\n    idx = {b:i for i,b in enumerate(basis)}\n    D=len(basis)\n    H=np.zeros((D,D),complex)\n    def apply(ops, state):  # ops list of (type,orb) applied right-to-left: ops[-1] applied first\n        st = list(state); sign=1\n        for typ,o in reversed(ops):\n            if typ=='c':   # creation\n                if o in st: return None,0\n                # insert at sorted position; sign = (-1)^{number of occupied below}\n                n = sum(1 for x in st if x<o); sign *= (-1)**n\n                st = sorted(st+[o])\n            else:\n                if o not in st: return None,0\n                n = sum(1 for x in st if x<o); sign *= (-1)**n\n                st.remove(o)\n        return tuple(st), sign\n    for J,(i,j) in enumerate(basis):\n        st=(i,j)\n        # one-body\n        for a in range(N):\n            for b in range(N):\n                if h[a,b]!=0:\n                    r,s = apply([('c',a),('a',b)], st)\n                    if r is not None and len(r)==2:\n                        H[idx[r],J] += h[a,b]*s\n        # two-body 1/2 sum V_abcd a+_a a+_b a_d a_c\n        for a in range(N):\n         for b in range(N):\n          for c in range(N):\n           for d in range(N):\n            v=V[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s = apply([('c',a),('c',b),('a',d),('a',c)], st)\n            if r is not None and len(r)==2:\n                H[idx[r],J] += 0.5*v*s\n    return H, basis\nif __name__==\"__main__\":\n    H,basis = build(0.0, 1.0)\n    # Sz=+1 sector: both spin up -> indices so(m,0)=even\n    ev = np.linalg.eigvalsh(H)\n    print(np.round(ev,6))\nEOF\ncd /w && python3 d2.py",
+   "scripts": [
+    {
+     "name": "d2.py",
+     "sha256": "03a237612b5e3e8eeb1dfac5bdab47ca82075e0099f133ecae3b8f70ce94d7cc",
+     "lines": 123,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.optimize import least_squares\nfrom scipy.integrate import quad\n\n# angular grid\nxg, wg = np.polynomial.legendre.leggauss(24)\nphis = np.linspace(0, 2*np.pi, 48, endpoint=False); wp = 2*np.pi/48\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef Y(l, m):  # scipy: sph_harm(m, l, azimuth, polar)\n    return sph_harm(m, l, PH, TH)\nms = list(range(-2, 3))\nYl = {m: Y(2, m) for m in ms}\ndef integ(f): return np.sum(W*f)\ndef Ykq(k, q): return Y(k, q)\n\n# angular coefficients A_k[m1,m2,m3,m4] = (4pi/(2k+1)) sum_q int Y*m1 Ym3 Y*kq  * int Y*m2 Ym4 Ykq\ndef ang(k):\n    A = np.zeros((5,5,5,5), complex)\n    qs = range(-k, k+1)\n    for i1,m1 in enumerate(ms):\n        for i3,m3 in enumerate(ms):\n            for q in qs:\n                a = integ(np.conj(Yl[m1])*Yl[m3]*np.conj(Ykq(k,q)))\n                for i2,m2 in enumerate(ms):\n                    for i4,m4 in enumerate(ms):\n                        b = integ(np.conj(Yl[m2])*Yl[m4]*Ykq(k,q))\n                        A[i1,i2,i3,i4] += 4*np.pi/(2*k+1)*a*b\n    return A\nA = {k: ang(k) for k in (0,2,4)}\n\n# cubic field one-electron matrix in m basis\nX = np.sin(TH)*np.cos(PH); Yc = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nt2fs = [X*Yc, Yc*Z*0+Yc*0+ (Yc*Z), X*Z]  # xy, yz, xz (unnormalized)\nt2fs = [X*Yc, Yc*Z, X*Z]\nefs = [X**2-Yc**2, 3*Z**2-1]\ndef proj_vecs(fs):\n    cs=[]\n    for f in fs:\n        c = np.array([integ(np.conj(Yl[m])*f) for m in ms])\n        cs.append(c)\n    # orthonormalize (Gram-Schmidt)\n    out=[]\n    for c in cs:\n        v=c.copy()\n        for u in out: v = v - np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef proj(vecs):\n    P=np.zeros((5,5),complex)\n    for v in vecs: P += np.outer(np.conj(v), v)\n    return P\nPt2 = proj(proj_vecs(t2fs)); Pe = proj(proj_vecs(efs))\nprint(\"trace Pt2,Pe:\", np.trace(Pt2).real, np.trace(Pe).real)\nhcf = -4*Pt2 + 6*Pe   # per unit Dq\n\n# spin-orbitals: (m index, spin) index s = 2*im + sp  (sp 0 up, 1 down)\ndef so(i_m, sp): return 2*i_m+sp\ndef build(Dq, Bv, Cv=None):\n    if Cv is None: Cv = 4*Bv\n    F4 = 441*Cv/35; F2 = (441*Bv+5*F4)/9\n    F = {0:0.0, 2:F2, 4:F4}\n    Vm = sum(F[k]*A[k] for k in (2,4))  # F0 term constant irrelevant for splittings (but include for completeness)\n    Vm = Vm + F[0]*A[0]\n    N=10\n    h = np.zeros((N,N),complex)\n    for a in range(5):\n        for b in range(5):\n            for sp in range(2):\n                h[so(a,sp), so(b,sp)] = Dq*hcf[a,b]\n    # Full 2-body V_{abcd}=<ab|1/r|cd> with spin deltas\n    V = np.zeros((N,N,N,N),complex)\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        for s1 in range(2):\n         for s2 in range(2):\n          V[so(a,s1),so(b,s2),so(c,s1),so(d,s2)] = Vm[a,b,c,d]\n    # basis: pairs i<j\n    basis = list(itertools.combinations(range(N),2))\n    idx = {b:i for i,b in enumerate(basis)}\n    D=len(basis)\n    H=np.zeros((D,D),complex)\n    def apply(ops, state):  # ops list of (type,orb) applied right-to-left: ops[-1] applied first\n        st = list(state); sign=1\n        for typ,o in reversed(ops):\n            if typ=='c':   # creation\n                if o in st: return None,0\n                # insert at sorted position; sign = (-1)^{number of occupied below}\n                n = sum(1 for x in st if x<o); sign *= (-1)**n\n                st = sorted(st+[o])\n            else:\n                if o not in st: return None,0\n                n = sum(1 for x in st if x<o); sign *= (-1)**n\n                st.remove(o)\n        return tuple(st), sign\n    for J,(i,j) in enumerate(basis):\n        st=(i,j)\n        # one-body\n        for a in range(N):\n            for b in range(N):\n                if h[a,b]!=0:\n                    r,s = apply([('c',a),('a',b)], st)\n                    if r is not None and len(r)==2:\n                        H[idx[r],J] += h[a,b]*s\n        # two-body 1/2 sum V_abcd a+_a a+_b a_d a_c\n        for a in range(N):\n         for b in range(N):\n          for c in range(N):\n           for d in range(N):\n            v=V[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s = apply([('c',a),('c',b),('a',d),('a',c)], st)\n            if r is not None and len(r)==2:\n                H[idx[r],J] += 0.5*v*s\n    return H, basis\nif __name__==\"__main__\":\n    H,basis = build(0.0, 1.0)\n    # Sz=+1 sector: both spin up -> indices so(m,0)=even\n    ev = np.linalg.eigvalsh(H)\n    print(np.round(ev,6))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d2.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 251: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d2.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "d2.py",
+     "line": 20,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 51,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 67,
+     "method": "matrix",
+     "text": "h = np.zeros((N,N),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 73,
+     "method": "matrix",
+     "text": "V = np.zeros((N,N,N,N),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 85,
+     "method": "matrix",
+     "text": "H=np.zeros((D,D),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 122,
+     "method": "eigen_solver",
+     "text": "ev = np.linalg.eigvalsh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d2 Hamiltonian and check free-ion levels",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > d2.py << 'EOF'\nimport numpy as np, itertools\nfrom scipy.special import sph_harm\n\nxg, wg = np.polynomial.legendre.leggauss(24)\nphis = np.linspace(0, 2*np.pi, 48, endpoint=False); wp = 2*np.pi/48\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef Y(l, m): return sph_harm(m, l, PH, TH)\nms = list(range(-2, 3))\nYl = {m: Y(2, m) for m in ms}\ndef integ(f): return np.sum(W*f)\n\ndef ang(k):\n    A = np.zeros((5,5,5,5), complex)\n    for i1,m1 in enumerate(ms):\n        for i3,m3 in enumerate(ms):\n            for q in range(-k,k+1):\n                Ykq = Y(k,q)\n                a = integ(np.conj(Yl[m1])*Yl[m3]*np.conj(Ykq))\n                for i2,m2 in enumerate(ms):\n                    for i4,m4 in enumerate(ms):\n                        b = integ(np.conj(Yl[m2])*Yl[m4]*Ykq)\n                        A[i1,i2,i3,i4] += 4*np.pi/(2*k+1)*a*b\n    return A\nA = {k: ang(k) for k in (0,2,4)}\n\nX = np.sin(TH)*np.cos(PH); Yc = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nt2fs = [X*Yc, Yc*Z, X*Z]\nefs = [X**2-Yc**2, 3*Z**2-1]\ndef proj_vecs(fs):\n    out=[]\n    for f in fs:\n        v = np.array([integ(np.conj(Yl[m])*f) for m in ms])\n        for u in out: v = v - np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef proj(vecs):\n    P=np.zeros((5,5),complex)\n    for v in vecs: P += np.outer(np.conj(v), v)\n    return P\nPt2 = proj(proj_vecs(t2fs)); Pe = proj(proj_vecs(efs))\nprint(\"trace Pt2,Pe:\", np.trace(Pt2).real, np.trace(Pe).real)\nhcf = -4*Pt2 + 6*Pe\n\ndef so(im, sp): return 2*im+sp\nN=10\nbasis = list(itertools.combinations(range(N),2))\nidx = {b:i for i,b in enumerate(basis)}\n\ndef apply(ops, state):\n    st = list(state); sign=1\n    for typ,o in reversed(ops):\n        n = sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sign *= (-1)**n; st = sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sign *= (-1)**n; st.remove(o)\n    return tuple(st), sign\n\ndef build(Dq, Bv, Cv=None):\n    if Cv is None: Cv = 4*Bv\n    F4 = 441*Cv/35; F2 = (441*Bv+5*F4)/9\n    Vm = F2*A[2] + F4*A[4]\n    h = np.zeros((N,N),complex)\n    for a in range(5):\n        for b in range(5):\n            for sp in range(2):\n                h[so(a,sp), so(b,sp)] = Dq*hcf[a,b]\n    V = np.zeros((N,N,N,N),complex)\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        for s1 in range(2):\n         for s2 in range(2):\n          V[so(a,s1),so(b,s2),so(c,s1),so(d,s2)] = Vm[a,b,c,d]\n    D=len(basis); H=np.zeros((D,D),complex)\n    for J,st in enumerate(basis):\n        for a in range(N):\n            for b in range(N):\n                if abs(h[a,b])>1e-12:\n                    r,s = apply([('c',a),('a',b)], st)\n                    if r is not None and len(r)==2: H[idx[r],J] += h[a,b]*s\n        for a,b,c,d in itertools.product(range(N),repeat=4):\n            v=V[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s = apply([('c',a),('c',b),('a',d),('a',c)], st)\n            if r is not None and len(r)==2: H[idx[r],J] += 0.5*v*s\n    return H\nEOF\ncat > run1.py << 'EOF'\nfrom d2 import *\nH = build(0.0, 1.0)\nprint(np.round(np.linalg.eigvalsh(H),6))\nEOF\ntimeout 500 python3 run1.py",
+   "scripts": [
+    {
+     "name": "d2.py",
+     "sha256": "3a3c40cfe56ff0005b06f76a1ff64dc639be98277093367d148ffb3d205b6d0c",
+     "lines": 91,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm\n\nxg, wg = np.polynomial.legendre.leggauss(24)\nphis = np.linspace(0, 2*np.pi, 48, endpoint=False); wp = 2*np.pi/48\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef Y(l, m): return sph_harm(m, l, PH, TH)\nms = list(range(-2, 3))\nYl = {m: Y(2, m) for m in ms}\ndef integ(f): return np.sum(W*f)\n\ndef ang(k):\n    A = np.zeros((5,5,5,5), complex)\n    for i1,m1 in enumerate(ms):\n        for i3,m3 in enumerate(ms):\n            for q in range(-k,k+1):\n                Ykq = Y(k,q)\n                a = integ(np.conj(Yl[m1])*Yl[m3]*np.conj(Ykq))\n                for i2,m2 in enumerate(ms):\n                    for i4,m4 in enumerate(ms):\n                        b = integ(np.conj(Yl[m2])*Yl[m4]*Ykq)\n                        A[i1,i2,i3,i4] += 4*np.pi/(2*k+1)*a*b\n    return A\nA = {k: ang(k) for k in (0,2,4)}\n\nX = np.sin(TH)*np.cos(PH); Yc = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nt2fs = [X*Yc, Yc*Z, X*Z]\nefs = [X**2-Yc**2, 3*Z**2-1]\ndef proj_vecs(fs):\n    out=[]\n    for f in fs:\n        v = np.array([integ(np.conj(Yl[m])*f) for m in ms])\n        for u in out: v = v - np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef proj(vecs):\n    P=np.zeros((5,5),complex)\n    for v in vecs: P += np.outer(np.conj(v), v)\n    return P\nPt2 = proj(proj_vecs(t2fs)); Pe = proj(proj_vecs(efs))\nprint(\"trace Pt2,Pe:\", np.trace(Pt2).real, np.trace(Pe).real)\nhcf = -4*Pt2 + 6*Pe\n\ndef so(im, sp): return 2*im+sp\nN=10\nbasis = list(itertools.combinations(range(N),2))\nidx = {b:i for i,b in enumerate(basis)}\n\ndef apply(ops, state):\n    st = list(state); sign=1\n    for typ,o in reversed(ops):\n        n = sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sign *= (-1)**n; st = sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sign *= (-1)**n; st.remove(o)\n    return tuple(st), sign\n\ndef build(Dq, Bv, Cv=None):\n    if Cv is None: Cv = 4*Bv\n    F4 = 441*Cv/35; F2 = (441*Bv+5*F4)/9\n    Vm = F2*A[2] + F4*A[4]\n    h = np.zeros((N,N),complex)\n    for a in range(5):\n        for b in range(5):\n            for sp in range(2):\n                h[so(a,sp), so(b,sp)] = Dq*hcf[a,b]\n    V = np.zeros((N,N,N,N),complex)\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        for s1 in range(2):\n         for s2 in range(2):\n          V[so(a,s1),so(b,s2),so(c,s1),so(d,s2)] = Vm[a,b,c,d]\n    D=len(basis); H=np.zeros((D,D),complex)\n    for J,st in enumerate(basis):\n        for a in range(N):\n            for b in range(N):\n                if abs(h[a,b])>1e-12:\n                    r,s = apply([('c',a),('a',b)], st)\n                    if r is not None and len(r)==2: H[idx[r],J] += h[a,b]*s\n        for a,b,c,d in itertools.product(range(N),repeat=4):\n            v=V[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s = apply([('c',a),('c',b),('a',d),('a',c)], st)\n            if r is not None and len(r)==2: H[idx[r],J] += 0.5*v*s\n    return H\n"
+    },
+    {
+     "name": "run1.py",
+     "sha256": "ba1645c87eebb745eb82f8109f629e28386c96a6cb0c19ef3d513c1a95c79fcf",
+     "lines": 3,
+     "code": "from d2 import *\nH = build(0.0, 1.0)\nprint(np.round(np.linalg.eigvalsh(H),6))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run1.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\nTraceback (most recent call last):\n  File \"/tmp/tsbench-run-fvie5mem/run1.py\", line 1, in <module>\n    from d2 import *\nModuleNotFoundError: No module named 'd2'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d2.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 66,
+     "method": "matrix",
+     "text": "h = np.zeros((N,N),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 71,
+     "method": "matrix",
+     "text": "V = np.zeros((N,N,N,N),complex)"
+    },
+    {
+     "script": "d2.py",
+     "line": 79,
+     "method": "matrix",
+     "text": "D=len(basis); H=np.zeros((D,D),complex)"
+    },
+    {
+     "script": "run1.py",
+     "line": 3,
+     "method": "eigen_solver",
+     "text": "print(np.round(np.linalg.eigvalsh(H),6))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find a writable working directory",
+   "command": "cd ~ 2>/dev/null && pwd; touch ./t 2>&1 && echo writable; cd /tmp/tsbench-run-fvie5mem 2>/dev/null && pwd && ls",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch './t': Read-only file system\n/tmp/tsbench-run-fvie5mem\nrun1.py",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Build d2 Hamiltonian and check free-ion levels",
+   "command": "cat > /dev/shm/x.py 2>/dev/null || echo noshm; cd /tmp && python3 - << 'EOF'\nimport numpy as np, itertools\nfrom scipy.special import sph_harm\nxg, wg = np.polynomial.legendre.leggauss(24)\nphis = np.linspace(0, 2*np.pi, 48, endpoint=False); wp = 2*np.pi/48\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef Y(l, m): return sph_harm(m, l, PH, TH)\nms = list(range(-2, 3))\nYl = {m: Y(2, m) for m in ms}\ndef integ(f): return np.sum(W*f)\ndef ang(k):\n    A = np.zeros((5,5,5,5), complex)\n    for i1,m1 in enumerate(ms):\n        for i3,m3 in enumerate(ms):\n            for q in range(-k,k+1):\n                Ykq = Y(k,q)\n                a = integ(np.conj(Yl[m1])*Yl[m3]*np.conj(Ykq))\n                for i2,m2 in enumerate(ms):\n                    for i4,m4 in enumerate(ms):\n                        b = integ(np.conj(Yl[m2])*Yl[m4]*Ykq)\n                        A[i1,i2,i3,i4] += 4*np.pi/(2*k+1)*a*b\n    return A\nA = {k: ang(k) for k in (0,2,4)}\nX = np.sin(TH)*np.cos(PH); Yc = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nt2fs = [X*Yc, Yc*Z, X*Z]; efs = [X**2-Yc**2, 3*Z**2-1]\ndef proj_vecs(fs):\n    out=[]\n    for f in fs:\n        v = np.array([integ(np.conj(Yl[m])*f) for m in ms])\n        for u in out: v = v - np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef proj(vecs):\n    P=np.zeros((5,5),complex)\n    for v in vecs: P += np.outer(np.conj(v), v)\n    return P\nPt2 = proj(proj_vecs(t2fs)); Pe = proj(proj_vecs(efs))\nprint(\"trace Pt2,Pe:\", np.trace(Pt2).real, np.trace(Pe).real)\nhcf = -4*Pt2 + 6*Pe\ndef so(im, sp): return 2*im+sp\nN=10\nbasis = list(itertools.combinations(range(N),2))\nidx = {b:i for i,b in enumerate(basis)}\ndef apply(ops, state):\n    st = list(state); sign=1\n    for typ,o in reversed(ops):\n        n = sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sign *= (-1)**n; st = sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sign *= (-1)**n; st.remove(o)\n    return tuple(st), sign\ndef build(Dq, Bv, Cv=None):\n    if Cv is None: Cv = 4*Bv\n    F4 = 441*Cv/35; F2 = (441*Bv+5*F4)/9\n    Vm = F2*A[2] + F4*A[4]\n    h = np.zeros((N,N),complex)\n    for a in range(5):\n        for b in range(5):\n            for sp in range(2):\n                h[so(a,sp), so(b,sp)] = Dq*hcf[a,b]\n    V = np.zeros((N,N,N,N),complex)\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        for s1 in range(2):\n         for s2 in range(2):\n          V[so(a,s1),so(b,s2),so(c,s1),so(d,s2)] = Vm[a,b,c,d]\n    D=len(basis); H=np.zeros((D,D),complex)\n    for J,st in enumerate(basis):\n        for a in range(N):\n            for b in range(N):\n                if abs(h[a,b])>1e-12:\n                    r,s = apply([('c',a),('a',b)], st)\n                    if r is not None and len(r)==2: H[idx[r],J] += h[a,b]*s\n        for a,b,c,d in itertools.product(range(N),repeat=4):\n            v=V[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s = apply([('c',a),('c',b),('a',d),('a',c)], st)\n            if r is not None and len(r)==2: H[idx[r],J] += 0.5*v*s\n    return H\n# Free ion check: Dq=0, B=1, C=4 -> triplet 3F and 3P separated by 15B; singlets by Racah\nH = build(0.0,1.0)\nev = np.linalg.eigvalsh(H)\nprint(\"free ion eigen (B=1, C=4):\", np.round(ev,4))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "5de8ccdabc3f7d98810945451961cb92ebef21614d5bef15703ff0475032ed65",
+     "lines": 88,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm\nxg, wg = np.polynomial.legendre.leggauss(24)\nphis = np.linspace(0, 2*np.pi, 48, endpoint=False); wp = 2*np.pi/48\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef Y(l, m): return sph_harm(m, l, PH, TH)\nms = list(range(-2, 3))\nYl = {m: Y(2, m) for m in ms}\ndef integ(f): return np.sum(W*f)\ndef ang(k):\n    A = np.zeros((5,5,5,5), complex)\n    for i1,m1 in enumerate(ms):\n        for i3,m3 in enumerate(ms):\n            for q in range(-k,k+1):\n                Ykq = Y(k,q)\n                a = integ(np.conj(Yl[m1])*Yl[m3]*np.conj(Ykq))\n                for i2,m2 in enumerate(ms):\n                    for i4,m4 in enumerate(ms):\n                        b = integ(np.conj(Yl[m2])*Yl[m4]*Ykq)\n                        A[i1,i2,i3,i4] += 4*np.pi/(2*k+1)*a*b\n    return A\nA = {k: ang(k) for k in (0,2,4)}\nX = np.sin(TH)*np.cos(PH); Yc = np.sin(TH)*np.sin(PH); Z = np.cos(TH)\nt2fs = [X*Yc, Yc*Z, X*Z]; efs = [X**2-Yc**2, 3*Z**2-1]\ndef proj_vecs(fs):\n    out=[]\n    for f in fs:\n        v = np.array([integ(np.conj(Yl[m])*f) for m in ms])\n        for u in out: v = v - np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef proj(vecs):\n    P=np.zeros((5,5),complex)\n    for v in vecs: P += np.outer(np.conj(v), v)\n    return P\nPt2 = proj(proj_vecs(t2fs)); Pe = proj(proj_vecs(efs))\nprint(\"trace Pt2,Pe:\", np.trace(Pt2).real, np.trace(Pe).real)\nhcf = -4*Pt2 + 6*Pe\ndef so(im, sp): return 2*im+sp\nN=10\nbasis = list(itertools.combinations(range(N),2))\nidx = {b:i for i,b in enumerate(basis)}\ndef apply(ops, state):\n    st = list(state); sign=1\n    for typ,o in reversed(ops):\n        n = sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sign *= (-1)**n; st = sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sign *= (-1)**n; st.remove(o)\n    return tuple(st), sign\ndef build(Dq, Bv, Cv=None):\n    if Cv is None: Cv = 4*Bv\n    F4 = 441*Cv/35; F2 = (441*Bv+5*F4)/9\n    Vm = F2*A[2] + F4*A[4]\n    h = np.zeros((N,N),complex)\n    for a in range(5):\n        for b in range(5):\n            for sp in range(2):\n                h[so(a,sp), so(b,sp)] = Dq*hcf[a,b]\n    V = np.zeros((N,N,N,N),complex)\n    for a in range(5):\n     for b in range(5):\n      for c in range(5):\n       for d in range(5):\n        for s1 in range(2):\n         for s2 in range(2):\n          V[so(a,s1),so(b,s2),so(c,s1),so(d,s2)] = Vm[a,b,c,d]\n    D=len(basis); H=np.zeros((D,D),complex)\n    for J,st in enumerate(basis):\n        for a in range(N):\n            for b in range(N):\n                if abs(h[a,b])>1e-12:\n                    r,s = apply([('c',a),('a',b)], st)\n                    if r is not None and len(r)==2: H[idx[r],J] += h[a,b]*s\n        for a,b,c,d in itertools.product(range(N),repeat=4):\n            v=V[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s = apply([('c',a),('c',b),('a',d),('a',c)], st)\n            if r is not None and len(r)==2: H[idx[r],J] += 0.5*v*s\n    return H\n# Free ion check: Dq=0, B=1, C=4 -> triplet 3F and 3P separated by 15B; singlets by Racah\nH = build(0.0,1.0)\nev = np.linalg.eigvalsh(H)\nprint(\"free ion eigen (B=1, C=4):\", np.round(ev,4))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 143,
+   "is_error": true,
+   "stdout": "Exit code 143\nCommand timed out after 2m 0s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 12,
+     "method": "matrix",
+     "text": "A = np.zeros((5,5,5,5), complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 59,
+     "method": "matrix",
+     "text": "h = np.zeros((N,N),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 64,
+     "method": "matrix",
+     "text": "V = np.zeros((N,N,N,N),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "matrix",
+     "text": "D=len(basis); H=np.zeros((D,D),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 87,
+     "method": "eigen_solver",
+     "text": "ev = np.linalg.eigvalsh(H)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Time spherical harmonic evaluation",
+   "command": "cd /tmp && cat > /tmp/chk.py << 'EOF'\nimport numpy as np, time\nfrom scipy.special import sph_harm\nt=time.time()\nxg, wg = np.polynomial.legendre.leggauss(16)\nphis = np.linspace(0, 2*np.pi, 32, endpoint=False); wp = 2*np.pi/32\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\nYcache={(l,m): sph_harm(m,l,PH,TH) for l in (2,4) for m in range(-l,l+1)}\nprint(time.time()-t)\nEOF\ntimeout 100 python3 /tmp/chk.py",
+   "scripts": [
+    {
+     "name": "chk.py",
+     "sha256": "c68066072fdda04ab4f9252dec5fe89be5439f092bf7a261ac945bd7c96e55cf",
+     "lines": 9,
+     "code": "import numpy as np, time\nfrom scipy.special import sph_harm\nt=time.time()\nxg, wg = np.polynomial.legendre.leggauss(16)\nphis = np.linspace(0, 2*np.pi, 32, endpoint=False); wp = 2*np.pi/32\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\nYcache={(l,m): sph_harm(m,l,PH,TH) for l in (2,4) for m in range(-l,l+1)}\nprint(time.time()-t)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "chk.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\n/bin/bash: line 12: /tmp/chk.py: Read-only file system\npython3: can't open file '/tmp/chk.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Free-ion check of d2 Ms=1 Coulomb matrix",
+   "command": "cd ~ && timeout 200 python3 - << 'EOF'\nimport numpy as np, itertools\nfrom scipy.special import sph_harm\nxg, wg = np.polynomial.legendre.leggauss(16)\nphis = np.linspace(0, 2*np.pi, 32, endpoint=False); wp = 2*np.pi/32\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef integ(f): return np.sum(W*f)\nms=list(range(-2,3))\nYc_={ (l,m): sph_harm(m,l,PH,TH) for l in (0,2,4) for m in range(-l,l+1)}\ndef ang(k):\n    A=np.zeros((5,5,5,5),complex)\n    for i1,m1 in enumerate(ms):\n     for i3,m3 in enumerate(ms):\n      for q in range(-k,k+1):\n        Ykq=Yc_[(k,q)]\n        a=integ(np.conj(Yc_[(2,m1)])*Yc_[(2,m3)]*np.conj(Ykq))\n        if abs(a)<1e-14: continue\n        for i2,m2 in enumerate(ms):\n         for i4,m4 in enumerate(ms):\n            b=integ(np.conj(Yc_[(2,m2)])*Yc_[(2,m4)]*Ykq)\n            A[i1,i2,i3,i4]+=4*np.pi/(2*k+1)*a*b\n    return A\nA={k:ang(k) for k in (0,2,4)}\nX=np.sin(TH)*np.cos(PH); Yy=np.sin(TH)*np.sin(PH); Z=np.cos(TH)\ndef pv(fs):\n    out=[]\n    for f in fs:\n        v=np.array([integ(np.conj(Yc_[(2,m)])*f) for m in ms])\n        for u in out: v=v-np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef pr(vs):\n    P=np.zeros((5,5),complex)\n    for v in vs: P+=np.outer(np.conj(v),v)\n    return P\nPt2=pr(pv([X*Yy,Yy*Z,X*Z])); Pe=pr(pv([X**2-Yy**2,3*Z**2-1]))\nprint(\"traces\",np.trace(Pt2).real,np.trace(Pe).real)\nhcf=-4*Pt2+6*Pe\n# Ms=+1 sector: two up electrons in 5 orbitals -> 10 determinants\nbasis=list(itertools.combinations(range(5),2)); idx={b:i for i,b in enumerate(basis)}\ndef apply(ops,st):\n    st=list(st); sg=1\n    for typ,o in reversed(ops):\n        n=sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sg*=(-1)**n; st=sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sg*=(-1)**n; st.remove(o)\n    return tuple(st),sg\ndef Hmat(Dq,B,C=None):\n    if C is None: C=4*B\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    Vm=F2*A[2]+F4*A[4]\n    H=np.zeros((10,10),complex)\n    for J,st in enumerate(basis):\n        for a in range(5):\n          for b in range(5):\n            if abs(hcf[a,b])>1e-12:\n              r,s=apply([('c',a),('a',b)],st)\n              if r is not None and len(r)==2: H[idx[r],J]+=Dq*hcf[a,b]*s\n        for a,b,c,d in itertools.product(range(5),repeat=4):\n            v=Vm[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s=apply([('c',a),('c',b),('a',d),('a',c)],st)\n            if r is not None and len(r)==2: H[idx[r],J]+=0.5*v*s\n    return H\nH=Hmat(0,1.0)\nprint(\"free ion Ms=1 (B=1,C=4):\",np.round(np.linalg.eigvalsh(H),4))\nH=Hmat(0,1.0,C=0.0)\nprint(\"free ion Ms=1 (B=1,C=0):\",np.round(np.linalg.eigvalsh(H),4))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "73cea3397b933c8f9350cc924f8b555d17bc4a4fdcf01637a812bb8dbab0d425",
+     "lines": 72,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm\nxg, wg = np.polynomial.legendre.leggauss(16)\nphis = np.linspace(0, 2*np.pi, 32, endpoint=False); wp = 2*np.pi/32\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef integ(f): return np.sum(W*f)\nms=list(range(-2,3))\nYc_={ (l,m): sph_harm(m,l,PH,TH) for l in (0,2,4) for m in range(-l,l+1)}\ndef ang(k):\n    A=np.zeros((5,5,5,5),complex)\n    for i1,m1 in enumerate(ms):\n     for i3,m3 in enumerate(ms):\n      for q in range(-k,k+1):\n        Ykq=Yc_[(k,q)]\n        a=integ(np.conj(Yc_[(2,m1)])*Yc_[(2,m3)]*np.conj(Ykq))\n        if abs(a)<1e-14: continue\n        for i2,m2 in enumerate(ms):\n         for i4,m4 in enumerate(ms):\n            b=integ(np.conj(Yc_[(2,m2)])*Yc_[(2,m4)]*Ykq)\n            A[i1,i2,i3,i4]+=4*np.pi/(2*k+1)*a*b\n    return A\nA={k:ang(k) for k in (0,2,4)}\nX=np.sin(TH)*np.cos(PH); Yy=np.sin(TH)*np.sin(PH); Z=np.cos(TH)\ndef pv(fs):\n    out=[]\n    for f in fs:\n        v=np.array([integ(np.conj(Yc_[(2,m)])*f) for m in ms])\n        for u in out: v=v-np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef pr(vs):\n    P=np.zeros((5,5),complex)\n    for v in vs: P+=np.outer(np.conj(v),v)\n    return P\nPt2=pr(pv([X*Yy,Yy*Z,X*Z])); Pe=pr(pv([X**2-Yy**2,3*Z**2-1]))\nprint(\"traces\",np.trace(Pt2).real,np.trace(Pe).real)\nhcf=-4*Pt2+6*Pe\n# Ms=+1 sector: two up electrons in 5 orbitals -> 10 determinants\nbasis=list(itertools.combinations(range(5),2)); idx={b:i for i,b in enumerate(basis)}\ndef apply(ops,st):\n    st=list(st); sg=1\n    for typ,o in reversed(ops):\n        n=sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sg*=(-1)**n; st=sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sg*=(-1)**n; st.remove(o)\n    return tuple(st),sg\ndef Hmat(Dq,B,C=None):\n    if C is None: C=4*B\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    Vm=F2*A[2]+F4*A[4]\n    H=np.zeros((10,10),complex)\n    for J,st in enumerate(basis):\n        for a in range(5):\n          for b in range(5):\n            if abs(hcf[a,b])>1e-12:\n              r,s=apply([('c',a),('a',b)],st)\n              if r is not None and len(r)==2: H[idx[r],J]+=Dq*hcf[a,b]*s\n        for a,b,c,d in itertools.product(range(5),repeat=4):\n            v=Vm[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s=apply([('c',a),('c',b),('a',d),('a',c)],st)\n            if r is not None and len(r)==2: H[idx[r],J]+=0.5*v*s\n    return H\nH=Hmat(0,1.0)\nprint(\"free ion Ms=1 (B=1,C=4):\",np.round(np.linalg.eigvalsh(H),4))\nH=Hmat(0,1.0,C=0.0)\nprint(\"free ion Ms=1 (B=1,C=0):\",np.round(np.linalg.eigvalsh(H),4))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\nImportError: cannot import name 'sph_harm' from 'scipy.special' (<B_VENV>/lib/python3.14/site-packages/scipy/special/__init__.py)",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 11,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5,5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 56,
+     "method": "matrix",
+     "text": "H=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 70,
+     "method": "eigen_solver",
+     "text": "print(\"free ion Ms=1 (B=1,C=4):\",np.round(np.linalg.eigvalsh(H),4))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "eigen_solver",
+     "text": "print(\"free ion Ms=1 (B=1,C=0):\",np.round(np.linalg.eigvalsh(H),4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Free-ion check of d2 Ms=1 Coulomb matrix",
+   "command": "cd ~ && timeout 200 python3 - << 'EOF'\nimport numpy as np, itertools, scipy.special as sp\ndef sph(l,m,th,ph):\n    if hasattr(sp,'sph_harm_y'): return sp.sph_harm_y(l,m,th,ph)\n    return sp.sph_harm(m,l,ph,th)\nxg, wg = np.polynomial.legendre.leggauss(16)\nphis = np.linspace(0, 2*np.pi, 32, endpoint=False); wp = 2*np.pi/32\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef integ(f): return np.sum(W*f)\nms=list(range(-2,3))\nYc_={ (l,m): sph(l,m,TH,PH) for l in (2,4) for m in range(-l,l+1)}\ndef ang(k):\n    A=np.zeros((5,5,5,5),complex)\n    for i1,m1 in enumerate(ms):\n     for i3,m3 in enumerate(ms):\n      for q in range(-k,k+1):\n        Ykq=Yc_[(k,q)]\n        a=integ(np.conj(Yc_[(2,m1)])*Yc_[(2,m3)]*np.conj(Ykq))\n        if abs(a)<1e-14: continue\n        for i2,m2 in enumerate(ms):\n         for i4,m4 in enumerate(ms):\n            b=integ(np.conj(Yc_[(2,m2)])*Yc_[(2,m4)]*Ykq)\n            A[i1,i2,i3,i4]+=4*np.pi/(2*k+1)*a*b\n    return A\nA={k:ang(k) for k in (2,4)}\nA[0]=None\nX=np.sin(TH)*np.cos(PH); Yy=np.sin(TH)*np.sin(PH); Z=np.cos(TH)\ndef pv(fs):\n    out=[]\n    for f in fs:\n        v=np.array([integ(np.conj(Yc_[(2,m)])*f) for m in ms])\n        for u in out: v=v-np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef pr(vs):\n    P=np.zeros((5,5),complex)\n    for v in vs: P+=np.outer(np.conj(v),v)\n    return P\nPt2=pr(pv([X*Yy,Yy*Z,X*Z])); Pe=pr(pv([X**2-Yy**2,3*Z**2-1]))\nprint(\"traces\",np.trace(Pt2).real,np.trace(Pe).real)\nhcf=-4*Pt2+6*Pe\nbasis=list(itertools.combinations(range(5),2)); idx={b:i for i,b in enumerate(basis)}\ndef apply(ops,st):\n    st=list(st); sg=1\n    for typ,o in reversed(ops):\n        n=sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sg*=(-1)**n; st=sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sg*=(-1)**n; st.remove(o)\n    return tuple(st),sg\ndef Hmat(Dq,B,C=None):\n    if C is None: C=4*B\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    Vm=F2*A[2]+F4*A[4]\n    H=np.zeros((10,10),complex)\n    for J,st in enumerate(basis):\n        for a in range(5):\n          for b in range(5):\n            if abs(hcf[a,b])>1e-12:\n              r,s=apply([('c',a),('a',b)],st)\n              if r is not None and len(r)==2: H[idx[r],J]+=Dq*hcf[a,b]*s\n        for a,b,c,d in itertools.product(range(5),repeat=4):\n            v=Vm[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s=apply([('c',a),('c',b),('a',d),('a',c)],st)\n            if r is not None and len(r)==2: H[idx[r],J]+=0.5*v*s\n    return H\nprint(\"free ion Ms=1 (B=1,C=4):\",np.round(np.linalg.eigvalsh(Hmat(0,1.0)),4))\nprint(\"free ion Ms=1 (B=1,C=0):\",np.round(np.linalg.eigvalsh(Hmat(0,1.0,C=0.0)),4))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "6f40f0614dda3b6e93552ebf28e5b6b07b555fcfec837b47c40877290c2e070b",
+     "lines": 72,
+     "code": "import numpy as np, itertools, scipy.special as sp\ndef sph(l,m,th,ph):\n    if hasattr(sp,'sph_harm_y'): return sp.sph_harm_y(l,m,th,ph)\n    return sp.sph_harm(m,l,ph,th)\nxg, wg = np.polynomial.legendre.leggauss(16)\nphis = np.linspace(0, 2*np.pi, 32, endpoint=False); wp = 2*np.pi/32\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef integ(f): return np.sum(W*f)\nms=list(range(-2,3))\nYc_={ (l,m): sph(l,m,TH,PH) for l in (2,4) for m in range(-l,l+1)}\ndef ang(k):\n    A=np.zeros((5,5,5,5),complex)\n    for i1,m1 in enumerate(ms):\n     for i3,m3 in enumerate(ms):\n      for q in range(-k,k+1):\n        Ykq=Yc_[(k,q)]\n        a=integ(np.conj(Yc_[(2,m1)])*Yc_[(2,m3)]*np.conj(Ykq))\n        if abs(a)<1e-14: continue\n        for i2,m2 in enumerate(ms):\n         for i4,m4 in enumerate(ms):\n            b=integ(np.conj(Yc_[(2,m2)])*Yc_[(2,m4)]*Ykq)\n            A[i1,i2,i3,i4]+=4*np.pi/(2*k+1)*a*b\n    return A\nA={k:ang(k) for k in (2,4)}\nA[0]=None\nX=np.sin(TH)*np.cos(PH); Yy=np.sin(TH)*np.sin(PH); Z=np.cos(TH)\ndef pv(fs):\n    out=[]\n    for f in fs:\n        v=np.array([integ(np.conj(Yc_[(2,m)])*f) for m in ms])\n        for u in out: v=v-np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef pr(vs):\n    P=np.zeros((5,5),complex)\n    for v in vs: P+=np.outer(np.conj(v),v)\n    return P\nPt2=pr(pv([X*Yy,Yy*Z,X*Z])); Pe=pr(pv([X**2-Yy**2,3*Z**2-1]))\nprint(\"traces\",np.trace(Pt2).real,np.trace(Pe).real)\nhcf=-4*Pt2+6*Pe\nbasis=list(itertools.combinations(range(5),2)); idx={b:i for i,b in enumerate(basis)}\ndef apply(ops,st):\n    st=list(st); sg=1\n    for typ,o in reversed(ops):\n        n=sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sg*=(-1)**n; st=sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sg*=(-1)**n; st.remove(o)\n    return tuple(st),sg\ndef Hmat(Dq,B,C=None):\n    if C is None: C=4*B\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    Vm=F2*A[2]+F4*A[4]\n    H=np.zeros((10,10),complex)\n    for J,st in enumerate(basis):\n        for a in range(5):\n          for b in range(5):\n            if abs(hcf[a,b])>1e-12:\n              r,s=apply([('c',a),('a',b)],st)\n              if r is not None and len(r)==2: H[idx[r],J]+=Dq*hcf[a,b]*s\n        for a,b,c,d in itertools.product(range(5),repeat=4):\n            v=Vm[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s=apply([('c',a),('c',b),('a',d),('a',c)],st)\n            if r is not None and len(r)==2: H[idx[r],J]+=0.5*v*s\n    return H\nprint(\"free ion Ms=1 (B=1,C=4):\",np.round(np.linalg.eigvalsh(Hmat(0,1.0)),4))\nprint(\"free ion Ms=1 (B=1,C=0):\",np.round(np.linalg.eigvalsh(Hmat(0,1.0,C=0.0)),4))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "traces 3.0 2.0\nfree ion Ms=1 (B=1,C=4): [-13.6 -13.6 -13.6 -13.6 -13.6 -13.6 -13.6   1.4   1.4   1.4]\nfree ion Ms=1 (B=1,C=0): [-8. -8. -8. -8. -8. -8. -8.  7.  7.  7.]\nShell cwd was reset to /tmp/tsbench-run-fvie5mem",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 13,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5,5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 36,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 58,
+     "method": "matrix",
+     "text": "H=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 71,
+     "method": "eigen_solver",
+     "text": "print(\"free ion Ms=1 (B=1,C=4):\",np.round(np.linalg.eigvalsh(Hmat(0,1.0)),4))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "eigen_solver",
+     "text": "print(\"free ion Ms=1 (B=1,C=0):\",np.round(np.linalg.eigvalsh(Hmat(0,1.0,C=0.0)),4))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Compute d2 triplet level energies vs Dq and B",
+   "command": "cd ~ && timeout 300 python3 - << 'EOF'\nimport numpy as np, itertools, scipy.special as sp\nfrom scipy.optimize import brentq\ndef sph(l,m,th,ph):\n    if hasattr(sp,'sph_harm_y'): return sp.sph_harm_y(l,m,th,ph)\n    return sp.sph_harm(m,l,ph,th)\nxg, wg = np.polynomial.legendre.leggauss(16)\nphis = np.linspace(0, 2*np.pi, 32, endpoint=False); wp = 2*np.pi/32\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef integ(f): return np.sum(W*f)\nms=list(range(-2,3))\nYc_={ (l,m): sph(l,m,TH,PH) for l in (2,4) for m in range(-l,l+1)}\ndef ang(k):\n    A=np.zeros((5,5,5,5),complex)\n    for i1,m1 in enumerate(ms):\n     for i3,m3 in enumerate(ms):\n      for q in range(-k,k+1):\n        Ykq=Yc_[(k,q)]\n        a=integ(np.conj(Yc_[(2,m1)])*Yc_[(2,m3)]*np.conj(Ykq))\n        if abs(a)<1e-14: continue\n        for i2,m2 in enumerate(ms):\n         for i4,m4 in enumerate(ms):\n            b=integ(np.conj(Yc_[(2,m2)])*Yc_[(2,m4)]*Ykq)\n            A[i1,i2,i3,i4]+=4*np.pi/(2*k+1)*a*b\n    return A\nA={k:ang(k) for k in (2,4)}\nX=np.sin(TH)*np.cos(PH); Yy=np.sin(TH)*np.sin(PH); Z=np.cos(TH)\ndef pv(fs):\n    out=[]\n    for f in fs:\n        v=np.array([integ(np.conj(Yc_[(2,m)])*f) for m in ms])\n        for u in out: v=v-np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef pr(vs):\n    P=np.zeros((5,5),complex)\n    for v in vs: P+=np.outer(np.conj(v),v)\n    return P\nPt2=pr(pv([X*Yy,Yy*Z,X*Z])); Pe=pr(pv([X**2-Yy**2,3*Z**2-1]))\nhcf=-4*Pt2+6*Pe\nbasis=list(itertools.combinations(range(5),2)); idx={b:i for i,b in enumerate(basis)}\ndef apply(ops,st):\n    st=list(st); sg=1\n    for typ,o in reversed(ops):\n        n=sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sg*=(-1)**n; st=sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sg*=(-1)**n; st.remove(o)\n    return tuple(st),sg\nC_over_B=4.0\ndef Hmat(Dq,B):\n    C=C_over_B*B\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    Vm=F2*A[2]+F4*A[4]\n    H=np.zeros((10,10),complex)\n    for J,st in enumerate(basis):\n        for a in range(5):\n          for b in range(5):\n            if abs(hcf[a,b])>1e-12:\n              r,s=apply([('c',a),('a',b)],st)\n              if r is not None and len(r)==2: H[idx[r],J]+=Dq*hcf[a,b]*s\n        for a,b,c,d in itertools.product(range(5),repeat=4):\n            v=Vm[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s=apply([('c',a),('c',b),('a',d),('a',c)],st)\n            if r is not None and len(r)==2: H[idx[r],J]+=0.5*v*s\n    return H\ndef levels(Dq,B):\n    ev=np.sort(np.linalg.eigvalsh(Hmat(Dq,B).real))\n    # distinct levels with multiplicities\n    out=[]\n    for e in ev:\n        if out and abs(e-out[-1][0])<1e-6: out[-1][1]+=1\n        else: out.append([e,1])\n    return out\nfor Dq,B in [(1000,500),(1500,600)]:\n    print(Dq,B,[(round(e-levels(Dq,B)[0][0],2),m) for e,m in levels(Dq,B)])\nnp.save if False else None\n# Save-free fit: find B,Dq from three bands: nu1 = T2, nu2 = T1F, nu3 = T1P (try assignments)\nobs=np.array([15730,24030,32750.])\nimport math\ndef trans(Dq,B):\n    L=levels(Dq,B)\n    return [e-L[0][0] for e,m in L[1:]], [m for e,m in L[1:]]\nprint(trans(1500,600))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "f6d33507f6a0b455e882aa1af5caea119ddf4d59d6aee5b46997415eeea28dbb",
+     "lines": 88,
+     "code": "import numpy as np, itertools, scipy.special as sp\nfrom scipy.optimize import brentq\ndef sph(l,m,th,ph):\n    if hasattr(sp,'sph_harm_y'): return sp.sph_harm_y(l,m,th,ph)\n    return sp.sph_harm(m,l,ph,th)\nxg, wg = np.polynomial.legendre.leggauss(16)\nphis = np.linspace(0, 2*np.pi, 32, endpoint=False); wp = 2*np.pi/32\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef integ(f): return np.sum(W*f)\nms=list(range(-2,3))\nYc_={ (l,m): sph(l,m,TH,PH) for l in (2,4) for m in range(-l,l+1)}\ndef ang(k):\n    A=np.zeros((5,5,5,5),complex)\n    for i1,m1 in enumerate(ms):\n     for i3,m3 in enumerate(ms):\n      for q in range(-k,k+1):\n        Ykq=Yc_[(k,q)]\n        a=integ(np.conj(Yc_[(2,m1)])*Yc_[(2,m3)]*np.conj(Ykq))\n        if abs(a)<1e-14: continue\n        for i2,m2 in enumerate(ms):\n         for i4,m4 in enumerate(ms):\n            b=integ(np.conj(Yc_[(2,m2)])*Yc_[(2,m4)]*Ykq)\n            A[i1,i2,i3,i4]+=4*np.pi/(2*k+1)*a*b\n    return A\nA={k:ang(k) for k in (2,4)}\nX=np.sin(TH)*np.cos(PH); Yy=np.sin(TH)*np.sin(PH); Z=np.cos(TH)\ndef pv(fs):\n    out=[]\n    for f in fs:\n        v=np.array([integ(np.conj(Yc_[(2,m)])*f) for m in ms])\n        for u in out: v=v-np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef pr(vs):\n    P=np.zeros((5,5),complex)\n    for v in vs: P+=np.outer(np.conj(v),v)\n    return P\nPt2=pr(pv([X*Yy,Yy*Z,X*Z])); Pe=pr(pv([X**2-Yy**2,3*Z**2-1]))\nhcf=-4*Pt2+6*Pe\nbasis=list(itertools.combinations(range(5),2)); idx={b:i for i,b in enumerate(basis)}\ndef apply(ops,st):\n    st=list(st); sg=1\n    for typ,o in reversed(ops):\n        n=sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sg*=(-1)**n; st=sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sg*=(-1)**n; st.remove(o)\n    return tuple(st),sg\nC_over_B=4.0\ndef Hmat(Dq,B):\n    C=C_over_B*B\n    F4=441*C/35; F2=(441*B+5*F4)/9\n    Vm=F2*A[2]+F4*A[4]\n    H=np.zeros((10,10),complex)\n    for J,st in enumerate(basis):\n        for a in range(5):\n          for b in range(5):\n            if abs(hcf[a,b])>1e-12:\n              r,s=apply([('c',a),('a',b)],st)\n              if r is not None and len(r)==2: H[idx[r],J]+=Dq*hcf[a,b]*s\n        for a,b,c,d in itertools.product(range(5),repeat=4):\n            v=Vm[a,b,c,d]\n            if abs(v)<1e-12: continue\n            r,s=apply([('c',a),('c',b),('a',d),('a',c)],st)\n            if r is not None and len(r)==2: H[idx[r],J]+=0.5*v*s\n    return H\ndef levels(Dq,B):\n    ev=np.sort(np.linalg.eigvalsh(Hmat(Dq,B).real))\n    # distinct levels with multiplicities\n    out=[]\n    for e in ev:\n        if out and abs(e-out[-1][0])<1e-6: out[-1][1]+=1\n        else: out.append([e,1])\n    return out\nfor Dq,B in [(1000,500),(1500,600)]:\n    print(Dq,B,[(round(e-levels(Dq,B)[0][0],2),m) for e,m in levels(Dq,B)])\nnp.save if False else None\n# Save-free fit: find B,Dq from three bands: nu1 = T2, nu2 = T1F, nu3 = T1P (try assignments)\nobs=np.array([15730,24030,32750.])\nimport math\ndef trans(Dq,B):\n    L=levels(Dq,B)\n    return [e-L[0][0] for e,m in L[1:]], [m for e,m in L[1:]]\nprint(trans(1500,600))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1000 500 [(np.float64(0.0), 3), (np.float64(9096.18), 3), (np.float64(15692.35), 3), (np.float64(19096.18), 1)]\n1500 600 [(np.float64(0.0), 3), (np.float64(13816.65), 3), (np.float64(21633.31), 3), (np.float64(28816.65), 1)]\n([np.float64(13816.653826391972), np.float64(21633.307652783944), np.float64(28816.653826391987)], [3, 3, 1])\nShell cwd was reset to /tmp/tsbench-run-fvie5mem",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5,5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 36,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 58,
+     "method": "matrix",
+     "text": "H=np.zeros((10,10),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "eigen_solver",
+     "text": "ev=np.sort(np.linalg.eigvalsh(Hmat(Dq,B).real))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Fit Dq and B to three observed d2 bands",
+   "command": "cd ~ && timeout 500 python3 - << 'EOF'\nimport numpy as np, itertools, scipy.special as sp\nfrom scipy.optimize import least_squares\ndef sph(l,m,th,ph):\n    if hasattr(sp,'sph_harm_y'): return sp.sph_harm_y(l,m,th,ph)\n    return sp.sph_harm(m,l,ph,th)\nxg, wg = np.polynomial.legendre.leggauss(16)\nphis = np.linspace(0, 2*np.pi, 32, endpoint=False); wp = 2*np.pi/32\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef integ(f): return np.sum(W*f)\nms=list(range(-2,3))\nYc_={ (l,m): sph(l,m,TH,PH) for l in (2,4) for m in range(-l,l+1)}\ndef ang(k):\n    A=np.zeros((5,5,5,5),complex)\n    for i1,m1 in enumerate(ms):\n     for i3,m3 in enumerate(ms):\n      for q in range(-k,k+1):\n        Ykq=Yc_[(k,q)]\n        a=integ(np.conj(Yc_[(2,m1)])*Yc_[(2,m3)]*np.conj(Ykq))\n        if abs(a)<1e-14: continue\n        for i2,m2 in enumerate(ms):\n         for i4,m4 in enumerate(ms):\n            b=integ(np.conj(Yc_[(2,m2)])*Yc_[(2,m4)]*Ykq)\n            A[i1,i2,i3,i4]+=4*np.pi/(2*k+1)*a*b\n    return A\nA={k:ang(k) for k in (2,4)}\nX=np.sin(TH)*np.cos(PH); Yy=np.sin(TH)*np.sin(PH); Z=np.cos(TH)\ndef pv(fs):\n    out=[]\n    for f in fs:\n        v=np.array([integ(np.conj(Yc_[(2,m)])*f) for m in ms])\n        for u in out: v=v-np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef pr(vs):\n    P=np.zeros((5,5),complex)\n    for v in vs: P+=np.outer(np.conj(v),v)\n    return P\nPt2=pr(pv([X*Yy,Yy*Z,X*Z])); Pe=pr(pv([X**2-Yy**2,3*Z**2-1]))\nhcf=(-4*Pt2+6*Pe).real\nbasis=list(itertools.combinations(range(5),2)); idx={b:i for i,b in enumerate(basis)}\ndef apply(ops,st):\n    st=list(st); sg=1\n    for typ,o in reversed(ops):\n        n=sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sg*=(-1)**n; st=sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sg*=(-1)**n; st.remove(o)\n    return tuple(st),sg\n# precompute operator lists\none=[]; two=[]\nfor J,st in enumerate(basis):\n    for a in range(5):\n        for b in range(5):\n            if abs(hcf[a,b])>1e-12:\n                r,s=apply([('c',a),('a',b)],st)\n                if r is not None and len(r)==2: one.append((idx[r],J,hcf[a,b]*s))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        r,s=apply([('c',a),('c',b),('a',d),('a',c)],st)\n        if r is not None and len(r)==2: two.append((idx[r],J,a,b,c,d,0.5*s))\ndef Hmat(Dq,B):\n    F4=441*4*B/35; F2=(441*B+5*F4)/9\n    Vm=(F2*A[2]+F4*A[4]).real\n    H=np.zeros((10,10))\n    for I,J,v in one: H[I,J]+=Dq*v\n    for I,J,a,b,c,d,s in two: H[I,J]+=s*Vm[a,b,c,d]\n    return H\ndef levels(Dq,B):\n    ev=np.sort(np.linalg.eigvalsh(Hmat(Dq,B)))\n    out=[]\n    for e in ev:\n        if out and abs(e-out[-1][0])<1e-6: out[-1][1]+=1\n        else: out.append([e,1])\n    return out\ndef excit(Dq,B):\n    L=levels(Dq,B); g=L[0][0]\n    return [(e-g,m) for e,m in L[1:]]\nprint(\"check\", excit(1000,500))\nobs=np.array([15730.,24030.,32750.])\n# assignments of the 3 observed bands to the 3 excited triplet levels (T2, T1P, A2)\nimport itertools as it\nbest=[]\nfor perm in it.permutations(range(3)):\n    def res(p):\n        Dq,B=p\n        ex=[e for e,m in excit(Dq,B)]\n        # ex order: T2, A2?, T1P? -> determine by degeneracy: T2 (3), T1P(3), A2(1)\n        ex_d={m:e for e,m in excit(Dq,B)}\n        # map by sorted energies: levels sorted ascending\n        e_sorted=[e for e,m in excit(Dq,B)]\n        return np.array([e_sorted[perm[i]] for i in range(3)])-obs\n    try:\n        sol=least_squares(res,[1500,600],bounds=([100,50],[5000,2000]))\n        best.append((np.sum(sol.fun**2),perm,sol.x,sol.fun))\n    except Exception as ex: print(ex)\nbest.sort(key=lambda t:t[0])\nfor b in best[:6]: print(b)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "4f8c68e6f776c52a74a244f18839da99008f38556202acca32ef7d45b96497da",
+     "lines": 100,
+     "code": "import numpy as np, itertools, scipy.special as sp\nfrom scipy.optimize import least_squares\ndef sph(l,m,th,ph):\n    if hasattr(sp,'sph_harm_y'): return sp.sph_harm_y(l,m,th,ph)\n    return sp.sph_harm(m,l,ph,th)\nxg, wg = np.polynomial.legendre.leggauss(16)\nphis = np.linspace(0, 2*np.pi, 32, endpoint=False); wp = 2*np.pi/32\nTH, PH = np.meshgrid(np.arccos(xg), phis, indexing='ij')\nW = np.outer(wg, np.full(len(phis), wp))\ndef integ(f): return np.sum(W*f)\nms=list(range(-2,3))\nYc_={ (l,m): sph(l,m,TH,PH) for l in (2,4) for m in range(-l,l+1)}\ndef ang(k):\n    A=np.zeros((5,5,5,5),complex)\n    for i1,m1 in enumerate(ms):\n     for i3,m3 in enumerate(ms):\n      for q in range(-k,k+1):\n        Ykq=Yc_[(k,q)]\n        a=integ(np.conj(Yc_[(2,m1)])*Yc_[(2,m3)]*np.conj(Ykq))\n        if abs(a)<1e-14: continue\n        for i2,m2 in enumerate(ms):\n         for i4,m4 in enumerate(ms):\n            b=integ(np.conj(Yc_[(2,m2)])*Yc_[(2,m4)]*Ykq)\n            A[i1,i2,i3,i4]+=4*np.pi/(2*k+1)*a*b\n    return A\nA={k:ang(k) for k in (2,4)}\nX=np.sin(TH)*np.cos(PH); Yy=np.sin(TH)*np.sin(PH); Z=np.cos(TH)\ndef pv(fs):\n    out=[]\n    for f in fs:\n        v=np.array([integ(np.conj(Yc_[(2,m)])*f) for m in ms])\n        for u in out: v=v-np.vdot(u,v)*u\n        out.append(v/np.linalg.norm(v))\n    return out\ndef pr(vs):\n    P=np.zeros((5,5),complex)\n    for v in vs: P+=np.outer(np.conj(v),v)\n    return P\nPt2=pr(pv([X*Yy,Yy*Z,X*Z])); Pe=pr(pv([X**2-Yy**2,3*Z**2-1]))\nhcf=(-4*Pt2+6*Pe).real\nbasis=list(itertools.combinations(range(5),2)); idx={b:i for i,b in enumerate(basis)}\ndef apply(ops,st):\n    st=list(st); sg=1\n    for typ,o in reversed(ops):\n        n=sum(1 for x in st if x<o)\n        if typ=='c':\n            if o in st: return None,0\n            sg*=(-1)**n; st=sorted(st+[o])\n        else:\n            if o not in st: return None,0\n            sg*=(-1)**n; st.remove(o)\n    return tuple(st),sg\n# precompute operator lists\none=[]; two=[]\nfor J,st in enumerate(basis):\n    for a in range(5):\n        for b in range(5):\n            if abs(hcf[a,b])>1e-12:\n                r,s=apply([('c',a),('a',b)],st)\n                if r is not None and len(r)==2: one.append((idx[r],J,hcf[a,b]*s))\n    for a,b,c,d in itertools.product(range(5),repeat=4):\n        r,s=apply([('c',a),('c',b),('a',d),('a',c)],st)\n        if r is not None and len(r)==2: two.append((idx[r],J,a,b,c,d,0.5*s))\ndef Hmat(Dq,B):\n    F4=441*4*B/35; F2=(441*B+5*F4)/9\n    Vm=(F2*A[2]+F4*A[4]).real\n    H=np.zeros((10,10))\n    for I,J,v in one: H[I,J]+=Dq*v\n    for I,J,a,b,c,d,s in two: H[I,J]+=s*Vm[a,b,c,d]\n    return H\ndef levels(Dq,B):\n    ev=np.sort(np.linalg.eigvalsh(Hmat(Dq,B)))\n    out=[]\n    for e in ev:\n        if out and abs(e-out[-1][0])<1e-6: out[-1][1]+=1\n        else: out.append([e,1])\n    return out\ndef excit(Dq,B):\n    L=levels(Dq,B); g=L[0][0]\n    return [(e-g,m) for e,m in L[1:]]\nprint(\"check\", excit(1000,500))\nobs=np.array([15730.,24030.,32750.])\n# assignments of the 3 observed bands to the 3 excited triplet levels (T2, T1P, A2)\nimport itertools as it\nbest=[]\nfor perm in it.permutations(range(3)):\n    def res(p):\n        Dq,B=p\n        ex=[e for e,m in excit(Dq,B)]\n        # ex order: T2, A2?, T1P? -> determine by degeneracy: T2 (3), T1P(3), A2(1)\n        ex_d={m:e for e,m in excit(Dq,B)}\n        # map by sorted energies: levels sorted ascending\n        e_sorted=[e for e,m in excit(Dq,B)]\n        return np.array([e_sorted[perm[i]] for i in range(3)])-obs\n    try:\n        sol=least_squares(res,[1500,600],bounds=([100,50],[5000,2000]))\n        best.append((np.sum(sol.fun**2),perm,sol.x,sol.fun))\n    except Exception as ex: print(ex)\nbest.sort(key=lambda t:t[0])\nfor b in best[:6]: print(b)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "check [(np.float64(9096.17741323762), 3), (np.float64(15692.354826475228), 3), (np.float64(19096.17741323763), 1)]\n(np.float64(0.15845834456772612), (0, 1, 2), array([1701.9463993 ,  639.25173364]), array([ 0.35308093,  0.01817335, -0.18292603]))\n(np.float64(43077906.80510748), (0, 2, 1), array([1531.06405102, 1134.12151971]), array([-2120.54176898,  4890.0987474 , -3829.90125875]))\n(np.float64(53950346.11148426), (1, 0, 2), array([1753.91693035,   50.        ]), array([ 2269.17254295, -6635.82907677,  2183.34022675]))\n(np.float64(289887534.1159057), (2, 0, 1), array([1469.69003455, 1088.65929739]), array([ 12030.81193402, -10966.08859066,  -4989.18824519]))\n(np.float64(347154010.961431), (1, 2, 0), array([1608.50721125,   50.        ]), array([   815.95448334,   7995.58541038, -16809.48670209]))\n(np.float64(523609136.5807737), (2, 1, 0), array([1369.19395041,  827.7459814 ]), array([ 10279.20903757,   -671.21071618, -20432.73046652]))\nShell cwd was reset to /tmp/tsbench-run-fvie5mem",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 2,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 14,
+     "method": "matrix",
+     "text": "A=np.zeros((5,5,5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 36,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 67,
+     "method": "matrix",
+     "text": "H=np.zeros((10,10))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 72,
+     "method": "eigen_solver",
+     "text": "ev=np.sort(np.linalg.eigvalsh(Hmat(Dq,B)))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 96,
+     "method": "least_squares",
+     "text": "sol=least_squares(res,[1500,600],bounds=([100,50],[5000,2000]))"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1702.0,
+   "weak": false,
+   "steps": [
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "B",
+   "value": 639.0,
+   "weak": false,
+   "steps": [
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  }
+ ],
+ "summary": {
+  "n_steps": 10,
+  "n_scripts": 9,
+  "n_failed_steps": 5,
+  "n_values": 2,
+  "n_linked": 2,
+  "n_weak": 0,
+  "source_steps": [
+   9
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

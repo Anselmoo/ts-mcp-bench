@@ -1,0 +1,1 @@
+ls <SANDBOX_TMP>; touch <SANDBOX_TMP>/y && ls <SANDBOX_TMP>

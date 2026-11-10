@@ -1,0 +1,1 @@
+pwd; touch ./x_test && echo ok && rm ./x_test; python3 -c "import numpy, matplotlib; print(numpy.__version__, matplotlib.__version__)"

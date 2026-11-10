@@ -1,0 +1,1 @@
+sed -i 's/q=ham(2,Dq);t=ham(1,Dq)/q=ham(4,Dq);t=ham(2,Dq)/' a.py; python3 a.py

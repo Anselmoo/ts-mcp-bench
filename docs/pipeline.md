@@ -3,7 +3,7 @@
 Each stage is one subpackage of `tsbench` and one command. A stage reads only the files written by the stages before
 it; the layer rule is enforced by `tests/test_layers.py`:
 
-    cli > release > figures, report > stats > run, score > plan > tasks, conditions > core
+    cli > release > analyze > figures, report > stats > run, score > plan > tasks, conditions > core
 
 | Stage | Package | Command | Reads | Writes |
 |---|---|---|---|---|
@@ -15,7 +15,13 @@ it; the layer rule is enforced by `tests/test_layers.py`:
 | stats | `tsbench.stats` | `tsbench metrics`, `tsbench stats hypotheses`, `tsbench stats power` | score tables | `metrics/*.csv`; `hypotheses.json` and `power.csv` (in the current directory unless `--out` names a file) |
 | figures | `tsbench.figures` | `tsbench figures` | score tables, transcripts | figure files with `.source.csv` and `.json` provenance |
 | report | `tsbench.report` | `tsbench report …`, `tsbench explain` | score tables, transcripts, plans | self-contained HTML pages |
+| analyze | `tsbench.analyze` | `tsbench analyze snippets` | transcripts | `<run id>/step-NN.sh`, one file per heredoc, `index.csv` and `README.md` in `--out` |
+| analyze | `tsbench.analyze` | `tsbench analyze strategy` | transcripts, task set, `scores.csv` | `runs.csv`, `by_group.csv` (strategy shares and accuracy) and `README.md` in `--out` |
+| analyze | `tsbench.analyze` | `tsbench analyze errors` | transcripts, `scores.csv` | `runs.csv`, `steps.csv`, `exceptions.csv`, `by_group.csv` and `README.md` in `--out` |
+| analyze | `tsbench.analyze` | `tsbench analyze provenance` | transcripts, task set, `scores.csv` | `numbers.csv`, `runs.csv`, `by_group.csv` and `README.md` in `--out` |
+| analyze | `tsbench.analyze` | `tsbench analyze effort` | transcripts, sidecars, `scores.csv`, `metrics/consistency.csv` | `runs.csv`, `by_group.csv`, `timeouts.csv`, `tasks.csv` and `README.md` in `--out` |
 | release | `tsbench.release` | `tsbench release gate` | the git tree | pass / fail |
+| publish | `tools/build_results.py` | `uv run python tools/build_results.py --repo REPO --plan NAME --rules FILE --doi DOI [--source DIR]` | the scored verified copy of a finished plan, a file of path replacements outside the repository | `results/`: the run folder with machine paths replaced, `REDACTIONS.csv`, `images/`, `code-snippets/`, `analysis/`, `SHA256SUMS`; fails when the rescored copy differs or the text gate finds a hit |
 
 `tsbench report render` is an alias of `tsbench report views`.
 
@@ -54,18 +60,36 @@ renders a copy of `DIR` instead. No run data is stored in the repository.
 `tsbench report full --runs DIR --out REPORT.html` builds one fact page: figures, tables and numbers, no paragraphs
 and no interpretation. A sticky top bar holds six tabs and a theme switch (System,
 Light, Dark; the choice is kept in the browser when it allows). Under the title, one line names the report version, the
-pilot task-set hash and every code commit of the run sets; chips name the model, the endpoint, the split, the conditions, the effort, k, the
+task-set hash of the split and every code commit of the run sets; chips name the model, the endpoint, the split, the conditions, the effort, k, the
 runs, their dates, the oracle and the commit. Each tab has a table of contents of three levels on the left (sections,
 sub-sections, figures, tables and tasks); below 900 px it is a fold-out above the tab.
 
-Every model of the run sets is analysed. With several models the tabs Models, Tasks and Published spectra hold one
-view per model, most evaluable runs first, and every id in a view carries the model's prefix (`task-<model>-<id>`,
-`fig-<model>-<key>`). The tab Models opens with "Models compared": per model the endpoint, the runs, k, the share
-correct per condition with interval and C − A and C − B with interval, and two figures of the same. A model switch in
-the top bar picks the view and its table of contents and is kept in the browser like the theme; an address whose
-target lies in another view switches to that model. The model chip counts the models and the run chip adds up the
-runs; the class intervals and the exclusions name the model of each row. With one model the page has no prefix, no
-switch and no comparison.
+Every model of the run sets stands on the same pages, in one order on every page (`report.base.model_key`: Haiku,
+Sonnet, Opus, then the others by id). There is one layout and one table of contents per tab. With several models the
+tab Models opens its Overview with a table of the models (the endpoint, the runs, k, the share correct per condition
+with interval, C − A and C − B with interval); every table has a column Model, a task or a published system has one row
+that holds a line per model, and every figure is its all-models version on one scale: a band per model where the figure
+can hold it (share, paired differences, outcome and error categories, error size, characters per tool), a bubble chart
+of median output tokens against the share correct (one bubble per model and condition, area = runs), a heat map of the
+classes per condition, and one panel per model for the subsets, the call paths, the transitions, the cost map, the
+ledger and the spectra. The colour of a condition is the same on every page. The model chip counts the models and the
+run chip adds up the runs. With one model the tables have no column Model and the figures are those of one run set.
+
+The page is one file: it holds every image and every code block of the runs, whole, and the per-run figures, and may
+reach 100 MB; the images and code of a run card are copied in when its class is opened. `--page-budget MB` limits what
+the images and figures take; beyond it they are only linked to their file beside the page. `--publication`, implied
+by the confirmatory split, refuses to write a page with a link to a local file (exit status 2).
+`--images results/images` adds what a run left outside its folder, from `<run set>.index.csv`; a file that is not what
+the index says stops the build.
+`--redactions results/REDACTIONS.csv` is for a page built from the published copy of a run set, whose machine paths were
+replaced: a transcript whose hash is the logged published one and whose logged original is the hash of the manifest
+counts as matching, and the page says how many went through the replacement.
+
+`tsbench report full` and `tsbench report dashboard` read the pilot split unless `--split confirmatory` is given. A
+confirmatory run set is refused without `--i-have-preregistered <DOI>`, and a run set that records another split than
+the one asked for is refused too (exit status 2). A confirmatory page names the split and the DOI in its header and
+shows the preregistered tests of each run set that holds `hypotheses.json` (`tsbench stats hypotheses`): the primary
+family with its Holm p values, the H1 tests and the McNemar tests, without a multiplicity correction.
 
 The dashboard and the full report read `scores.csv` as written. When a run set holds transcripts that have no row in it
 (runs that landed after `tsbench score`) or whose transcript was overwritten since (its hash differs from the
@@ -111,7 +135,8 @@ scorer found (`structured_output`, `rescued_tool_call` or `text_json`) and print
 - Method and platform: identity, protocol, statistics (with the class intervals), provenance of every figure and
   table (each file with its sha256 and the result of its check, for example "149 of 150 recorded hashes match" for the
   transcripts of every run set), exclusions and limits (`report/method.py`; the limits count the task-by-condition cells with fewer evaluable
-  runs than the planned k, the runs missing for it and the rescued answers); where the runs ran (values the records do not hold show as "not
+  runs than the planned k, the runs missing for it and the rescued answers; the runs not started are those of the last invocation, and
+  the stops of the earlier invocations are counted per reason in a row of their own); where the runs ran (values the records do not hold show as "not
   recorded"; the endpoint and the client version stand there, the effort in the run settings, each once), the run
   schedule (for a model that is not a Claude model it draws no cost: Claude Code prices it at Claude list prices; a
   run whose sidecar says `cost_unknown` has no cost and counts under "cost not recorded"), the files of the first run set with the hash chain, a table of the hash links of every run set
@@ -204,7 +229,7 @@ Put `# ci: dry` as the first line of a fenced `bash`/`sh` block to have it execu
 
 `.github/workflows/ci.yml` runs the same jobs as `.gitlab-ci.yml` on every push to `main` and every pull request, with
 the same scripts. Each job starts with `guard_no_keys.sh`, has a `timeout-minutes` of at most 60 and reads the
-repository only (`permissions: contents: read`). No secret is referenced.
+repository only (`permissions: contents: read`). The only secret is `TSBENCH_GATE_DENY`, which the `no-pilot` job reads.
 
 `.github/workflows/mutation.yml` runs mutation testing with mutmut, report-only. It never runs on push or pull request:
 a full run takes hours. It runs every Sunday at 02:17 UTC and on request (`workflow_dispatch`, input `only` for a comma

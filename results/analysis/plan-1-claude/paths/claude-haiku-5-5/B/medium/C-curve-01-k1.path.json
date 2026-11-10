@@ -1,0 +1,627 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-curve-01-k1.jsonl",
+ "transcript_sha256": "edd7457721fd3120ece3ac07a63ab2843f58212aa02ec2f3d8af70db8548d167",
+ "answer": {
+  "points": [
+   {
+    "dq_over_b": 0.9,
+    "term": "5T2g",
+    "e_over_b": 9.0
+   },
+   {
+    "dq_over_b": 0.9,
+    "term": "3T1g",
+    "e_over_b": 16.25
+   },
+   {
+    "dq_over_b": 0.9,
+    "term": "3Eg",
+    "e_over_b": 22.59
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "3T1g",
+    "e_over_b": 4.84
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "1T2g",
+    "e_over_b": 17.07
+   },
+   {
+    "dq_over_b": 2.15,
+    "term": "1Eg",
+    "e_over_b": 18.43
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "5Eg",
+    "e_over_b": 6.68
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "1T2g",
+    "e_over_b": 12.69
+   },
+   {
+    "dq_over_b": 3.35,
+    "term": "1Eg",
+    "e_over_b": 14.09
+   }
+  ],
+  "reason": "I built the full d4 problem (210 Slater determinants) from Racah B=821 and C=3657 cm-1 (F2 and F4 from B and C, with Dq as the octahedral one-electron splitting), diagonalized it in each spin sector, and labeled the irreps from the O-group characters of the rotated eigenspaces. At Dq/B=0.90 the ground term is 5Eg, at 2.15 it is still 5Eg, and at 3.35 the ground term has changed to 3T1g (low-spin), so the excited-term lists are measured from different ground terms. Energies are relative to each field's ground term, in units of B."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numerical Python packages available",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy|sympy\" ; python3 -c \"import numpy, scipy, sympy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p /w && cat > /w/d4.py <<'EOF'\nimport numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.linalg import expm, eigh\nfrom scipy.sparse import csr_matrix, lil_matrix\nB=821.0; C=3657.0\nF4=63*C/5; F2=(441*B+5*F4)/9\nFk={2:F2,4:F4}\n# quadrature\nxg,wg=np.polynomial.legendre.leggauss(16)\nnphi=32\nphi=np.arange(nphi)*2*np.pi/nphi; wphi=2*np.pi/nphi\nTH=np.arccos(xg)\nTT,PP=np.meshgrid(TH,phi,indexing='ij'); W=np.outer(wg,np.ones(nphi))*wphi\ndef Y(l,m,th,ph): return sph_harm(m,l,ph,th)\nms=list(range(-2,3))\n# orbitals: index 2*(m+2)+s  s=0 up,1 down\norbs=[(m,s) for m in ms for s in (0,1)]\nN=len(orbs)\ndef ang(k,m1,m3,m2,m4):\n    # electron1: m1<-m3 ; electron2: m2<-m4 ; sum over q\n    tot=0\n    for q in range(-k,k+1):\n        G1=np.sum(W*np.conj(Y(2,m1,TT,PP))*np.conj(Y(k,q,TT,PP))*Y(2,m3,TT,PP))\n        G2=np.sum(W*np.conj(Y(2,m2,TT,PP))*Y(k,q,TT,PP)*Y(2,m4,TT,PP))\n        tot+=G1*G2\n    return 4*np.pi/(2*k+1)*tot\n# two-body tensor g[a,b,c,d] = <ab|1/r|cd>  (a,c electron1; b,d electron2)\ng=np.zeros((N,N,N,N),dtype=complex)\nfor a,(m1,s1) in enumerate(orbs):\n  for b,(m2,s2) in enumerate(orbs):\n    for c,(m3,s3) in enumerate(orbs):\n      for d,(m4,s4) in enumerate(orbs):\n        if s1!=s3 or s2!=s4: continue\n        val=0\n        for k in (2,4):\n            val+=Fk[k]*ang(k,m1,m3,m2,m4)\n        # k=0 part is constant (F0 ignored)\n        g[a,b,c,d]=val\n# Fock space\ndim=2**N\ndef bit(st,i): return (st>>i)&1\ndef cdag_c(i,j):\n    # operator c_i^dag c_j on Fock basis (sparse)\n    rows=[];cols=[];vals=[]\n    for st in range(dim):\n        if bit(st,j)==0: continue\n        s1=st ^ (1<<j)\n        sign=(-1)**bin(s1 & ((1<<j)-1)).count('1')\n        if bit(s1,i)==1: continue\n        s2=s1 | (1<<i)\n        sign*= (-1)**bin(s2 & ((1<<i)-1)).count('1')\n        rows.append(s2);cols.append(st);vals.append(sign)\n    return csr_matrix((vals,(rows,cols)),shape=(dim,dim))\nCC={}\ndef cd(i,j):\n    if (i,j) not in CC: CC[(i,j)]=cdag_c(i,j)\n    return CC[(i,j)]\n# number of electrons\nNop=sum(cd(i,i) for i in range(N))\nnel=np.array([bin(s).count('1') for s in range(dim)])\nidx=np.where(nel==4)[0]\ndef restrict(M): return M[idx][:,idx].toarray()\n# Electron repulsion: 1/2 sum g[a,b,c,d] c^+_a c^+_b c_d c_c\nHee=np.zeros((len(idx),len(idx)),dtype=complex)\nMcache={}\nfor a in range(N):\n  for b in range(N):\n    for c in range(N):\n      for d in range(N):\n        if abs(g[a,b,c,d])<1e-12: continue\n        op=cd(a,c)@cd(b,d) if False else None\n        # c+_a c+_b c_d c_c = (c+_a c+_b) (c_d c_c)\n        M=(cd(a,a)*0)  # placeholder\n        break\nEOF\necho",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "1e4690335ad4ae38e8a2ae7c4e44f35cd971d8093c105ef31b5617d5e1678dd1",
+     "lines": 74,
+     "code": "import numpy as np, itertools\nfrom scipy.special import sph_harm\nfrom scipy.linalg import expm, eigh\nfrom scipy.sparse import csr_matrix, lil_matrix\nB=821.0; C=3657.0\nF4=63*C/5; F2=(441*B+5*F4)/9\nFk={2:F2,4:F4}\n# quadrature\nxg,wg=np.polynomial.legendre.leggauss(16)\nnphi=32\nphi=np.arange(nphi)*2*np.pi/nphi; wphi=2*np.pi/nphi\nTH=np.arccos(xg)\nTT,PP=np.meshgrid(TH,phi,indexing='ij'); W=np.outer(wg,np.ones(nphi))*wphi\ndef Y(l,m,th,ph): return sph_harm(m,l,ph,th)\nms=list(range(-2,3))\n# orbitals: index 2*(m+2)+s  s=0 up,1 down\norbs=[(m,s) for m in ms for s in (0,1)]\nN=len(orbs)\ndef ang(k,m1,m3,m2,m4):\n    # electron1: m1<-m3 ; electron2: m2<-m4 ; sum over q\n    tot=0\n    for q in range(-k,k+1):\n        G1=np.sum(W*np.conj(Y(2,m1,TT,PP))*np.conj(Y(k,q,TT,PP))*Y(2,m3,TT,PP))\n        G2=np.sum(W*np.conj(Y(2,m2,TT,PP))*Y(k,q,TT,PP)*Y(2,m4,TT,PP))\n        tot+=G1*G2\n    return 4*np.pi/(2*k+1)*tot\n# two-body tensor g[a,b,c,d] = <ab|1/r|cd>  (a,c electron1; b,d electron2)\ng=np.zeros((N,N,N,N),dtype=complex)\nfor a,(m1,s1) in enumerate(orbs):\n  for b,(m2,s2) in enumerate(orbs):\n    for c,(m3,s3) in enumerate(orbs):\n      for d,(m4,s4) in enumerate(orbs):\n        if s1!=s3 or s2!=s4: continue\n        val=0\n        for k in (2,4):\n            val+=Fk[k]*ang(k,m1,m3,m2,m4)\n        # k=0 part is constant (F0 ignored)\n        g[a,b,c,d]=val\n# Fock space\ndim=2**N\ndef bit(st,i): return (st>>i)&1\ndef cdag_c(i,j):\n    # operator c_i^dag c_j on Fock basis (sparse)\n    rows=[];cols=[];vals=[]\n    for st in range(dim):\n        if bit(st,j)==0: continue\n        s1=st ^ (1<<j)\n        sign=(-1)**bin(s1 & ((1<<j)-1)).count('1')\n        if bit(s1,i)==1: continue\n        s2=s1 | (1<<i)\n        sign*= (-1)**bin(s2 & ((1<<i)-1)).count('1')\n        rows.append(s2);cols.append(st);vals.append(sign)\n    return csr_matrix((vals,(rows,cols)),shape=(dim,dim))\nCC={}\ndef cd(i,j):\n    if (i,j) not in CC: CC[(i,j)]=cdag_c(i,j)\n    return CC[(i,j)]\n# number of electrons\nNop=sum(cd(i,i) for i in range(N))\nnel=np.array([bin(s).count('1') for s in range(dim)])\nidx=np.where(nel==4)[0]\ndef restrict(M): return M[idx][:,idx].toarray()\n# Electron repulsion: 1/2 sum g[a,b,c,d] c^+_a c^+_b c_d c_c\nHee=np.zeros((len(idx),len(idx)),dtype=complex)\nMcache={}\nfor a in range(N):\n  for b in range(N):\n    for c in range(N):\n      for d in range(N):\n        if abs(g[a,b,c,d])<1e-12: continue\n        op=cd(a,c)@cd(b,d) if False else None\n        # c+_a c+_b c_d c_c = (c+_a c+_b) (c_d c_c)\n        M=(cd(a,a)*0)  # placeholder\n        break\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "mkdir: cannot create directory ‘/w’: Read-only file system",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 28,
+     "method": "matrix",
+     "text": "g=np.zeros((N,N,N,N),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d4 Hamiltonian pieces in Fock space",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > d4.py <<'EOF'\nimport numpy as np\nfrom scipy.special import sph_harm\nfrom scipy.linalg import expm, eigh\nfrom scipy.sparse import csr_matrix\nB=821.0; C=3657.0\nF4=63*C/5; F2=(441*B+5*F4)/9\nFk={2:F2,4:F4}\nxg,wg=np.polynomial.legendre.leggauss(16)\nnphi=32\nphi=np.arange(nphi)*2*np.pi/nphi; wphi=2*np.pi/nphi\nTH=np.arccos(xg)\nTT,PP=np.meshgrid(TH,phi,indexing='ij'); W=np.outer(wg,np.ones(nphi))*wphi\ndef Y(l,m): return sph_harm(m,l,PP,TT)\nms=list(range(-2,3))\norbs=[(m,s) for m in ms for s in (0,1)]\nN=len(orbs)\nYcache={(l,m):Y(l,m) for l in (2,4) for m in range(-l,l+1)}\ndef ang(k,m1,m3,m2,m4):\n    tot=0\n    for q in range(-k,k+1):\n        G1=np.sum(W*np.conj(Ycache[(2,m1)])*np.conj(Ycache[(k,q)])*Ycache[(2,m3)])\n        G2=np.sum(W*np.conj(Ycache[(2,m2)])*Ycache[(k,q)]*Ycache[(2,m4)])\n        tot+=G1*G2\n    return 4*np.pi/(2*k+1)*tot\ng=np.zeros((N,N,N,N),dtype=complex)\nfor a,(m1,s1) in enumerate(orbs):\n  for b,(m2,s2) in enumerate(orbs):\n    for c,(m3,s3) in enumerate(orbs):\n      for d,(m4,s4) in enumerate(orbs):\n        if s1!=s3 or s2!=s4: continue\n        g[a,b,c,d]=sum(Fk[k]*ang(k,m1,m3,m2,m4) for k in (2,4))\n# Fock space, Jordan-Wigner-like sign\ndim=2**N\nnel=np.array([bin(s).count('1') for s in range(dim)])\nidx=np.where(nel==4)[0]\npos={s:i for i,s in enumerate(idx)}\ndef E_op(i,j):\n    \"\"\"one-body c^+_i c_j restricted to 4-electron sector\"\"\"\n    rows=[];cols=[];vals=[]\n    for st in idx:\n        if not (st>>j)&1: continue\n        s1=st^(1<<j)\n        sign=(-1)**bin(s1&((1<<j)-1)).count('1')\n        if (s1>>i)&1: continue\n        s2=s1|(1<<i)\n        sign*=(-1)**bin(s2&((1<<i)-1)).count('1')\n        rows.append(pos[s2]);cols.append(pos[st]);vals.append(sign)\n    return csr_matrix((vals,(rows,cols)),shape=(len(idx),len(idx)))\nE={}\nfor i in range(N):\n    for j in range(N):\n        E[(i,j)]=E_op(i,j)\nD=len(idx)\nHee=csr_matrix((D,D),dtype=complex)\nfor a in range(N):\n for b in range(N):\n  for c in range(N):\n   for d in range(N):\n    v=g[a,b,c,d]\n    if abs(v)<1e-12: continue\n    term=E[(a,c)]@E[(b,d)]\n    if b==c: term=term-E[(a,d)]\n    Hee=Hee+0.5*v*term\nHee=Hee.toarray()\n# Single-particle orbital basis: complex m basis. Build cubic field matrix h (per spin)\n# real d orbitals in complex basis: index by m\ndef vec(d):\n    v=np.zeros(5,dtype=complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\ns2=1/np.sqrt(2)\nt2g=[vec({1:-s2,-1:s2}), vec({2:s2/1j*1 ,-2:-s2/1j}) , vec({1:1j*s2,-1:1j*s2})]\neg=[vec({0:1}), vec({2:s2,-2:s2})]\n# normalize t2g: dxz ~ (|1>-|-1>), dyz ~ i(|1>+|-1>), dxy ~ (|2>-|-2>)/i\nt2g=[vec({1:-s2,-1:s2}), vec({2:-1j*s2,-2:1j*s2}), vec({1:1j*s2,-1:1j*s2})]\nfor v in t2g+eg: assert abs(np.vdot(v,v)-1)<1e-12\ndef proj(vs): return sum(np.outer(v,np.conj(v)) for v in vs)\nh1=-4*proj(t2g)+6*proj(eg)   # times Dq\n# orbital index ordering: orbs with (m,s): index 2*(m+2)+s\ndef h_spin(hm):\n    H=np.zeros((N,N),dtype=complex)\n    for a,(m1,s1) in enumerate(orbs):\n        for b,(m2,s2_) in enumerate(orbs):\n            if s1==s2_: H[a,b]=hm[m1+2,m2+2]\n    return H\nH1=h_spin(h1)\n# one-body operator in Fock: sum H1[a,b] c+_a c_b\nHcf_base=np.zeros((D,D),dtype=complex)\nfor a in range(N):\n    for b in range(N):\n        if abs(H1[a,b])>1e-12: Hcf_base+=H1[a,b]*E[(a,b)].toarray()\n# rotation generators L_z, L_x, L_y, l=2 in m basis\ndef Lmats(l=2):\n    ms_=np.arange(-l,l+1)\n    Lz=np.diag(ms_).astype(complex)\n    Lp=np.zeros((2*l+1,2*l+1),dtype=complex)\n    for i,m in enumerate(ms_[:-1]):\n        Lp[i+1,i]=np.sqrt(l*(l+1)-m*(m+1))\n    Lx=(Lp+Lp.conj().T)/2; Ly=(Lp-Lp.conj().T)/(2j)\n    return Lx,Ly,Lz\nLx,Ly,Lz=Lmats()\ndef rot_op(axis,angle):\n    n=np.array(axis,float); n=n/np.linalg.norm(n)\n    Ln=n[0]*Lx+n[1]*Ly+n[2]*Lz\n    u=expm(-1j*angle*Ln)  # 5x5 single particle\n    Us=h_spin(u)\n    # many-body: Gamma(u)=exp(sum log(u)_ab c+_a c_b)  -> use exp of generator\n    G=expm(-1j*angle*(n[0]*Lx+n[1]*Ly+n[2]*Lz))\n    # generator operator\n    Gop=np.zeros((D,D),dtype=complex)\n    Hs=h_spin(n[0]*Lx+n[1]*Ly+n[2]*Lz)\n    for a in range(N):\n        for b in range(N):\n            if abs(Hs[a,b])>1e-12: Gop+=Hs[a,b]*E[(a,b)].toarray()\n    return expm(-1j*angle*Gop)\nEOF\npython3 -c \"\nimport sys; sys.path.insert(0,'/tmp/w')\nimport d4; print('F2,F4',d4.F2,d4.F4); print(d4.Hee.shape); import numpy as np; print(np.allclose(d4.Hee,d4.Hee.conj().T))\"",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "f32ad9bceeb4f484216d26a64628c2007f8e35c1776a7fc1a9ebddeb01f7e7c8",
+     "lines": 115,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm\nfrom scipy.linalg import expm, eigh\nfrom scipy.sparse import csr_matrix\nB=821.0; C=3657.0\nF4=63*C/5; F2=(441*B+5*F4)/9\nFk={2:F2,4:F4}\nxg,wg=np.polynomial.legendre.leggauss(16)\nnphi=32\nphi=np.arange(nphi)*2*np.pi/nphi; wphi=2*np.pi/nphi\nTH=np.arccos(xg)\nTT,PP=np.meshgrid(TH,phi,indexing='ij'); W=np.outer(wg,np.ones(nphi))*wphi\ndef Y(l,m): return sph_harm(m,l,PP,TT)\nms=list(range(-2,3))\norbs=[(m,s) for m in ms for s in (0,1)]\nN=len(orbs)\nYcache={(l,m):Y(l,m) for l in (2,4) for m in range(-l,l+1)}\ndef ang(k,m1,m3,m2,m4):\n    tot=0\n    for q in range(-k,k+1):\n        G1=np.sum(W*np.conj(Ycache[(2,m1)])*np.conj(Ycache[(k,q)])*Ycache[(2,m3)])\n        G2=np.sum(W*np.conj(Ycache[(2,m2)])*Ycache[(k,q)]*Ycache[(2,m4)])\n        tot+=G1*G2\n    return 4*np.pi/(2*k+1)*tot\ng=np.zeros((N,N,N,N),dtype=complex)\nfor a,(m1,s1) in enumerate(orbs):\n  for b,(m2,s2) in enumerate(orbs):\n    for c,(m3,s3) in enumerate(orbs):\n      for d,(m4,s4) in enumerate(orbs):\n        if s1!=s3 or s2!=s4: continue\n        g[a,b,c,d]=sum(Fk[k]*ang(k,m1,m3,m2,m4) for k in (2,4))\n# Fock space, Jordan-Wigner-like sign\ndim=2**N\nnel=np.array([bin(s).count('1') for s in range(dim)])\nidx=np.where(nel==4)[0]\npos={s:i for i,s in enumerate(idx)}\ndef E_op(i,j):\n    \"\"\"one-body c^+_i c_j restricted to 4-electron sector\"\"\"\n    rows=[];cols=[];vals=[]\n    for st in idx:\n        if not (st>>j)&1: continue\n        s1=st^(1<<j)\n        sign=(-1)**bin(s1&((1<<j)-1)).count('1')\n        if (s1>>i)&1: continue\n        s2=s1|(1<<i)\n        sign*=(-1)**bin(s2&((1<<i)-1)).count('1')\n        rows.append(pos[s2]);cols.append(pos[st]);vals.append(sign)\n    return csr_matrix((vals,(rows,cols)),shape=(len(idx),len(idx)))\nE={}\nfor i in range(N):\n    for j in range(N):\n        E[(i,j)]=E_op(i,j)\nD=len(idx)\nHee=csr_matrix((D,D),dtype=complex)\nfor a in range(N):\n for b in range(N):\n  for c in range(N):\n   for d in range(N):\n    v=g[a,b,c,d]\n    if abs(v)<1e-12: continue\n    term=E[(a,c)]@E[(b,d)]\n    if b==c: term=term-E[(a,d)]\n    Hee=Hee+0.5*v*term\nHee=Hee.toarray()\n# Single-particle orbital basis: complex m basis. Build cubic field matrix h (per spin)\n# real d orbitals in complex basis: index by m\ndef vec(d):\n    v=np.zeros(5,dtype=complex)\n    for m,c in d.items(): v[m+2]=c\n    return v\ns2=1/np.sqrt(2)\nt2g=[vec({1:-s2,-1:s2}), vec({2:s2/1j*1 ,-2:-s2/1j}) , vec({1:1j*s2,-1:1j*s2})]\neg=[vec({0:1}), vec({2:s2,-2:s2})]\n# normalize t2g: dxz ~ (|1>-|-1>), dyz ~ i(|1>+|-1>), dxy ~ (|2>-|-2>)/i\nt2g=[vec({1:-s2,-1:s2}), vec({2:-1j*s2,-2:1j*s2}), vec({1:1j*s2,-1:1j*s2})]\nfor v in t2g+eg: assert abs(np.vdot(v,v)-1)<1e-12\ndef proj(vs): return sum(np.outer(v,np.conj(v)) for v in vs)\nh1=-4*proj(t2g)+6*proj(eg)   # times Dq\n# orbital index ordering: orbs with (m,s): index 2*(m+2)+s\ndef h_spin(hm):\n    H=np.zeros((N,N),dtype=complex)\n    for a,(m1,s1) in enumerate(orbs):\n        for b,(m2,s2_) in enumerate(orbs):\n            if s1==s2_: H[a,b]=hm[m1+2,m2+2]\n    return H\nH1=h_spin(h1)\n# one-body operator in Fock: sum H1[a,b] c+_a c_b\nHcf_base=np.zeros((D,D),dtype=complex)\nfor a in range(N):\n    for b in range(N):\n        if abs(H1[a,b])>1e-12: Hcf_base+=H1[a,b]*E[(a,b)].toarray()\n# rotation generators L_z, L_x, L_y, l=2 in m basis\ndef Lmats(l=2):\n    ms_=np.arange(-l,l+1)\n    Lz=np.diag(ms_).astype(complex)\n    Lp=np.zeros((2*l+1,2*l+1),dtype=complex)\n    for i,m in enumerate(ms_[:-1]):\n        Lp[i+1,i]=np.sqrt(l*(l+1)-m*(m+1))\n    Lx=(Lp+Lp.conj().T)/2; Ly=(Lp-Lp.conj().T)/(2j)\n    return Lx,Ly,Lz\nLx,Ly,Lz=Lmats()\ndef rot_op(axis,angle):\n    n=np.array(axis,float); n=n/np.linalg.norm(n)\n    Ln=n[0]*Lx+n[1]*Ly+n[2]*Lz\n    u=expm(-1j*angle*Ln)  # 5x5 single particle\n    Us=h_spin(u)\n    # many-body: Gamma(u)=exp(sum log(u)_ab c+_a c_b)  -> use exp of generator\n    G=expm(-1j*angle*(n[0]*Lx+n[1]*Ly+n[2]*Lz))\n    # generator operator\n    Gop=np.zeros((D,D),dtype=complex)\n    Hs=h_spin(n[0]*Lx+n[1]*Ly+n[2]*Lz)\n    for a in range(N):\n        for b in range(N):\n            if abs(Hs[a,b])>1e-12: Gop+=Hs[a,b]*E[(a,b)].toarray()\n    return expm(-1j*angle*Gop)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 3, in <module>\n    import d4; print('F2,F4',d4.F2,d4.F4); print(d4.Hee.shape); import numpy as np; print(np.allclose(d4.Hee,d4.Hee.conj().T))\n    ^^^^^^^^^\nModuleNotFoundError: No module named 'd4'",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 25,
+     "method": "matrix",
+     "text": "g=np.zeros((N,N,N,N),dtype=complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 81,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 88,
+     "method": "matrix",
+     "text": "Hcf_base=np.zeros((D,D),dtype=complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 110,
+     "method": "matrix",
+     "text": "Gop=np.zeros((D,D),dtype=complex)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Find a writable directory",
+   "command": "cd ~ 2>/dev/null && pwd; echo $HOME; touch $HOME/x && echo homeok; ls -ld /tmp; df -h /tmp | tail -1",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\n/tmp/tsbench-home-xehwqch9\ntouch: cannot touch '/tmp/tsbench-home-xehwqch9/x': Read-only file system\ndrwxrwxrwt 28 nobody nogroup 884736 Nov  3 08:40 /tmp\n/dev/vda1       158G   87G   65G  58% /\nShell cwd was reset to /tmp/tsbench-run-h5gl1e2z",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Test write access in run directory",
+   "command": "cd /tmp/tsbench-run-h5gl1e2z 2>/dev/null && touch t && echo ok && rm t; pwd",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok\n/tmp/tsbench-run-h5gl1e2z",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Build d4 matrices and compute term energies",
+   "command": "cat > d4.py <<'EOF'\nimport numpy as np\nfrom scipy.special import sph_harm\nfrom scipy.linalg import expm, eigh\nfrom scipy.sparse import csr_matrix\nB=821.0; C=3657.0\nF4=63*C/5; F2=(441*B+5*F4)/9\nFk={2:F2,4:F4}\nxg,wg=np.polynomial.legendre.leggauss(16)\nnphi=32\nphi=np.arange(nphi)*2*np.pi/nphi; wphi=2*np.pi/nphi\nTH=np.arccos(xg)\nTT,PP=np.meshgrid(TH,phi,indexing='ij'); W=np.outer(wg,np.ones(nphi))*wphi\nms=list(range(-2,3))\norbs=[(m,s) for m in ms for s in (0,1)]\nN=len(orbs)\nYcache={(l,m):sph_harm(m,l,PP,TT) for l in (2,4) for m in range(-l,l+1)}\ndef ang(k,m1,m3,m2,m4):\n    tot=0\n    for q in range(-k,k+1):\n        G1=np.sum(W*np.conj(Ycache[(2,m1)])*np.conj(Ycache[(k,q)])*Ycache[(2,m3)])\n        G2=np.sum(W*np.conj(Ycache[(2,m2)])*Ycache[(k,q)]*Ycache[(2,m4)])\n        tot+=G1*G2\n    return 4*np.pi/(2*k+1)*tot\ng=np.zeros((N,N,N,N),dtype=complex)\nfor a,(m1,s1) in enumerate(orbs):\n  for b,(m2,s2) in enumerate(orbs):\n    for c,(m3,s3) in enumerate(orbs):\n      for d,(m4,s4) in enumerate(orbs):\n        if s1!=s3 or s2!=s4: continue\n        g[a,b,c,d]=sum(Fk[k]*ang(k,m1,m3,m2,m4) for k in (2,4))\ndim=2**N\nnel=np.array([bin(s).count('1') for s in range(dim)])\nidx=np.where(nel==4)[0]\npos={s:i for i,s in enumerate(idx)}\ndef E_op(i,j):\n    rows=[];cols=[];vals=[]\n    for st in idx:\n        if not (st>>j)&1: continue\n        s1=st^(1<<j)\n        sign=(-1)**bin(s1&((1<<j)-1)).count('1')\n        if (s1>>i)&1: continue\n        s2=s1|(1<<i)\n        sign*=(-1)**bin(s2&((1<<i)-1)).count('1')\n        rows.append(pos[s2]);cols.append(pos[st]);vals.append(sign)\n    return csr_matrix((vals,(rows,cols)),shape=(len(idx),len(idx)))\nE={(i,j):E_op(i,j) for i in range(N) for j in range(N)}\nD=len(idx)\nHee=np.zeros((D,D),dtype=complex)\nfor a in range(N):\n for b in range(N):\n  for c in range(N):\n   for d in range(N):\n    v=g[a,b,c,d]\n    if abs(v)<1e-12: continue\n    term=(E[(a,c)]@E[(b,d)]).toarray()\n    if b==c: term=term-E[(a,d)].toarray()\n    Hee+=0.5*v*term\ndef vec(dct):\n    v=np.zeros(5,dtype=complex)\n    for m,c in dct.items(): v[m+2]=c\n    return v\ns2=1/np.sqrt(2)\nt2g=[vec({1:-s2,-1:s2}), vec({2:-1j*s2,-2:1j*s2}), vec({1:1j*s2,-1:1j*s2})]\neg=[vec({0:1}), vec({2:s2,-2:s2})]\ndef proj(vs): return sum(np.outer(v,np.conj(v)) for v in vs)\nh1=-4*proj(t2g)+6*proj(eg)   # in units of Dq\ndef h_spin(hm):\n    H=np.zeros((N,N),dtype=complex)\n    for a,(m1,s1) in enumerate(orbs):\n        for b,(m2,s2_) in enumerate(orbs):\n            if s1==s2_: H[a,b]=hm[m1+2,m2+2]\n    return H\ndef one_body(H1):\n    Op=np.zeros((D,D),dtype=complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(H1[a,b])>1e-12: Op+=H1[a,b]*E[(a,b)].toarray()\n    return Op\nHcf=one_body(h_spin(h1))\n# spin operators\nSp=one_body(sum(h_spin(np.zeros((5,5)))[0:0] for _ in [0]) if False else np.zeros((N,N)))\nSpl=np.zeros((D,D),dtype=complex); Sz=np.zeros((D,D),dtype=complex)\nfor mi,m in enumerate(ms):\n    Spl+=E[(2*mi,2*mi+1)].toarray()   # c+_up c_down\n    Sz+=0.5*(E[(2*mi,2*mi)].toarray()-E[(2*mi+1,2*mi+1)].toarray())\nS2=Spl.conj().T@Spl+Sz@Sz+Sz   # S-S+ = S^2 - Sz^2 - Sz  => S^2 = S-S+ + Sz^2 + Sz ; here Spl=S+ , S-=S+^dag\nS2=Spl.conj().T@Spl+Sz@Sz+Sz\nLx=np.zeros((5,5),complex); Lp=np.zeros((5,5),complex)\nfor i,m in enumerate(ms[:-1]): Lp[i+1,i]=np.sqrt(6-m*(m+1))\nLx=(Lp+Lp.conj().T)/2; Ly=(Lp-Lp.conj().T)/(2j); Lz=np.diag(np.array(ms,float)).astype(complex)\ndef rot(axis,angle):\n    n=np.array(axis,float); n/=np.linalg.norm(n)\n    Hs=h_spin(n[0]*Lx+n[1]*Ly+n[2]*Lz)\n    return expm(-1j*angle*one_body(Hs))\nEOF\ncat > run.py <<'EOF'\nimport numpy as np, sys\nsys.path.insert(0,'.')\nfrom d4 import *\n# rotations\nops={'E':np.eye(D),\n     'C3':rot((1,1,1),2*np.pi/3),\n     'C2z':rot((0,0,1),np.pi),\n     'C4z':rot((0,0,1),np.pi/2),\n     \"C2'\":rot((1,0,0),np.pi)}\ncls=['E','C3','C2z','C4z',\"C2'\"]; csz=[1,8,3,6,6]\nchartab={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\n# check commutation\nprint('comm check', max(np.abs(ops['C4z']@Hee-Hee@ops['C4z']).max(),0))\n# S^2 eigenspaces\ns2w,s2v=eigh((S2+S2.conj().T)/2)\ndef term_list(Dq_cm):\n    H=Hee+Dq_cm*Hcf\n    res=[]\n    for S in (0,1,2):\n        sel=np.abs(s2w-S*(S+1))<1e-6\n        V=s2v[:,sel]\n        if V.shape[1]==0: continue\n        HS=V.conj().T@H@V\n        ev,evec=eigh((HS+HS.conj().T)/2)\n        W_all=V@evec\n        # cluster\n        i=0\n        while i<len(ev):\n            j=i\n            while j+1<len(ev) and abs(ev[j+1]-ev[i])<1e-5: j+=1\n            Wc=W_all[:,i:j+1]\n            chi=[np.trace(Wc.conj().T@ops[c]@Wc).real for c in cls]\n            # multiplicities\n            dec={}\n            for name,ct in chartab.items():\n                n=sum(csz[k]*chi[k]*ct[k] for k in range(5))/24\n                if abs(n)>1e-6: dec[name]=round(n.real)\n            res.append((ev[i],2*S+1,dec,j-i+1))\n            i=j+1\n    res.sort()\n    return res\nfor Dqb in (0.90,2.15,3.35):\n    Dq=Dqb*B/ 1.0  # Dq in cm^-1 = Dq/B * B\n    tl=term_list(Dq)\n    E0=tl[0][0]\n    print(f\"Dq/B={Dqb}  Dq={Dq:.1f} cm-1\")\n    for e,mult,dec,dg in tl[:8]:\n        print(f\"   E/B={(e-E0)/B:9.4f}  mult={mult}  irreps={dec}  dim={dg}\")\nEOF\npython3 run.py",
+   "scripts": [
+    {
+     "name": "d4.py",
+     "sha256": "83ef7b1ad57dd0a5dc856a26c18aba7a398e7317b7539fa37dd40a709b4c63c7",
+     "lines": 94,
+     "code": "import numpy as np\nfrom scipy.special import sph_harm\nfrom scipy.linalg import expm, eigh\nfrom scipy.sparse import csr_matrix\nB=821.0; C=3657.0\nF4=63*C/5; F2=(441*B+5*F4)/9\nFk={2:F2,4:F4}\nxg,wg=np.polynomial.legendre.leggauss(16)\nnphi=32\nphi=np.arange(nphi)*2*np.pi/nphi; wphi=2*np.pi/nphi\nTH=np.arccos(xg)\nTT,PP=np.meshgrid(TH,phi,indexing='ij'); W=np.outer(wg,np.ones(nphi))*wphi\nms=list(range(-2,3))\norbs=[(m,s) for m in ms for s in (0,1)]\nN=len(orbs)\nYcache={(l,m):sph_harm(m,l,PP,TT) for l in (2,4) for m in range(-l,l+1)}\ndef ang(k,m1,m3,m2,m4):\n    tot=0\n    for q in range(-k,k+1):\n        G1=np.sum(W*np.conj(Ycache[(2,m1)])*np.conj(Ycache[(k,q)])*Ycache[(2,m3)])\n        G2=np.sum(W*np.conj(Ycache[(2,m2)])*Ycache[(k,q)]*Ycache[(2,m4)])\n        tot+=G1*G2\n    return 4*np.pi/(2*k+1)*tot\ng=np.zeros((N,N,N,N),dtype=complex)\nfor a,(m1,s1) in enumerate(orbs):\n  for b,(m2,s2) in enumerate(orbs):\n    for c,(m3,s3) in enumerate(orbs):\n      for d,(m4,s4) in enumerate(orbs):\n        if s1!=s3 or s2!=s4: continue\n        g[a,b,c,d]=sum(Fk[k]*ang(k,m1,m3,m2,m4) for k in (2,4))\ndim=2**N\nnel=np.array([bin(s).count('1') for s in range(dim)])\nidx=np.where(nel==4)[0]\npos={s:i for i,s in enumerate(idx)}\ndef E_op(i,j):\n    rows=[];cols=[];vals=[]\n    for st in idx:\n        if not (st>>j)&1: continue\n        s1=st^(1<<j)\n        sign=(-1)**bin(s1&((1<<j)-1)).count('1')\n        if (s1>>i)&1: continue\n        s2=s1|(1<<i)\n        sign*=(-1)**bin(s2&((1<<i)-1)).count('1')\n        rows.append(pos[s2]);cols.append(pos[st]);vals.append(sign)\n    return csr_matrix((vals,(rows,cols)),shape=(len(idx),len(idx)))\nE={(i,j):E_op(i,j) for i in range(N) for j in range(N)}\nD=len(idx)\nHee=np.zeros((D,D),dtype=complex)\nfor a in range(N):\n for b in range(N):\n  for c in range(N):\n   for d in range(N):\n    v=g[a,b,c,d]\n    if abs(v)<1e-12: continue\n    term=(E[(a,c)]@E[(b,d)]).toarray()\n    if b==c: term=term-E[(a,d)].toarray()\n    Hee+=0.5*v*term\ndef vec(dct):\n    v=np.zeros(5,dtype=complex)\n    for m,c in dct.items(): v[m+2]=c\n    return v\ns2=1/np.sqrt(2)\nt2g=[vec({1:-s2,-1:s2}), vec({2:-1j*s2,-2:1j*s2}), vec({1:1j*s2,-1:1j*s2})]\neg=[vec({0:1}), vec({2:s2,-2:s2})]\ndef proj(vs): return sum(np.outer(v,np.conj(v)) for v in vs)\nh1=-4*proj(t2g)+6*proj(eg)   # in units of Dq\ndef h_spin(hm):\n    H=np.zeros((N,N),dtype=complex)\n    for a,(m1,s1) in enumerate(orbs):\n        for b,(m2,s2_) in enumerate(orbs):\n            if s1==s2_: H[a,b]=hm[m1+2,m2+2]\n    return H\ndef one_body(H1):\n    Op=np.zeros((D,D),dtype=complex)\n    for a in range(N):\n        for b in range(N):\n            if abs(H1[a,b])>1e-12: Op+=H1[a,b]*E[(a,b)].toarray()\n    return Op\nHcf=one_body(h_spin(h1))\n# spin operators\nSp=one_body(sum(h_spin(np.zeros((5,5)))[0:0] for _ in [0]) if False else np.zeros((N,N)))\nSpl=np.zeros((D,D),dtype=complex); Sz=np.zeros((D,D),dtype=complex)\nfor mi,m in enumerate(ms):\n    Spl+=E[(2*mi,2*mi+1)].toarray()   # c+_up c_down\n    Sz+=0.5*(E[(2*mi,2*mi)].toarray()-E[(2*mi+1,2*mi+1)].toarray())\nS2=Spl.conj().T@Spl+Sz@Sz+Sz   # S-S+ = S^2 - Sz^2 - Sz  => S^2 = S-S+ + Sz^2 + Sz ; here Spl=S+ , S-=S+^dag\nS2=Spl.conj().T@Spl+Sz@Sz+Sz\nLx=np.zeros((5,5),complex); Lp=np.zeros((5,5),complex)\nfor i,m in enumerate(ms[:-1]): Lp[i+1,i]=np.sqrt(6-m*(m+1))\nLx=(Lp+Lp.conj().T)/2; Ly=(Lp-Lp.conj().T)/(2j); Lz=np.diag(np.array(ms,float)).astype(complex)\ndef rot(axis,angle):\n    n=np.array(axis,float); n/=np.linalg.norm(n)\n    Hs=h_spin(n[0]*Lx+n[1]*Ly+n[2]*Lz)\n    return expm(-1j*angle*one_body(Hs))\n"
+    },
+    {
+     "name": "run.py",
+     "sha256": "c57f27aa83190f3974ff7ada608526e85eb99a0560e9f662263e4ed1f6de173c",
+     "lines": 48,
+     "code": "import numpy as np, sys\nsys.path.insert(0,'.')\nfrom d4 import *\n# rotations\nops={'E':np.eye(D),\n     'C3':rot((1,1,1),2*np.pi/3),\n     'C2z':rot((0,0,1),np.pi),\n     'C4z':rot((0,0,1),np.pi/2),\n     \"C2'\":rot((1,0,0),np.pi)}\ncls=['E','C3','C2z','C4z',\"C2'\"]; csz=[1,8,3,6,6]\nchartab={'A1':[1,1,1,1,1],'A2':[1,1,1,-1,-1],'E':[2,-1,2,0,0],'T1':[3,0,-1,1,-1],'T2':[3,0,-1,-1,1]}\n# check commutation\nprint('comm check', max(np.abs(ops['C4z']@Hee-Hee@ops['C4z']).max(),0))\n# S^2 eigenspaces\ns2w,s2v=eigh((S2+S2.conj().T)/2)\ndef term_list(Dq_cm):\n    H=Hee+Dq_cm*Hcf\n    res=[]\n    for S in (0,1,2):\n        sel=np.abs(s2w-S*(S+1))<1e-6\n        V=s2v[:,sel]\n        if V.shape[1]==0: continue\n        HS=V.conj().T@H@V\n        ev,evec=eigh((HS+HS.conj().T)/2)\n        W_all=V@evec\n        # cluster\n        i=0\n        while i<len(ev):\n            j=i\n            while j+1<len(ev) and abs(ev[j+1]-ev[i])<1e-5: j+=1\n            Wc=W_all[:,i:j+1]\n            chi=[np.trace(Wc.conj().T@ops[c]@Wc).real for c in cls]\n            # multiplicities\n            dec={}\n            for name,ct in chartab.items():\n                n=sum(csz[k]*chi[k]*ct[k] for k in range(5))/24\n                if abs(n)>1e-6: dec[name]=round(n.real)\n            res.append((ev[i],2*S+1,dec,j-i+1))\n            i=j+1\n    res.sort()\n    return res\nfor Dqb in (0.90,2.15,3.35):\n    Dq=Dqb*B/ 1.0  # Dq in cm^-1 = Dq/B * B\n    tl=term_list(Dq)\n    E0=tl[0][0]\n    print(f\"Dq/B={Dqb}  Dq={Dq:.1f} cm-1\")\n    for e,mult,dec,dg in tl[:8]:\n        print(f\"   E/B={(e-E0)/B:9.4f}  mult={mult}  irreps={dec}  dim={dg}\")\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"/tmp/tsbench-run-h5gl1e2z/run.py\", line 3, in <module>\n    from d4 import *\n  File \"/tmp/tsbench-run-h5gl1e2z/d4.py\", line 2, in <module>\n    from scipy.special import sph_harm\nImportError: cannot import name 'sph_harm' from 'scipy.special' (<B_VENV>/lib/python3.14/site-packages/scipy/special/__init__.py)",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d4.py",
+     "line": 24,
+     "method": "matrix",
+     "text": "g=np.zeros((N,N,N,N),dtype=complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 48,
+     "method": "matrix",
+     "text": "Hee=np.zeros((D,D),dtype=complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 68,
+     "method": "matrix",
+     "text": "H=np.zeros((N,N),dtype=complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 74,
+     "method": "matrix",
+     "text": "Op=np.zeros((D,D),dtype=complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 81,
+     "method": "matrix",
+     "text": "Sp=one_body(sum(h_spin(np.zeros((5,5)))[0:0] for _ in [0]) if False else np.zeros((N,N)))"
+    },
+    {
+     "script": "d4.py",
+     "line": 82,
+     "method": "matrix",
+     "text": "Spl=np.zeros((D,D),dtype=complex); Sz=np.zeros((D,D),dtype=complex)"
+    },
+    {
+     "script": "d4.py",
+     "line": 88,
+     "method": "matrix",
+     "text": "Lx=np.zeros((5,5),complex); Lp=np.zeros((5,5),complex)"
+    },
+    {
+     "script": "run.py",
+     "line": 15,
+     "method": "eigen_solver",
+     "text": "s2w,s2v=eigh((S2+S2.conj().T)/2)"
+    },
+    {
+     "script": "run.py",
+     "line": 24,
+     "method": "eigen_solver",
+     "text": "ev,evec=eigh((HS+HS.conj().T)/2)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Rerun with updated spherical harmonic function",
+   "command": "sed -i 's/from scipy.special import sph_harm/from scipy.special import sph_harm_y\\ndef sph_harm(m,l,ph,th): return sph_harm_y(l,m,th,ph)/' d4.py && python3 run.py",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "comm check 3.1676257688141276e-12\nDq/B=0.9  Dq=738.9 cm-1\n   E/B=   0.0000  mult=5  irreps={'A1': 2, 'A2': -2, 'E': 5, 'T1': -2, 'T2': 2}  dim=10\n   E/B=   9.0000  mult=5  irreps={'A1': -2, 'A2': 2, 'T1': 3, 'T2': 3}  dim=15\n   E/B=  16.2537  mult=3  irreps={'T1': 3}  dim=9\n   E/B=  22.5917  mult=3  irreps={'A1': 1, 'A2': -1, 'E': 3, 'T1': -2, 'T2': 2}  dim=6\n   E/B=  23.9723  mult=3  irreps={'T1': 3}  dim=9\n   E/B=  24.5970  mult=3  irreps={'A1': -1, 'A2': 1, 'T1': 1, 'T2': 1}  dim=9\n   E/B=  26.4215  mult=3  irreps={'A1': 2, 'A2': 2, 'T1': -2, 'T2': 2}  dim=3\n   E/B=  26.8173  mult=3  irreps={'A1': 3}  dim=3\nDq/B=2.15  Dq=1765.1 cm-1\n   E/B=   0.0000  mult=5  irreps={'A1': 3, 'A2': -3, 'E': 5, 'T1': -2, 'T2': 2}  dim=10\n   E/B=   4.8397  mult=3  irreps={'T1': 3}  dim=9\n   E/B=  17.0741  mult=1  irreps={'A1': -1, 'A2': 1, 'T1': 1, 'T2': 1}  dim=3\n   E/B=  18.4254  mult=1  irreps={'A1': 0, 'A2': 0, 'E': 1, 'T1': -1, 'T2': 1}  dim=2\n   E/B=  21.5000  mult=5  irreps={'A1': -2, 'A2': 3, 'T1': 3, 'T2': 3}  dim=15\n   E/B=  22.8128  mult=3  irreps={'A1': 2, 'A2': -1, 'E': 3, 'T1': -1, 'T2': 1}  dim=6\n   E/B=  24.0082  mult=3  irreps={'T1': 3}  dim=9\n   E/B=  25.0277  mult=3  irreps={'A1': -2, 'A2': 2, 'T1': 2, 'T2': 1}  dim=9\nDq/B=3.35  Dq=2750.3 cm-1\n   E/B=   0.0000  mult=3  irreps={'T1': 3}  dim=9\n   E/B=   6.6754  mult=5  irreps={'A1': 3, 'A2': -2, 'E': 5, 'T1': -2, 'T2': 2}  dim=10\n   E/B=  12.6923  mult=1  irreps={'A1': -1, 'A2': 1, 'T1': 1, 'T2': 0}  dim=3\n   E/B=  14.0871  mult=1  irreps={'A1': 0, 'A2': 0, 'E': 1, 'T1': -1, 'T2': 1}  dim=2\n   E/B=  26.8116  mult=1  irreps={'A1': 1}  dim=1\n   E/B=  29.5630  mult=3  irreps={'A1': 2, 'A2': -1, 'E': 3, 'T1': -1, 'T2': 1}  dim=6\n   E/B=  30.7127  mult=3  irreps={'T1': 3}  dim=9\n   E/B=  31.8427  mult=3  irreps={'A1': -1, 'A2': 2, 'T1': 1, 'T2': 1}  dim=9",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Debug rotation operator traces and commutators",
+   "command": "cat > dbg.py <<'EOF'\nimport numpy as np, sys\nsys.path.insert(0,'.')\nfrom d4 import *\nops={'E':np.eye(D),'C3':rot((1,1,1),2*np.pi/3),'C2z':rot((0,0,1),np.pi),'C4z':rot((0,0,1),np.pi/2),\"C2'\":rot((1,0,0),np.pi)}\nfor k,U in ops.items():\n    print(k, np.round(np.trace(U),4), np.allclose(U@U.conj().T,np.eye(D)))\nprint('commute S2', np.abs(S2@Hee-Hee@S2).max(), np.abs(S2@Hcf-Hcf@S2).max())\nprint('commute rot H', np.abs(ops['C3']@Hcf-Hcf@ops['C3']).max(), np.abs(ops['C3']@Hee-Hee@ops['C3']).max())\nEOF\npython3 dbg.py",
+   "scripts": [
+    {
+     "name": "dbg.py",
+     "sha256": "b3da6b63e7d3011bd9f85d8f1dd6f7d64815ea4d444bbc8d0bb9ca90e35b1128",
+     "lines": 8,
+     "code": "import numpy as np, sys\nsys.path.insert(0,'.')\nfrom d4 import *\nops={'E':np.eye(D),'C3':rot((1,1,1),2*np.pi/3),'C2z':rot((0,0,1),np.pi),'C4z':rot((0,0,1),np.pi/2),\"C2'\":rot((1,0,0),np.pi)}\nfor k,U in ops.items():\n    print(k, np.round(np.trace(U),4), np.allclose(U@U.conj().T,np.eye(D)))\nprint('commute S2', np.abs(S2@Hee-Hee@S2).max(), np.abs(S2@Hcf-Hcf@S2).max())\nprint('commute rot H', np.abs(ops['C3']@Hcf-Hcf@ops['C3']).max(), np.abs(ops['C3']@Hee-Hee@ops['C3']).max())\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "dbg.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "E 210.0 True\nC3 (-3+0j) True\nC2z (2-0j) True\nC4z (-2-0j) True\nC2' (2+0j) True\ncommute S2 1.4551915228366852e-11 0.0\ncommute rot H 7.101529278353261e-15 4.3664850622939434e-11",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "Inspect characters of ground quintet cluster",
+   "command": "cat >> dbg.py <<'EOF'\nH=Hee+ 738.9*Hcf\nsel=np.abs(np.linalg.eigvalsh(S2)-6)<1e-6\nw,v=np.linalg.eigh(S2); V=v[:,np.abs(w-6)<1e-6]\nHS=V.conj().T@H@V; ev,evec=np.linalg.eigh(HS); Wall=V@evec\nfor i in range(3):\n    W=Wall[:,i:i+1]\nprint('ev quintet', np.round(ev[:12]-ev[0],3))\nWg=Wall[:,np.abs(ev-ev[0])<1e-5]\nfor k,U in ops.items(): print(k, np.round(np.trace(Wg.conj().T@U@Wg),3))\nprint('dim quintet',V.shape)\nfor k,U in ops.items(): print('full in S=2', k, np.round(np.trace(V.conj().T@U@V),3))\nEOF\npython3 dbg.py | tail -12",
+   "scripts": [
+    {
+     "name": "dbg.py",
+     "sha256": "f3e5fa7a57f50ba243f98bd3ba59c414c24a2656905c222ae70f561f3cd40bd9",
+     "lines": 11,
+     "code": "H=Hee+ 738.9*Hcf\nsel=np.abs(np.linalg.eigvalsh(S2)-6)<1e-6\nw,v=np.linalg.eigh(S2); V=v[:,np.abs(w-6)<1e-6]\nHS=V.conj().T@H@V; ev,evec=np.linalg.eigh(HS); Wall=V@evec\nfor i in range(3):\n    W=Wall[:,i:i+1]\nprint('ev quintet', np.round(ev[:12]-ev[0],3))\nWg=Wall[:,np.abs(ev-ev[0])<1e-5]\nfor k,U in ops.items(): print(k, np.round(np.trace(Wg.conj().T@U@Wg),3))\nprint('dim quintet',V.shape)\nfor k,U in ops.items(): print('full in S=2', k, np.round(np.trace(V.conj().T@U@V),3))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "dbg.py",
+     "written_in_step": 8
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ev quintet [   0.    0.    0.    0.    0.    0.    0.    0.    0.    0. 7389. 7389.]\nE (10-0j)\nC3 (-5-0j)\nC2z (10+0j)\nC4z -0j\nC2' (10+0j)\ndim quintet (210, 25)\nfull in S=2 E (25+0j)\nfull in S=2 C3 (-5-0j)\nfull in S=2 C2z (5-0j)\nfull in S=2 C4z (-5+0j)\nfull in S=2 C2' (5-0j)",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "dbg.py",
+     "line": 2,
+     "method": "eigen_solver",
+     "text": "sel=np.abs(np.linalg.eigvalsh(S2)-6)<1e-6"
+    },
+    {
+     "script": "dbg.py",
+     "line": 3,
+     "method": "eigen_solver",
+     "text": "w,v=np.linalg.eigh(S2); V=v[:,np.abs(w-6)<1e-6]"
+    },
+    {
+     "script": "dbg.py",
+     "line": 4,
+     "method": "eigen_solver",
+     "text": "HS=V.conj().T@H@V; ev,evec=np.linalg.eigh(HS); Wall=V@evec"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "Fix C2' axis and normalize irrep multiplicities",
+   "command": "sed -i \"s/\\\"C2'\\\":rot((1,0,0),np.pi)/\\\"C2'\\\":rot((1,1,0),np.pi)/\" run.py && sed -i \"s/n=np.array(axis,float); n\\/=np.linalg.norm(n)/n=np.array(axis,float); n\\/=np.linalg.norm(n)/\" d4.py && sed -i \"s/if abs(n)>1e-6: dec\\[name\\]=round(n.real)/if abs(n)>1e-6: dec[name]=round(n.real\\/(2*S+1),3)/\" run.py && python3 run.py",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "comm check 3.1676257688141276e-12\nDq/B=0.9  Dq=738.9 cm-1\n   E/B=   0.0000  mult=5  irreps={'E': np.float64(1.0)}  dim=10\n   E/B=   9.0000  mult=5  irreps={'T2': np.float64(1.0)}  dim=15\n   E/B=  16.2537  mult=3  irreps={'T1': np.float64(1.0)}  dim=9\n   E/B=  22.5917  mult=3  irreps={'E': np.float64(1.0)}  dim=6\n   E/B=  23.9723  mult=3  irreps={'T1': np.float64(1.0)}  dim=9\n   E/B=  24.5970  mult=3  irreps={'T2': np.float64(1.0)}  dim=9\n   E/B=  26.4215  mult=3  irreps={'A2': np.float64(1.0)}  dim=3\n   E/B=  26.8173  mult=3  irreps={'A1': np.float64(1.0)}  dim=3\nDq/B=2.15  Dq=1765.1 cm-1\n   E/B=   0.0000  mult=5  irreps={'E': np.float64(1.0)}  dim=10\n   E/B=   4.8397  mult=3  irreps={'T1': np.float64(1.0)}  dim=9\n   E/B=  17.0741  mult=1  irreps={'T2': np.float64(1.0)}  dim=3\n   E/B=  18.4254  mult=1  irreps={'E': np.float64(1.0)}  dim=2\n   E/B=  21.5000  mult=5  irreps={'T2': np.float64(1.0)}  dim=15\n   E/B=  22.8128  mult=3  irreps={'E': np.float64(1.0)}  dim=6\n   E/B=  24.0082  mult=3  irreps={'T1': np.float64(1.0)}  dim=9\n   E/B=  25.0277  mult=3  irreps={'T2': np.float64(1.0)}  dim=9\nDq/B=3.35  Dq=2750.3 cm-1\n   E/B=   0.0000  mult=3  irreps={'T1': np.float64(1.0)}  dim=9\n   E/B=   6.6754  mult=5  irreps={'E': np.float64(1.0)}  dim=10\n   E/B=  12.6923  mult=1  irreps={'T2': np.float64(1.0)}  dim=3\n   E/B=  14.0871  mult=1  irreps={'E': np.float64(1.0)}  dim=2\n   E/B=  26.8116  mult=1  irreps={'A1': np.float64(1.0)}  dim=1\n   E/B=  29.5630  mult=3  irreps={'E': np.float64(1.0)}  dim=6\n   E/B=  30.7127  mult=3  irreps={'T1': np.float64(1.0)}  dim=9\n   E/B=  31.8427  mult=3  irreps={'T2': np.float64(1.0)}  dim=9",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": [
+    "points[0].dq_over_b",
+    "points[1].dq_over_b",
+    "points[1].e_over_b",
+    "points[2].dq_over_b",
+    "points[2].e_over_b",
+    "points[3].dq_over_b",
+    "points[3].e_over_b",
+    "points[4].dq_over_b",
+    "points[4].e_over_b",
+    "points[5].dq_over_b",
+    "points[5].e_over_b",
+    "points[6].dq_over_b",
+    "points[6].e_over_b",
+    "points[7].dq_over_b",
+    "points[7].e_over_b",
+    "points[8].dq_over_b",
+    "points[8].e_over_b"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "points[0].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[0].e_over_b",
+   "value": 9.0,
+   "weak": true,
+   "steps": [
+    3,
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": null
+  },
+  {
+   "path": "points[1].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[1].e_over_b",
+   "value": 16.25,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[2].dq_over_b",
+   "value": 0.9,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[2].e_over_b",
+   "value": 22.59,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[3].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[3].e_over_b",
+   "value": 4.84,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[4].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[4].e_over_b",
+   "value": 17.07,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[5].dq_over_b",
+   "value": 2.15,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[5].e_over_b",
+   "value": 18.43,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[6].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[6].e_over_b",
+   "value": 6.68,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[7].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[7].e_over_b",
+   "value": 12.69,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[8].dq_over_b",
+   "value": 3.35,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  },
+  {
+   "path": "points[8].e_over_b",
+   "value": 14.09,
+   "weak": false,
+   "steps": [
+    6,
+    9
+   ],
+   "typed_in_steps": [],
+   "source_step": 9
+  }
+ ],
+ "summary": {
+  "n_steps": 10,
+  "n_scripts": 6,
+  "n_failed_steps": 2,
+  "n_values": 18,
+  "n_linked": 17,
+  "n_weak": 1,
+  "source_steps": [
+   9
+  ],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": true
+ }
+}

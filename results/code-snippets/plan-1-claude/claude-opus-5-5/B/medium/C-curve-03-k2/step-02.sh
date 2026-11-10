@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null || cd .; pwd; touch x && echo ok; python3 -c "import sympy,numpy;print('y')"

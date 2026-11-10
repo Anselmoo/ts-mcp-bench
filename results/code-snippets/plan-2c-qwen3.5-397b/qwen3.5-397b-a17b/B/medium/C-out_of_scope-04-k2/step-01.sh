@@ -1,0 +1,1 @@
+echo "Analyzing Cr(II) d4 high-spin octahedral complex"

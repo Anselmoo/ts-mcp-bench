@@ -1,0 +1,1 @@
+sed -i 's/r=ann(d,dd)/r=ann(d,c)/; s/r1=ann(r\[0\],c)/r1=ann(r[0],dd)/' t.py; export MPLCONFIGDIR=/tmp/mpl; python3 t.py 2>&1 | grep -v atplot; sha256sum diagram.png; pwd

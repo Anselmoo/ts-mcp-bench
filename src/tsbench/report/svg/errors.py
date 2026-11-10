@@ -45,10 +45,13 @@ def beeswarm(groups: Sequence[dict], cap: float = 300.0, floor: float = 1e-3, *,
              task_href: Callable[[str], str] | None = None) -> str:
     """Error / tolerance per answer on a log axis from `floor` to `cap`; values outside sit at the edge. The zone
     ratio ≤ 1 is shaded. A mark is filled when the scorer called the answer correct (`ok`) and open when not; the
-    ratio only places it. A bar marks the median of each condition; with `task_href` each mark opens its task."""
+    ratio only places it. A bar marks the median of each condition; with `task_href` each mark opens its task. A group
+    may carry a `label` for its band (default its condition) and a `model`: a line parts two models and the tips name
+    the model, so the bands of several models share one axis."""
     if not any(g["values"] for g in groups):
         return ""
-    w, x0, top = float(width), 84.0, 34.0
+    w, top = float(width), 34.0
+    x0 = max(84.0, *(base.text_width(g.get("label", "")) + 12 for g in groups))
     x1 = w - 16.0
     sx = base.Log(floor, cap, x0, x1)
     bands = []
@@ -57,7 +60,7 @@ def beeswarm(groups: Sequence[dict], cap: float = 300.0, floor: float = 1e-3, *,
                        for v in g["values"] if v.get("ratio") is not None), key=lambda t: (t[0], t[1]))
         offs = _offsets([x for x, _, _, _ in vals])
         reach = max((abs(o) for o in offs), default=0.0)
-        bands.append((g["cond"], vals, offs, max(56.0, 2 * reach + 2 * _R + 20), int(g.get("n_runs") or len(vals))))
+        bands.append((g, vals, offs, max(56.0, 2 * reach + 2 * _R + 20), int(g.get("n_runs") or len(vals))))
     axis_y = top + sum(b[3] for b in bands) + 4
     out = [base.rect(x0, top, sx(1.0) - x0, axis_y - top, "band"),
            base.axis_bottom(sx, sx.ticks(), axis_y, x0, x1, "error / tolerance, log scale", lambda v: f"{v:g}",
@@ -66,18 +69,23 @@ def beeswarm(groups: Sequence[dict], cap: float = 300.0, floor: float = 1e-3, *,
            base.text(x0 + 4, top - 8, "within tolerance", "start", "mut"),
            base.text(x1, top - 8, "filled correct · open wrong", "end", "mut")]
     y = top
-    for cond, vals, offs, bh, total in bands:
+    last = groups[0].get("model")
+    for g, vals, offs, bh, total in bands:
+        cond, who = g["cond"], f"{g['model']} · " if g.get("model") else ""
         cy = y + bh / 2
-        out.append(base.text(0, cy - 8, cond, "start", "b"))
+        if g.get("model") != last:
+            out.append(base.line(0, y, x1, y, "grid"))
+        last = g.get("model")
+        out.append(base.text(0, cy - 8, g.get("label", cond), "start", "b"))
         of = f" of {total}" if total > len(vals) else ""
         out.append(base.text(0, cy + 6, f"n {len(vals)}{of}", "start", "mut", size=base.SMALL_PX))
         if vals:
             med = statistics.median(r for _, _, r, _ in vals)
             out.append(base.text(0, cy + 19, f"median {_num(med)}", "start", "mut", size=base.SMALL_PX))
-            out.append(base.rect(sx(med) - 1.25, y + 8, 2.5, bh - 16, f"c-{cond}", f"{cond} median {_num(med)}"))
+            out.append(base.rect(sx(med) - 1.25, y + 8, 2.5, bh - 16, f"c-{cond}", f"{who}{cond} median {_num(med)}"))
         for (x, task, ratio, ok), off in zip(vals, offs, strict=True):
             edge = " · drawn at the edge" if not floor <= ratio <= cap else ""
-            tip = f"{task} · {cond} · error/tolerance {_num(ratio)}{edge}"
+            tip = f"{task} · {who}{cond} · error/tolerance {_num(ratio)}{edge}"
             mark = base.marker(cond, x, cy + off, ok, _R, tip)
             out.append(mark if task_href is None else base.link(task_href(task), mark))
         y += bh

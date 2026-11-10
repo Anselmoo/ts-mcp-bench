@@ -5,17 +5,18 @@ from collections.abc import Sequence
 
 from . import base
 
-__all__ = ["outcome_diverging", "upset"]
+__all__ = ["outcome_diverging", "upset", "upset_scale"]
 
 
 def outcome_diverging(rows: Sequence[dict], categories: Sequence[tuple[str, str]], *,
                       width: float = base.FULL_W) -> str:
     """One bar per condition: the first category right of zero, the others stacked left of zero in the given order.
     A count is printed inside its segment when it fits, else not at all (the table beside the figure has every
-    number)."""
+    number). A row may carry a `label` for its left column (default its condition) and a `group`: a line parts two
+    groups, so rows of several models share one axis."""
     if not rows or not categories:
         return ""
-    w, x0 = float(width), 34.0
+    w, x0 = float(width), max(34.0, *(base.text_width(r.get("label", ""), base.TEXT_PX) + 12 for r in rows))
     x1 = w - 16.0
     (good_key, good_label), errors = categories[0], list(categories[1:])
     left = max((sum(r["counts"].get(k, 0) for k, _ in errors) for r in rows), default=0)
@@ -29,7 +30,9 @@ def outcome_diverging(rows: Sequence[dict], categories: Sequence[tuple[str, str]
     ticks = base.nice_ticks(-max(left, 1), max(right, 1), 6)
     out = [legend_svg, base.axis_bottom(sx, ticks, axis_y, x0, x1, "runs", lambda v: base.number(abs(v)), grid_to=top)]
     for i, r in enumerate(rows):
-        cond, counts = r["cond"], r["counts"]
+        cond, counts = r.get("label", r["cond"]), r["counts"]
+        if i and r.get("group") != rows[i - 1].get("group"):
+            out.append(base.line(0, top + i * row_h, x1, top + i * row_h, "grid"))
         n = sum(counts.get(k, 0) for k, _ in categories)
         y = top + i * row_h + (row_h - bar_h) / 2
         out.append(base.text(0, y + bar_h / 2 + base.TEXT_PX * 0.35, cond, "start", "b"))
@@ -68,18 +71,29 @@ def _tasks_tip(label: str, tasks: Sequence[str]) -> str:
     return f"{label}: {base.plural(n, 'task')}" + (f" ({', '.join(tasks)})" if tasks else "")
 
 
+def upset_scale(models: Sequence[Sequence[dict]]) -> tuple[int, int]:
+    """The largest subset and the largest set of the `sets` of several models: the shared scale of their panels."""
+    peak = max((len(s["tasks"]) for sets in models for s in sets), default=0)
+    sizes = [sum(len(s["tasks"]) for s in sets if c in _members(s["key"])) for sets in models for c in base.CONDS]
+    return peak, max(sizes, default=0)
+
+
 def upset(sets: Sequence[dict], *, width: float = base.FULL_W, excluded: Sequence[str] = (),
-          conds: Sequence[str] = base.CONDS) -> str:
+          conds: Sequence[str] = base.CONDS, scale: tuple[int, int] | None = None) -> str:
     """Counts of the subsets of `conds` (default {A, B, C}) as bars above a membership matrix, set sizes at the left.
     The subsets share the width right of the set sizes. A condition not in `conds` (it has no evaluable run) has no
     row and no set size, and no subset that contains it is drawn. `excluded` are the tasks left out of every subset
-    because a condition has no evaluable run of them; the figure says how many."""
+    because a condition has no evaluable run of them; the figure says how many. Without any condition there is
+    nothing to draw (""). `scale` (`upset_scale`) gives the largest subset and set of the axes, so that the panels of
+    several models read alike."""
     conds = [c for c in base.CONDS if c in conds]
+    if not conds:
+        return ""
     items = sorted(((_members(s["key"]), [str(t) for t in s["tasks"]]) for s in sets
                     if set(_members(s["key"])) <= set(conds)), key=lambda kv: (-len(kv[1]), len(kv[0]), kv[0]))
     if not items:
         return ""
-    peak = max(len(t) for _, t in items) or 1
+    peak = max(max(len(t) for _, t in items), scale[0] if scale else 0) or 1
     unit = _BAR_AREA / peak
     top = 24.0
     base_y = top + _BAR_AREA
@@ -88,7 +102,7 @@ def upset(sets: Sequence[dict], *, width: float = base.FULL_W, excluded: Sequenc
     pitch = (w - _MX - 8) / len(items)
     bar_w = min(_BAR_W, pitch * 0.6)
     sizes = {c: sum(len(t) for k, t in items if c in k) for c in conds}
-    size_unit = 80.0 / (max(sizes.values()) or 1)
+    size_unit = 80.0 / (max(*sizes.values(), scale[1] if scale else 0) or 1)
     out = [base.axis_left(base.Linear(0, peak, base_y, top), base.nice_ticks(0, peak, 4), _MX - 8, top, base_y, "tasks",
                           grid_to=w),
            base.text(0, row0 - 14, "tasks per condition", "start", "mut")]

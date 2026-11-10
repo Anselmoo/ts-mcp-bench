@@ -610,7 +610,7 @@ def _facts(data: dict) -> list[dict]:
     """The tiles: a short value and a caption that says what it counts."""
     runs = data["runs"]
     n_ev = sum(r["evaluable"] for r in runs)
-    models = sorted({_model_label(r["model"]) for r in runs}, key=lambda m: m.lower())
+    models = [_model_label(m) for m in sorted({r["model"] for r in runs}, key=comparison.model_key)]
     n429 = sum(r["outcome"] == "na429" for r in runs)
     facts = [
         ("Systems", str(len(data["shown"])),

@@ -1,0 +1,1 @@
+python3 -c "import numpy; print('numpy available')" 2>&1

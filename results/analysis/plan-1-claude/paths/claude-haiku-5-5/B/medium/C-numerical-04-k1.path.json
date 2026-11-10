@@ -1,0 +1,349 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-numerical-04-k1.jsonl",
+ "transcript_sha256": "d1cffbc91f794bf0e41e2f9e6d7d06df38ac9772180719bc3a3f94210fcdfbcc",
+ "answer": {
+  "Dq": 979.0,
+  "B": 853.0,
+  "C": null,
+  "out_of_scope": false,
+  "reason": "Full d7 Hamiltonian fit to the three quartet bands (4T2g, 4A2g, 4T1g(P)) gives Dq ≈ 979 and B ≈ 853 cm⁻¹; C does not enter the quartet energies."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numpy and scipy availability",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy\" ; python3 -c \"import numpy, scipy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d7 Ms=3/2 Hamiltonian and test eigenvalues",
+   "command": "mkdir -p /w && cat > /w/d7.py << 'EOF'\nimport itertools, numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve\nfrom math import pi, sqrt\nl=2\n# spin-orbitals: (m,s), s=+1/2 idx 0, -1/2 idx 1\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nN=len(orbs)\ndef G(l1,l2,l3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    return sqrt((2*l1+1)*(2*l2+1)*(2*l3+1)/(4*pi))*float(wigner_3j(l1,l2,l3,0,0,0))*float(wigner_3j(l1,l2,l3,m1,m2,m3))\ndef ang(k,mi,mk,mj,ml):\n    # returns sum_q of angular factor (without 4pi/(2k+1))\n    s=0.0\n    for q in range(-k,k+1):\n        A=(-1)**(mi+q)*G(l,k,l,-mi,-q,mk)\n        if A==0: continue\n        B=(-1)**mj*G(l,k,l,-mj,q,ml)\n        s+=A*B\n    return s\ndef Vspat(mi,mj,mk,ml,F):\n    tot=0.0\n    for k in (0,2,4):\n        a=ang(k,mi,mk,mj,ml)\n        tot+=F[k]*4*pi/(2*k+1)*a\n    return tot\ndef build(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:63*C/5}\n    # F0 irrelevant for d-shell constant part? keep (constant shift within d7 only) -> set 0\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      for k,(mk,sk) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if si!=sk or sj!=sl: continue\n        V[i,j,k,ll]=Vspat(mi,mj,mk,ml,F)\n    # one-electron: -4Dq + 10Dq P_eg\n    h=np.zeros((N,N))\n    # eg vectors in complex m basis (spin-independent)\n    v0=np.zeros(5); v0[2]=1.0\n    vc=np.zeros(5); vc[0]=1/sqrt(2); vc[4]=1/sqrt(2)  # m=-2 index0, m=+2 index4\n    P=np.outer(v0,v0)+np.outer(vc,vc)\n    hm=-4*Dq*np.eye(5)+10*Dq*P\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      if si==sj: h[i,j]=hm[mi+2,mj+2]\n    return h,V\n# Build Ms=3/2 determinants: 5 up, 2 down\ndef dets_ms(nup,ndn):\n    up=[i for i,(m,s) in enumerate(orbs) if s>0]\n    dn=[i for i,(m,s) in enumerate(orbs) if s<0]\n    out=[]\n    for a in itertools.combinations(up,nup):\n        for b in itertools.combinations(dn,ndn):\n            out.append(tuple(sorted(a+b)))\n    return out\ndef matrix(Dq,B,C):\n    h,V=build(Dq,B,C)\n    dets=dets_ms(5,2)\n    idx={d:n for n,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)))\n    def apply_ann(state,p):\n        # a_p on ordered occupied list (sorted); returns (sign,newstate) or None\n        if p not in state: return None\n        pos=state.index(p)\n        return ((-1)**pos, tuple(x for x in state if x!=p))\n    def apply_cre(state,p):\n        if p in state: return None\n        pos=sum(1 for x in state if x<p)\n        return ((-1)**pos, tuple(sorted(state+(p,))))\n    for n,d in enumerate(dets):\n        for c,dd in enumerate(dets):\n            pass\n    # one-body\n    for c,dd in enumerate(dets):\n        # a†_i a_j |dd>\n        for j in dd:\n            r=apply_ann(dd,j)\n            if r is None: continue\n            s1,st=r\n            for i in range(N):\n                if h[i,j]==0: continue\n                r2=apply_cre(st,i)\n                if r2 is None: continue\n                s2,st2=r2\n                if st2 in idx:\n                    M[idx[st2],c]+=s1*s2*h[i,j]\n    # two-body: 1/2 sum V_ijkl a†_i a†_j a_l a_k\n    for c,dd in enumerate(dets):\n        for k in dd:\n            r=apply_ann(dd,k)\n            if r is None: continue\n            s1,st=r\n            for ll in st:\n                r2=apply_ann(st,ll)\n                if r2 is None: continue\n                s2,st2=r2\n                for j in range(N):\n                    for i in range(N):\n                        v=V[i,j,k,ll]\n                        if v==0: continue\n                        r3=apply_cre(st2,j)\n                        if r3 is None: continue\n                        s3,st3=r3\n                        r4=apply_cre(st3,i)\n                        if r4 is None: continue\n                        s4,st4=r4\n                        if st4 in idx:\n                            M[idx[st4],c]+=0.5*s1*s2*s3*s4*v\n    return M\nif __name__==\"__main__\":\n    M=matrix(1000.0,900.0,4000.0)\n    ev=np.sort(np.linalg.eigvalsh((M+M.T)/2))\n    print(np.round(ev,1))\nEOF\ncd /w && time python3 d7.py",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "cdb3ac70f7af90083b88a136552d588b6793b336a11378fa94e7fb6652d72f9b",
+     "lines": 114,
+     "code": "import itertools, numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom scipy.optimize import fsolve\nfrom math import pi, sqrt\nl=2\n# spin-orbitals: (m,s), s=+1/2 idx 0, -1/2 idx 1\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nN=len(orbs)\ndef G(l1,l2,l3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    return sqrt((2*l1+1)*(2*l2+1)*(2*l3+1)/(4*pi))*float(wigner_3j(l1,l2,l3,0,0,0))*float(wigner_3j(l1,l2,l3,m1,m2,m3))\ndef ang(k,mi,mk,mj,ml):\n    # returns sum_q of angular factor (without 4pi/(2k+1))\n    s=0.0\n    for q in range(-k,k+1):\n        A=(-1)**(mi+q)*G(l,k,l,-mi,-q,mk)\n        if A==0: continue\n        B=(-1)**mj*G(l,k,l,-mj,q,ml)\n        s+=A*B\n    return s\ndef Vspat(mi,mj,mk,ml,F):\n    tot=0.0\n    for k in (0,2,4):\n        a=ang(k,mi,mk,mj,ml)\n        tot+=F[k]*4*pi/(2*k+1)*a\n    return tot\ndef build(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:63*C/5}\n    # F0 irrelevant for d-shell constant part? keep (constant shift within d7 only) -> set 0\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      for k,(mk,sk) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if si!=sk or sj!=sl: continue\n        V[i,j,k,ll]=Vspat(mi,mj,mk,ml,F)\n    # one-electron: -4Dq + 10Dq P_eg\n    h=np.zeros((N,N))\n    # eg vectors in complex m basis (spin-independent)\n    v0=np.zeros(5); v0[2]=1.0\n    vc=np.zeros(5); vc[0]=1/sqrt(2); vc[4]=1/sqrt(2)  # m=-2 index0, m=+2 index4\n    P=np.outer(v0,v0)+np.outer(vc,vc)\n    hm=-4*Dq*np.eye(5)+10*Dq*P\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      if si==sj: h[i,j]=hm[mi+2,mj+2]\n    return h,V\n# Build Ms=3/2 determinants: 5 up, 2 down\ndef dets_ms(nup,ndn):\n    up=[i for i,(m,s) in enumerate(orbs) if s>0]\n    dn=[i for i,(m,s) in enumerate(orbs) if s<0]\n    out=[]\n    for a in itertools.combinations(up,nup):\n        for b in itertools.combinations(dn,ndn):\n            out.append(tuple(sorted(a+b)))\n    return out\ndef matrix(Dq,B,C):\n    h,V=build(Dq,B,C)\n    dets=dets_ms(5,2)\n    idx={d:n for n,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)))\n    def apply_ann(state,p):\n        # a_p on ordered occupied list (sorted); returns (sign,newstate) or None\n        if p not in state: return None\n        pos=state.index(p)\n        return ((-1)**pos, tuple(x for x in state if x!=p))\n    def apply_cre(state,p):\n        if p in state: return None\n        pos=sum(1 for x in state if x<p)\n        return ((-1)**pos, tuple(sorted(state+(p,))))\n    for n,d in enumerate(dets):\n        for c,dd in enumerate(dets):\n            pass\n    # one-body\n    for c,dd in enumerate(dets):\n        # a†_i a_j |dd>\n        for j in dd:\n            r=apply_ann(dd,j)\n            if r is None: continue\n            s1,st=r\n            for i in range(N):\n                if h[i,j]==0: continue\n                r2=apply_cre(st,i)\n                if r2 is None: continue\n                s2,st2=r2\n                if st2 in idx:\n                    M[idx[st2],c]+=s1*s2*h[i,j]\n    # two-body: 1/2 sum V_ijkl a†_i a†_j a_l a_k\n    for c,dd in enumerate(dets):\n        for k in dd:\n            r=apply_ann(dd,k)\n            if r is None: continue\n            s1,st=r\n            for ll in st:\n                r2=apply_ann(st,ll)\n                if r2 is None: continue\n                s2,st2=r2\n                for j in range(N):\n                    for i in range(N):\n                        v=V[i,j,k,ll]\n                        if v==0: continue\n                        r3=apply_cre(st2,j)\n                        if r3 is None: continue\n                        s3,st3=r3\n                        r4=apply_cre(st3,i)\n                        if r4 is None: continue\n                        s4,st4=r4\n                        if st4 in idx:\n                            M[idx[st4],c]+=0.5*s1*s2*s3*s4*v\n    return M\nif __name__==\"__main__\":\n    M=matrix(1000.0,900.0,4000.0)\n    ev=np.sort(np.linalg.eigvalsh((M+M.T)/2))\n    print(np.round(ev,1))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d7.py",
+     "written_in_step": 1
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nmkdir: cannot create directory ‘/w’: Read-only file system\n/bin/bash: line 233: cd: /w: No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 3,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    },
+    {
+     "script": "d7.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "V=np.zeros((N,N,N,N))"
+    },
+    {
+     "script": "d7.py",
+     "line": 38,
+     "method": "matrix",
+     "text": "h=np.zeros((N,N))"
+    },
+    {
+     "script": "d7.py",
+     "line": 113,
+     "method": "eigen_solver",
+     "text": "ev=np.sort(np.linalg.eigvalsh((M+M.T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Build d7 Ms=3/2 Hamiltonian and test eigenvalues",
+   "command": "mkdir -p /tmp/w && cd /tmp/w && cat > d7.py << 'EOF'\nimport itertools, numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom math import pi, sqrt\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nN=len(orbs)\n_c={}\ndef w3(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in _c: _c[key]=float(wigner_3j(a,b,c,d,e,f))\n    return _c[key]\ndef G(l1,l2,l3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    return sqrt((2*l1+1)*(2*l2+1)*(2*l3+1)/(4*pi))*w3(l1,l2,l3,0,0,0)*w3(l1,l2,l3,m1,m2,m3)\ndef ang(k,mi,mk,mj,ml):\n    s=0.0\n    for q in range(-k,k+1):\n        A=(-1)**(mi+q)*G(l,k,l,-mi,-q,mk)\n        if A==0: continue\n        B=(-1)**mj*G(l,k,l,-mj,q,ml)\n        s+=A*B\n    return s\ndef build(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:63*C/5}\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      for k,(mk,sk) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if si!=sk or sj!=sl: continue\n        if mi+mj!=mk+ml: continue\n        V[i,j,k,ll]=sum(F[kk]*4*pi/(2*kk+1)*ang(kk,mi,mk,mj,ml) for kk in (0,2,4))\n    h=np.zeros((N,N))\n    v0=np.zeros(5); v0[2]=1.0\n    vc=np.zeros(5); vc[0]=1/sqrt(2); vc[4]=1/sqrt(2)\n    P=np.outer(v0,v0)+np.outer(vc,vc)\n    hm=-4*Dq*np.eye(5)+10*Dq*P\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      if si==sj: h[i,j]=hm[mi+2,mj+2]\n    return h,V\ndef dets_ms(nup,ndn):\n    up=[i for i,(m,s) in enumerate(orbs) if s>0]\n    dn=[i for i,(m,s) in enumerate(orbs) if s<0]\n    return [tuple(sorted(a+b)) for a in itertools.combinations(up,nup) for b in itertools.combinations(dn,ndn)]\ndef ann(state,p):\n    if p not in state: return None\n    pos=state.index(p); return ((-1)**pos, tuple(x for x in state if x!=p))\ndef cre(state,p):\n    if p in state: return None\n    pos=sum(1 for x in state if x<p); return ((-1)**pos, tuple(sorted(state+(p,))))\ndef matrix(Dq,B,C):\n    h,V=build(Dq,B,C)\n    dets=dets_ms(5,2); idx={d:n for n,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)))\n    for c,dd in enumerate(dets):\n        for j in dd:\n            s1,st=ann(dd,j)\n            for i in range(N):\n                if h[i,j]==0: continue\n                r=cre(st,i)\n                if r is None: continue\n                s2,st2=r\n                M[idx[st2],c]+=s1*s2*h[i,j]\n        for k in dd:\n            s1,st=ann(dd,k)\n            for ll in st:\n                s2,st2=ann(st,ll)\n                for j in range(N):\n                    for i in range(N):\n                        v=V[i,j,k,ll]\n                        if v==0: continue\n                        r3=cre(st2,j)\n                        if r3 is None: continue\n                        s3,st3=r3\n                        r4=cre(st3,i)\n                        if r4 is None: continue\n                        s4,st4=r4\n                        M[idx[st4],c]+=0.5*s1*s2*s3*s4*v\n    return M\ndef levels(Dq,B,C):\n    M=matrix(Dq,B,C)\n    return np.sort(np.linalg.eigvalsh((M+M.T)/2))\nif __name__==\"__main__\":\n    print(np.round(levels(1000.0,900.0,4000.0),1))\nEOF\ntime python3 d7.py",
+   "scripts": [
+    {
+     "name": "d7.py",
+     "sha256": "1530dc3d519437e80f3422aa6a7a93cb426129d9b70c175865ec84055c644215",
+     "lines": 85,
+     "code": "import itertools, numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom math import pi, sqrt\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nN=len(orbs)\n_c={}\ndef w3(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in _c: _c[key]=float(wigner_3j(a,b,c,d,e,f))\n    return _c[key]\ndef G(l1,l2,l3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    return sqrt((2*l1+1)*(2*l2+1)*(2*l3+1)/(4*pi))*w3(l1,l2,l3,0,0,0)*w3(l1,l2,l3,m1,m2,m3)\ndef ang(k,mi,mk,mj,ml):\n    s=0.0\n    for q in range(-k,k+1):\n        A=(-1)**(mi+q)*G(l,k,l,-mi,-q,mk)\n        if A==0: continue\n        B=(-1)**mj*G(l,k,l,-mj,q,ml)\n        s+=A*B\n    return s\ndef build(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:63*C/5}\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      for k,(mk,sk) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if si!=sk or sj!=sl: continue\n        if mi+mj!=mk+ml: continue\n        V[i,j,k,ll]=sum(F[kk]*4*pi/(2*kk+1)*ang(kk,mi,mk,mj,ml) for kk in (0,2,4))\n    h=np.zeros((N,N))\n    v0=np.zeros(5); v0[2]=1.0\n    vc=np.zeros(5); vc[0]=1/sqrt(2); vc[4]=1/sqrt(2)\n    P=np.outer(v0,v0)+np.outer(vc,vc)\n    hm=-4*Dq*np.eye(5)+10*Dq*P\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      if si==sj: h[i,j]=hm[mi+2,mj+2]\n    return h,V\ndef dets_ms(nup,ndn):\n    up=[i for i,(m,s) in enumerate(orbs) if s>0]\n    dn=[i for i,(m,s) in enumerate(orbs) if s<0]\n    return [tuple(sorted(a+b)) for a in itertools.combinations(up,nup) for b in itertools.combinations(dn,ndn)]\ndef ann(state,p):\n    if p not in state: return None\n    pos=state.index(p); return ((-1)**pos, tuple(x for x in state if x!=p))\ndef cre(state,p):\n    if p in state: return None\n    pos=sum(1 for x in state if x<p); return ((-1)**pos, tuple(sorted(state+(p,))))\ndef matrix(Dq,B,C):\n    h,V=build(Dq,B,C)\n    dets=dets_ms(5,2); idx={d:n for n,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)))\n    for c,dd in enumerate(dets):\n        for j in dd:\n            s1,st=ann(dd,j)\n            for i in range(N):\n                if h[i,j]==0: continue\n                r=cre(st,i)\n                if r is None: continue\n                s2,st2=r\n                M[idx[st2],c]+=s1*s2*h[i,j]\n        for k in dd:\n            s1,st=ann(dd,k)\n            for ll in st:\n                s2,st2=ann(st,ll)\n                for j in range(N):\n                    for i in range(N):\n                        v=V[i,j,k,ll]\n                        if v==0: continue\n                        r3=cre(st2,j)\n                        if r3 is None: continue\n                        s3,st3=r3\n                        r4=cre(st3,i)\n                        if r4 is None: continue\n                        s4,st4=r4\n                        M[idx[st4],c]+=0.5*s1*s2*s3*s4*v\n    return M\ndef levels(Dq,B,C):\n    M=matrix(Dq,B,C)\n    return np.sort(np.linalg.eigvalsh((M+M.T)/2))\nif __name__==\"__main__\":\n    print(np.round(levels(1000.0,900.0,4000.0),1))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "d7.py",
+     "written_in_step": 2
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘/tmp/w’: Read-only file system\npython3: can't open file '/tmp/tsbench-run-_eenxbim/d7.py': [Errno 2] No such file or directory\n\nreal\t0m0,019s\nuser\t0m0,015s\nsys\t0m0,004s",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d7.py",
+     "line": 25,
+     "method": "matrix",
+     "text": "V=np.zeros((N,N,N,N))"
+    },
+    {
+     "script": "d7.py",
+     "line": 33,
+     "method": "matrix",
+     "text": "h=np.zeros((N,N))"
+    },
+    {
+     "script": "d7.py",
+     "line": 83,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh((M+M.T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Run d7 Hamiltonian diagonalization from stdin",
+   "command": "cd ~ 2>/dev/null; pwd; touch x 2>&1; python3 - << 'EOF'\nimport itertools, numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom math import pi, sqrt\nfrom scipy.optimize import fsolve\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nN=len(orbs)\n_c={}\ndef w3(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in _c: _c[key]=float(wigner_3j(a,b,c,d,e,f))\n    return _c[key]\ndef G(l1,l2,l3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    return sqrt((2*l1+1)*(2*l2+1)*(2*l3+1)/(4*pi))*w3(l1,l2,l3,0,0,0)*w3(l1,l2,l3,m1,m2,m3)\ndef ang(k,mi,mk,mj,ml):\n    s=0.0\n    for q in range(-k,k+1):\n        A=(-1)**(mi+q)*G(l,k,l,-mi,-q,mk)\n        if A==0: continue\n        B=(-1)**mj*G(l,k,l,-mj,q,ml)\n        s+=A*B\n    return s\ndef build(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:63*C/5}\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      for k,(mk,sk) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if si!=sk or sj!=sl: continue\n        if mi+mj!=mk+ml: continue\n        V[i,j,k,ll]=sum(F[kk]*4*pi/(2*kk+1)*ang(kk,mi,mk,mj,ml) for kk in (0,2,4))\n    h=np.zeros((N,N))\n    v0=np.zeros(5); v0[2]=1.0\n    vc=np.zeros(5); vc[0]=1/sqrt(2); vc[4]=1/sqrt(2)\n    P=np.outer(v0,v0)+np.outer(vc,vc)\n    hm=-4*Dq*np.eye(5)+10*Dq*P\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      if si==sj: h[i,j]=hm[mi+2,mj+2]\n    return h,V\ndef dets_ms(nup,ndn):\n    up=[i for i,(m,s) in enumerate(orbs) if s>0]\n    dn=[i for i,(m,s) in enumerate(orbs) if s<0]\n    return [tuple(sorted(a+b)) for a in itertools.combinations(up,nup) for b in itertools.combinations(dn,ndn)]\ndef ann(state,p):\n    if p not in state: return None\n    pos=state.index(p); return ((-1)**pos, tuple(x for x in state if x!=p))\ndef cre(state,p):\n    if p in state: return None\n    pos=sum(1 for x in state if x<p); return ((-1)**pos, tuple(sorted(state+(p,))))\ndef matrix(Dq,B,C):\n    h,V=build(Dq,B,C)\n    dets=dets_ms(5,2); idx={d:n for n,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)))\n    for c,dd in enumerate(dets):\n        for j in dd:\n            s1,st=ann(dd,j)\n            for i in range(N):\n                if h[i,j]==0: continue\n                r=cre(st,i)\n                if r is None: continue\n                s2,st2=r\n                M[idx[st2],c]+=s1*s2*h[i,j]\n        for k in dd:\n            s1,st=ann(dd,k)\n            for ll in st:\n                s2,st2=ann(st,ll)\n                for j in range(N):\n                    for i in range(N):\n                        v=V[i,j,k,ll]\n                        if v==0: continue\n                        r3=cre(st2,j)\n                        if r3 is None: continue\n                        s3,st3=r3\n                        r4=cre(st3,i)\n                        if r4 is None: continue\n                        s4,st4=r4\n                        M[idx[st4],c]+=0.5*s1*s2*s3*s4*v\n    return M\ndef levels(Dq,B,C):\n    M=matrix(Dq,B,C)\n    return np.sort(np.linalg.eigvalsh((M+M.T)/2))\nprint(np.round(levels(1000.0,900.0,4000.0),1))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "5fde2cebc5431910c482bc6dc35a9dbb6907af84a2f5794ed7441d2bf064000f",
+     "lines": 85,
+     "code": "import itertools, numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom math import pi, sqrt\nfrom scipy.optimize import fsolve\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nN=len(orbs)\n_c={}\ndef w3(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in _c: _c[key]=float(wigner_3j(a,b,c,d,e,f))\n    return _c[key]\ndef G(l1,l2,l3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    return sqrt((2*l1+1)*(2*l2+1)*(2*l3+1)/(4*pi))*w3(l1,l2,l3,0,0,0)*w3(l1,l2,l3,m1,m2,m3)\ndef ang(k,mi,mk,mj,ml):\n    s=0.0\n    for q in range(-k,k+1):\n        A=(-1)**(mi+q)*G(l,k,l,-mi,-q,mk)\n        if A==0: continue\n        B=(-1)**mj*G(l,k,l,-mj,q,ml)\n        s+=A*B\n    return s\ndef build(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:63*C/5}\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      for k,(mk,sk) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if si!=sk or sj!=sl: continue\n        if mi+mj!=mk+ml: continue\n        V[i,j,k,ll]=sum(F[kk]*4*pi/(2*kk+1)*ang(kk,mi,mk,mj,ml) for kk in (0,2,4))\n    h=np.zeros((N,N))\n    v0=np.zeros(5); v0[2]=1.0\n    vc=np.zeros(5); vc[0]=1/sqrt(2); vc[4]=1/sqrt(2)\n    P=np.outer(v0,v0)+np.outer(vc,vc)\n    hm=-4*Dq*np.eye(5)+10*Dq*P\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      if si==sj: h[i,j]=hm[mi+2,mj+2]\n    return h,V\ndef dets_ms(nup,ndn):\n    up=[i for i,(m,s) in enumerate(orbs) if s>0]\n    dn=[i for i,(m,s) in enumerate(orbs) if s<0]\n    return [tuple(sorted(a+b)) for a in itertools.combinations(up,nup) for b in itertools.combinations(dn,ndn)]\ndef ann(state,p):\n    if p not in state: return None\n    pos=state.index(p); return ((-1)**pos, tuple(x for x in state if x!=p))\ndef cre(state,p):\n    if p in state: return None\n    pos=sum(1 for x in state if x<p); return ((-1)**pos, tuple(sorted(state+(p,))))\ndef matrix(Dq,B,C):\n    h,V=build(Dq,B,C)\n    dets=dets_ms(5,2); idx={d:n for n,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)))\n    for c,dd in enumerate(dets):\n        for j in dd:\n            s1,st=ann(dd,j)\n            for i in range(N):\n                if h[i,j]==0: continue\n                r=cre(st,i)\n                if r is None: continue\n                s2,st2=r\n                M[idx[st2],c]+=s1*s2*h[i,j]\n        for k in dd:\n            s1,st=ann(dd,k)\n            for ll in st:\n                s2,st2=ann(st,ll)\n                for j in range(N):\n                    for i in range(N):\n                        v=V[i,j,k,ll]\n                        if v==0: continue\n                        r3=cre(st2,j)\n                        if r3 is None: continue\n                        s3,st3=r3\n                        r4=cre(st3,i)\n                        if r4 is None: continue\n                        s4,st4=r4\n                        M[idx[st4],c]+=0.5*s1*s2*s3*s4*v\n    return M\ndef levels(Dq,B,C):\n    M=matrix(Dq,B,C)\n    return np.sort(np.linalg.eigvalsh((M+M.T)/2))\nprint(np.round(levels(1000.0,900.0,4000.0),1))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 'x': Read-only file system\n[-107088.6 -107088.6 -107088.6  -98300.   -98300.   -98300.   -88300.\n  -86011.4  -86011.4  -86011.4]\nShell cwd was reset to /tmp/tsbench-run-_eenxbim",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 4,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "V=np.zeros((N,N,N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "h=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 84,
+     "method": "eigen_solver",
+     "text": "return np.sort(np.linalg.eigvalsh((M+M.T)/2))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Fit Dq, B, C to the three d-d band energies",
+   "command": "cd ~ 2>/dev/null; python3 - << 'EOF'\nimport itertools, numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom math import pi, sqrt\nfrom scipy.optimize import fsolve\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nN=len(orbs)\n_c={}\ndef w3(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in _c: _c[key]=float(wigner_3j(a,b,c,d,e,f))\n    return _c[key]\ndef G(l1,l2,l3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    return sqrt((2*l1+1)*(2*l2+1)*(2*l3+1)/(4*pi))*w3(l1,l2,l3,0,0,0)*w3(l1,l2,l3,m1,m2,m3)\ndef ang(k,mi,mk,mj,ml):\n    s=0.0\n    for q in range(-k,k+1):\n        A=(-1)**(mi+q)*G(l,k,l,-mi,-q,mk)\n        if A==0: continue\n        B=(-1)**mj*G(l,k,l,-mj,q,ml)\n        s+=A*B\n    return s\ndef build(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:63*C/5}\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      for k,(mk,sk) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if si!=sk or sj!=sl: continue\n        if mi+mj!=mk+ml: continue\n        V[i,j,k,ll]=sum(F[kk]*4*pi/(2*kk+1)*ang(kk,mi,mk,mj,ml) for kk in (0,2,4))\n    h=np.zeros((N,N))\n    v0=np.zeros(5); v0[2]=1.0\n    vc=np.zeros(5); vc[0]=1/sqrt(2); vc[4]=1/sqrt(2)\n    P=np.outer(v0,v0)+np.outer(vc,vc)\n    hm=-4*Dq*np.eye(5)+10*Dq*P\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      if si==sj: h[i,j]=hm[mi+2,mj+2]\n    return h,V\ndef dets_ms(nup,ndn):\n    up=[i for i,(m,s) in enumerate(orbs) if s>0]\n    dn=[i for i,(m,s) in enumerate(orbs) if s<0]\n    return [tuple(sorted(a+b)) for a in itertools.combinations(up,nup) for b in itertools.combinations(dn,ndn)]\ndef ann(state,p):\n    if p not in state: return None\n    pos=state.index(p); return ((-1)**pos, tuple(x for x in state if x!=p))\ndef cre(state,p):\n    if p in state: return None\n    pos=sum(1 for x in state if x<p); return ((-1)**pos, tuple(sorted(state+(p,))))\ndef matrix(Dq,B,C):\n    h,V=build(Dq,B,C)\n    dets=dets_ms(5,2); idx={d:n for n,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)))\n    for c,dd in enumerate(dets):\n        for j in dd:\n            s1,st=ann(dd,j)\n            for i in range(N):\n                if h[i,j]==0: continue\n                r=cre(st,i)\n                if r is None: continue\n                s2,st2=r\n                M[idx[st2],c]+=s1*s2*h[i,j]\n        for k in dd:\n            s1,st=ann(dd,k)\n            for ll in st:\n                s2,st2=ann(st,ll)\n                for j in range(N):\n                    for i in range(N):\n                        v=V[i,j,k,ll]\n                        if v==0: continue\n                        r3=cre(st2,j)\n                        if r3 is None: continue\n                        s3,st3=r3\n                        r4=cre(st3,i)\n                        if r4 is None: continue\n                        s4,st4=r4\n                        M[idx[st4],c]+=0.5*s1*s2*s3*s4*v\n    return M\ndef bands(Dq,B,C):\n    M=matrix(Dq,B,C); ev=np.sort(np.linalg.eigvalsh((M+M.T)/2))\n    # clusters\n    cl=[]; i=0\n    while i<len(ev):\n        j=i\n        while j+1<len(ev) and abs(ev[j+1]-ev[i])<1e-3: j+=1\n        cl.append((ev[i],j-i+1)); i=j+1\n    gs=cl[0][0]  # lowest triplet = 4T1g(F)\n    trip=[c[0]-gs for c in cl]  # ordering: T1g(F), T2g, A2g, T1g(P)\n    return cl, trip\ncl,trip=bands(1000,900,4000)\nprint([(round(a,1),b) for a,b in cl])\nobs=np.array([8620.,18410.,20250.])\ndef res(p):\n    Dq,B,C=p\n    cl,t=bands(Dq,B,C)\n    # t: [0]=0 (T1g F), [1]=T2g, [2]=A2g(F), [3]=T1g(P)\n    pred=np.array([t[1],t[2],t[3]])\n    return pred-obs\nsol=fsolve(res,[900,900,4000],full_output=True)\nprint(\"Dq,B,C =\",sol[0], \"resid\", res(sol[0]))\n# also with C=4B\ndef res2(p):\n    Dq,B=p\n    return res([Dq,B,4*B])\ns2=fsolve(res2,[900,900],full_output=True)\nprint(\"C=4B:\",s2[0],res2(s2[0]))\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "8b67c28652aa96bdd7849668ef7487a2e3111761bc4ac994d7e1d6a33da4a47c",
+     "lines": 109,
+     "code": "import itertools, numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom math import pi, sqrt\nfrom scipy.optimize import fsolve\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nN=len(orbs)\n_c={}\ndef w3(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in _c: _c[key]=float(wigner_3j(a,b,c,d,e,f))\n    return _c[key]\ndef G(l1,l2,l3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    return sqrt((2*l1+1)*(2*l2+1)*(2*l3+1)/(4*pi))*w3(l1,l2,l3,0,0,0)*w3(l1,l2,l3,m1,m2,m3)\ndef ang(k,mi,mk,mj,ml):\n    s=0.0\n    for q in range(-k,k+1):\n        A=(-1)**(mi+q)*G(l,k,l,-mi,-q,mk)\n        if A==0: continue\n        B=(-1)**mj*G(l,k,l,-mj,q,ml)\n        s+=A*B\n    return s\ndef build(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:63*C/5}\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      for k,(mk,sk) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if si!=sk or sj!=sl: continue\n        if mi+mj!=mk+ml: continue\n        V[i,j,k,ll]=sum(F[kk]*4*pi/(2*kk+1)*ang(kk,mi,mk,mj,ml) for kk in (0,2,4))\n    h=np.zeros((N,N))\n    v0=np.zeros(5); v0[2]=1.0\n    vc=np.zeros(5); vc[0]=1/sqrt(2); vc[4]=1/sqrt(2)\n    P=np.outer(v0,v0)+np.outer(vc,vc)\n    hm=-4*Dq*np.eye(5)+10*Dq*P\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      if si==sj: h[i,j]=hm[mi+2,mj+2]\n    return h,V\ndef dets_ms(nup,ndn):\n    up=[i for i,(m,s) in enumerate(orbs) if s>0]\n    dn=[i for i,(m,s) in enumerate(orbs) if s<0]\n    return [tuple(sorted(a+b)) for a in itertools.combinations(up,nup) for b in itertools.combinations(dn,ndn)]\ndef ann(state,p):\n    if p not in state: return None\n    pos=state.index(p); return ((-1)**pos, tuple(x for x in state if x!=p))\ndef cre(state,p):\n    if p in state: return None\n    pos=sum(1 for x in state if x<p); return ((-1)**pos, tuple(sorted(state+(p,))))\ndef matrix(Dq,B,C):\n    h,V=build(Dq,B,C)\n    dets=dets_ms(5,2); idx={d:n for n,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)))\n    for c,dd in enumerate(dets):\n        for j in dd:\n            s1,st=ann(dd,j)\n            for i in range(N):\n                if h[i,j]==0: continue\n                r=cre(st,i)\n                if r is None: continue\n                s2,st2=r\n                M[idx[st2],c]+=s1*s2*h[i,j]\n        for k in dd:\n            s1,st=ann(dd,k)\n            for ll in st:\n                s2,st2=ann(st,ll)\n                for j in range(N):\n                    for i in range(N):\n                        v=V[i,j,k,ll]\n                        if v==0: continue\n                        r3=cre(st2,j)\n                        if r3 is None: continue\n                        s3,st3=r3\n                        r4=cre(st3,i)\n                        if r4 is None: continue\n                        s4,st4=r4\n                        M[idx[st4],c]+=0.5*s1*s2*s3*s4*v\n    return M\ndef bands(Dq,B,C):\n    M=matrix(Dq,B,C); ev=np.sort(np.linalg.eigvalsh((M+M.T)/2))\n    # clusters\n    cl=[]; i=0\n    while i<len(ev):\n        j=i\n        while j+1<len(ev) and abs(ev[j+1]-ev[i])<1e-3: j+=1\n        cl.append((ev[i],j-i+1)); i=j+1\n    gs=cl[0][0]  # lowest triplet = 4T1g(F)\n    trip=[c[0]-gs for c in cl]  # ordering: T1g(F), T2g, A2g, T1g(P)\n    return cl, trip\ncl,trip=bands(1000,900,4000)\nprint([(round(a,1),b) for a,b in cl])\nobs=np.array([8620.,18410.,20250.])\ndef res(p):\n    Dq,B,C=p\n    cl,t=bands(Dq,B,C)\n    # t: [0]=0 (T1g F), [1]=T2g, [2]=A2g(F), [3]=T1g(P)\n    pred=np.array([t[1],t[2],t[3]])\n    return pred-obs\nsol=fsolve(res,[900,900,4000],full_output=True)\nprint(\"Dq,B,C =\",sol[0], \"resid\", res(sol[0]))\n# also with C=4B\ndef res2(p):\n    Dq,B=p\n    return res([Dq,B,4*B])\ns2=fsolve(res2,[900,900],full_output=True)\nprint(\"C=4B:\",s2[0],res2(s2[0]))\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n[(np.float64(-107088.6), 3), (np.float64(-98300.0), 3), (np.float64(-88300.0), 1), (np.float64(-86011.4), 3)]\nDq,B,C = [ 9.79003271e+02  8.53338396e+02 -2.32334849e+07] resid [-0.02186984  0.01084369 -0.00051516]\nTraceback (most recent call last):\n  File \"<stdin>\", line 108, in <module>\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_minpack_py.py\", line 171, in fsolve\n    res = _root_hybr(_wrapped_func, x0, args, jac=fprime, **options)\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_minpack_py.py\", line 239, in _root_hybr\n    shape, dtype = _check_func('fsolve', 'func', func, x0, args, n, (n,))\n                   ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<B_VENV>/lib/python3.14/site-packages/scipy/optimize/_minpack_py.py\", line 38, in _check_func\n    raise TypeError(msg)\nTypeError: fsolve: there is a mismatch between the input and output shape of the 'func' argument '_wrapped_func'. Shape should be (2,) but it is (3,).",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 4,
+     "method": "least_squares",
+     "text": "from scipy.optimize import fsolve"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "V=np.zeros((N,N,N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "h=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 83,
+     "method": "eigen_solver",
+     "text": "M=matrix(Dq,B,C); ev=np.sort(np.linalg.eigvalsh((M+M.T)/2))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 102,
+     "method": "least_squares",
+     "text": "sol=fsolve(res,[900,900,4000],full_output=True)"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 108,
+     "method": "least_squares",
+     "text": "s2=fsolve(res2,[900,900],full_output=True)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Fit Dq and B with C fixed at 4B and 4.5B",
+   "command": "cd ~ 2>/dev/null; python3 - << 'EOF'\nimport itertools, numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom math import pi, sqrt\nfrom scipy.optimize import least_squares\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nN=len(orbs)\n_c={}\ndef w3(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in _c: _c[key]=float(wigner_3j(a,b,c,d,e,f))\n    return _c[key]\ndef G(l1,l2,l3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    return sqrt((2*l1+1)*(2*l2+1)*(2*l3+1)/(4*pi))*w3(l1,l2,l3,0,0,0)*w3(l1,l2,l3,m1,m2,m3)\ndef ang(k,mi,mk,mj,ml):\n    s=0.0\n    for q in range(-k,k+1):\n        A=(-1)**(mi+q)*G(l,k,l,-mi,-q,mk)\n        if A==0: continue\n        B=(-1)**mj*G(l,k,l,-mj,q,ml)\n        s+=A*B\n    return s\ndef build(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:63*C/5}\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      for k,(mk,sk) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if si!=sk or sj!=sl: continue\n        if mi+mj!=mk+ml: continue\n        V[i,j,k,ll]=sum(F[kk]*4*pi/(2*kk+1)*ang(kk,mi,mk,mj,ml) for kk in (0,2,4))\n    h=np.zeros((N,N))\n    v0=np.zeros(5); v0[2]=1.0\n    vc=np.zeros(5); vc[0]=1/sqrt(2); vc[4]=1/sqrt(2)\n    P=np.outer(v0,v0)+np.outer(vc,vc)\n    hm=-4*Dq*np.eye(5)+10*Dq*P\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      if si==sj: h[i,j]=hm[mi+2,mj+2]\n    return h,V\ndef dets_ms(nup,ndn):\n    up=[i for i,(m,s) in enumerate(orbs) if s>0]\n    dn=[i for i,(m,s) in enumerate(orbs) if s<0]\n    return [tuple(sorted(a+b)) for a in itertools.combinations(up,nup) for b in itertools.combinations(dn,ndn)]\ndef ann(state,p):\n    if p not in state: return None\n    pos=state.index(p); return ((-1)**pos, tuple(x for x in state if x!=p))\ndef cre(state,p):\n    if p in state: return None\n    pos=sum(1 for x in state if x<p); return ((-1)**pos, tuple(sorted(state+(p,))))\ndef matrix(Dq,B,C):\n    h,V=build(Dq,B,C)\n    dets=dets_ms(5,2); idx={d:n for n,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)))\n    for c,dd in enumerate(dets):\n        for j in dd:\n            s1,st=ann(dd,j)\n            for i in range(N):\n                if h[i,j]==0: continue\n                r=cre(st,i)\n                if r is None: continue\n                s2,st2=r\n                M[idx[st2],c]+=s1*s2*h[i,j]\n        for k in dd:\n            s1,st=ann(dd,k)\n            for ll in st:\n                s2,st2=ann(st,ll)\n                for j in range(N):\n                    for i in range(N):\n                        v=V[i,j,k,ll]\n                        if v==0: continue\n                        r3=cre(st2,j)\n                        if r3 is None: continue\n                        s3,st3=r3\n                        r4=cre(st3,i)\n                        if r4 is None: continue\n                        s4,st4=r4\n                        M[idx[st4],c]+=0.5*s1*s2*s3*s4*v\n    return M\ndef bands(Dq,B,C):\n    M=matrix(Dq,B,C); ev=np.sort(np.linalg.eigvalsh((M+M.T)/2))\n    cl=[]; i=0\n    while i<len(ev):\n        j=i\n        while j+1<len(ev) and abs(ev[j+1]-ev[i])<1e-3: j+=1\n        cl.append((ev[i],j-i+1)); i=j+1\n    gs=cl[0][0]\n    return [c[0]-gs for c in cl]\nobs=np.array([8620.,18410.,20250.])\ndef pred(Dq,B,ratio):\n    t=bands(Dq,B,ratio*B)\n    return np.array([t[1],t[2],t[3]])\nfor ratio in (4.0,4.5):\n    f=lambda p: (pred(p[0],p[1],ratio)-obs)/obs\n    s=least_squares(f,[900,900],xtol=1e-12,ftol=1e-12)\n    print(\"C/B=\",ratio,\"Dq,B=\",np.round(s.x,1),\"pred\",np.round(pred(*s.x,ratio),1),\"obs\",obs)\nEOF",
+   "scripts": [
+    {
+     "name": "inline_1.py",
+     "sha256": "58263496a884eae872e8fe1ab092ae2a5f72dbf4f05fa2824474a9054f93480a",
+     "lines": 98,
+     "code": "import itertools, numpy as np\nfrom sympy.physics.wigner import wigner_3j\nfrom math import pi, sqrt\nfrom scipy.optimize import least_squares\nl=2\norbs=[(m,s) for m in range(-2,3) for s in (0.5,-0.5)]\nN=len(orbs)\n_c={}\ndef w3(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in _c: _c[key]=float(wigner_3j(a,b,c,d,e,f))\n    return _c[key]\ndef G(l1,l2,l3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0.0\n    return sqrt((2*l1+1)*(2*l2+1)*(2*l3+1)/(4*pi))*w3(l1,l2,l3,0,0,0)*w3(l1,l2,l3,m1,m2,m3)\ndef ang(k,mi,mk,mj,ml):\n    s=0.0\n    for q in range(-k,k+1):\n        A=(-1)**(mi+q)*G(l,k,l,-mi,-q,mk)\n        if A==0: continue\n        B=(-1)**mj*G(l,k,l,-mj,q,ml)\n        s+=A*B\n    return s\ndef build(Dq,B,C):\n    F={0:0.0,2:49*B+7*C,4:63*C/5}\n    V=np.zeros((N,N,N,N))\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      for k,(mk,sk) in enumerate(orbs):\n       for ll,(ml,sl) in enumerate(orbs):\n        if si!=sk or sj!=sl: continue\n        if mi+mj!=mk+ml: continue\n        V[i,j,k,ll]=sum(F[kk]*4*pi/(2*kk+1)*ang(kk,mi,mk,mj,ml) for kk in (0,2,4))\n    h=np.zeros((N,N))\n    v0=np.zeros(5); v0[2]=1.0\n    vc=np.zeros(5); vc[0]=1/sqrt(2); vc[4]=1/sqrt(2)\n    P=np.outer(v0,v0)+np.outer(vc,vc)\n    hm=-4*Dq*np.eye(5)+10*Dq*P\n    for i,(mi,si) in enumerate(orbs):\n     for j,(mj,sj) in enumerate(orbs):\n      if si==sj: h[i,j]=hm[mi+2,mj+2]\n    return h,V\ndef dets_ms(nup,ndn):\n    up=[i for i,(m,s) in enumerate(orbs) if s>0]\n    dn=[i for i,(m,s) in enumerate(orbs) if s<0]\n    return [tuple(sorted(a+b)) for a in itertools.combinations(up,nup) for b in itertools.combinations(dn,ndn)]\ndef ann(state,p):\n    if p not in state: return None\n    pos=state.index(p); return ((-1)**pos, tuple(x for x in state if x!=p))\ndef cre(state,p):\n    if p in state: return None\n    pos=sum(1 for x in state if x<p); return ((-1)**pos, tuple(sorted(state+(p,))))\ndef matrix(Dq,B,C):\n    h,V=build(Dq,B,C)\n    dets=dets_ms(5,2); idx={d:n for n,d in enumerate(dets)}\n    M=np.zeros((len(dets),len(dets)))\n    for c,dd in enumerate(dets):\n        for j in dd:\n            s1,st=ann(dd,j)\n            for i in range(N):\n                if h[i,j]==0: continue\n                r=cre(st,i)\n                if r is None: continue\n                s2,st2=r\n                M[idx[st2],c]+=s1*s2*h[i,j]\n        for k in dd:\n            s1,st=ann(dd,k)\n            for ll in st:\n                s2,st2=ann(st,ll)\n                for j in range(N):\n                    for i in range(N):\n                        v=V[i,j,k,ll]\n                        if v==0: continue\n                        r3=cre(st2,j)\n                        if r3 is None: continue\n                        s3,st3=r3\n                        r4=cre(st3,i)\n                        if r4 is None: continue\n                        s4,st4=r4\n                        M[idx[st4],c]+=0.5*s1*s2*s3*s4*v\n    return M\ndef bands(Dq,B,C):\n    M=matrix(Dq,B,C); ev=np.sort(np.linalg.eigvalsh((M+M.T)/2))\n    cl=[]; i=0\n    while i<len(ev):\n        j=i\n        while j+1<len(ev) and abs(ev[j+1]-ev[i])<1e-3: j+=1\n        cl.append((ev[i],j-i+1)); i=j+1\n    gs=cl[0][0]\n    return [c[0]-gs for c in cl]\nobs=np.array([8620.,18410.,20250.])\ndef pred(Dq,B,ratio):\n    t=bands(Dq,B,ratio*B)\n    return np.array([t[1],t[2],t[3]])\nfor ratio in (4.0,4.5):\n    f=lambda p: (pred(p[0],p[1],ratio)-obs)/obs\n    s=least_squares(f,[900,900],xtol=1e-12,ftol=1e-12)\n    print(\"C/B=\",ratio,\"Dq,B=\",np.round(s.x,1),\"pred\",np.round(pred(*s.x,ratio),1),\"obs\",obs)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "C/B= 4.0 Dq,B= [979.  853.3] pred [ 8620. 18410. 20250.] obs [ 8620. 18410. 20250.]\nC/B= 4.5 Dq,B= [979.  853.3] pred [ 8620. 18410. 20250.] obs [ 8620. 18410. 20250.]\nShell cwd was reset to /tmp/tsbench-run-_eenxbim",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver",
+    "least_squares"
+   ],
+   "key_lines": [
+    {
+     "script": "inline_1.py",
+     "line": 4,
+     "method": "least_squares",
+     "text": "from scipy.optimize import least_squares"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 26,
+     "method": "matrix",
+     "text": "V=np.zeros((N,N,N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "h=np.zeros((N,N))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 83,
+     "method": "eigen_solver",
+     "text": "M=matrix(Dq,B,C); ev=np.sort(np.linalg.eigvalsh((M+M.T)/2))"
+    },
+    {
+     "script": "inline_1.py",
+     "line": 97,
+     "method": "least_squares",
+     "text": "s=least_squares(f,[900,900],xtol=1e-12,ftol=1e-12)"
+    }
+   ],
+   "produces": [
+    "Dq",
+    "B"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 979.0,
+   "weak": false,
+   "steps": [
+    4,
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  },
+  {
+   "path": "B",
+   "value": 853.0,
+   "weak": false,
+   "steps": [
+    4,
+    5
+   ],
+   "typed_in_steps": [],
+   "source_step": 5
+  }
+ ],
+ "summary": {
+  "n_steps": 6,
+  "n_scripts": 5,
+  "n_failed_steps": 3,
+  "n_values": 2,
+  "n_linked": 2,
+  "n_weak": 0,
+  "source_steps": [
+   5
+  ],
+  "methods": [
+   "eigen_solver",
+   "least_squares"
+  ],
+  "edits_in_place": false
+ }
+}

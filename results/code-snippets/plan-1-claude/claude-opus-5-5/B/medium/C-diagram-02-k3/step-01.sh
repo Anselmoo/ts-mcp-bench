@@ -1,0 +1,1 @@
+pip list 2>/dev/null | grep -iE "numpy|sympy|matplotlib"; python3 -V

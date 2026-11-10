@@ -1,0 +1,1 @@
+cd $TMPDIR && sed -i 's/for f,o in ((ann,s_),(ann,r)/for f,o in ((ann,r),(ann,s_)/' d7.py && python3 d7.py

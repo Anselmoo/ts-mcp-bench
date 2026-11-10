@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null && pwd; ls -ld ~ /tmp 2>&1; python3 -c "import numpy,scipy;print(numpy.__version__,scipy.__version__)"

@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> && sed -i 's/    if a\[1\]!=cc\[1\] or b\[1\]!=d\[1\]: return 0/    if a[1]!=cc[1] or b[1]!=d[1] or a[0]+b[0]!=cc[0]+d[0]: return 0/' a.py && python3 a.py && python3 e.py | cut -c1-600 && python3 b.py

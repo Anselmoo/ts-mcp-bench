@@ -1,0 +1,1 @@
+mkdir -p /tmp/try && cd /tmp/try && python3 -c "import sys; print(sys.executable)" && python3 -c "import os; print(os.getcwd())" && python3 -c "print('Python is working')"

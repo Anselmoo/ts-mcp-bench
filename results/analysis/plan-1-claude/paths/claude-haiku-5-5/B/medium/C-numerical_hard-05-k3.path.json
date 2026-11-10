@@ -1,0 +1,329 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-haiku-5-5/B/medium/C-numerical_hard-05-k3.jsonl",
+ "transcript_sha256": "a619cb20db0bffcb979fc41d37e84db3ff96ef082296db9baabaeb5c455998f2",
+ "answer": {
+  "Dq": 1593.0,
+  "B": 777.0,
+  "C": 3498.0,
+  "out_of_scope": false,
+  "reason": "Full d6 Hamiltonian (Slater F2/F4 from B and C=4.5B, cubic one-electron term) fitted to the 13960/22740 cm-1 band ratio gives Dq≈1593 and B≈777 cm-1; predicted third band 29755 vs observed 29700 cm-1."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "Check numerical Python packages available",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|scipy|sympy\" ; python3 -c \"import numpy, scipy, sympy; print('ok')\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "Build d6 Hamiltonian and check Dq=0 spectrum",
+   "command": "cat << 'EOF' > /tmp/d6.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nfrom scipy.sparse import csr_matrix, kron, identity, diags\nfrom scipy.sparse.linalg import eigsh\nms=[-2,-1,0,1,2]\n# spin-orbitals: index = 2*orb + s (s=0 up,1 down)\nso=[(m,s) for m in ms for s in (0,1)]\nn=len(so)\ngcache={}\ndef G(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in gcache: gcache[key]=float(gaunt(a,b,c,d,e,f))\n    return gcache[key]\ndef angular(mi,mj,mk,ml,K):\n    tot=0.0\n    for q in range(-K,K+1):\n        A1=(-1)**(mi+q)*G(2,2,K,-mi,mk,-q) if abs(-mi)<=2 and abs(mk)<=2 else 0\n        A2=(-1)**mj*G(2,2,K,-mj,ml,q) if abs(-mj)<=2 and abs(ml)<=2 else 0\n        tot+=A1*A2\n    return tot*4*np.pi/(2*K+1)\ndef Vint(F):  # F dict K->value\n    V=np.zeros((n,n,n,n))\n    for i,(mi,si) in enumerate(so):\n        for j,(mj,sj) in enumerate(so):\n            for k,(mk,sk) in enumerate(so):\n                for l,(ml,sl) in enumerate(so):\n                    if si!=sk or sj!=sl: continue\n                    v=0\n                    for K in (0,2,4):\n                        v+=F[K]*angular(mi,mj,mk,ml,K)\n                    V[i,j,k,l]=v\n    return V\n# Fock operators via Jordan-Wigner\nI2=identity(2,format='csr'); Z=diags([1,-1]).tocsr(); a=csr_matrix(np.array([[0,1],[0,0]]))\ndef cop(p):\n    ops=[Z]*p+[a]+[I2]*(n-p-1)\n    M=ops[0]\n    for o in ops[1:]: M=kron(M,o,format='csr')\n    return M\nc=[cop(p) for p in range(n)]\ncd=[x.T.conj().tocsr() for x in c]\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(441*B+5*F4)/9.0\n    F={0:0.0,2:F2,4:F4}\n    V=Vint(F)\n    dim=2**n\n    H=csr_matrix((dim,dim))\n    # one-electron: 10Dq P_eg  (eg = z2 (m=0) and (Y22+Y2-2)/sqrt2 )\n    # projector: P = |z><z| + |x><x| with |x>=(|2>+|-2>)/sqrt2 in orbital space\n    h=np.zeros((5,5))\n    iz=2  # m=0\n    h[iz,iz]=1\n    ix=[0,4]  # m=-2 index 0, m=+2 index 4\n    for p in ix:\n        for q in ix:\n            h[p,q]+=0.5\n    h=10*Dq*h  # 10Dq P_eg\n    for p,(mp,sp) in enumerate(so):\n        for q,(mq,sq) in enumerate(so):\n            if sp!=sq: continue\n            op=mp+2; oq=mq+2\n            if h[op,oq]!=0:\n                H=H+h[op,oq]*(cd[p]@c[q])\n    for i in range(n):\n        for j in range(n):\n            for k in range(n):\n                for l in range(n):\n                    if abs(V[i,j,k,l])>1e-12:\n                        H=H+0.5*V[i,j,k,l]*(cd[i]@cd[j]@c[l]@c[k])\n    # select N=6\n    Nop=sum(cd[p]@c[p] for p in range(n))\n    S2z=0.5*sum((cd[p]@c[p])*(1 if so[p][1]==0 else -1) for p in range(n))\n    return H.toarray(), Nop.toarray().diagonal(), S2z.toarray().diagonal()\nEOF\ncd /tmp && python3 -c \"\nimport d6,numpy as np\nH,N,Sz=d6.build(0.0,1.0,4.5)\nidx=np.where((np.round(N)==6)&(np.round(Sz)==0))[0]\nHs=H[np.ix_(idx,idx)]\nprint(len(idx))\nw=np.linalg.eigvalsh(Hs)\nprint(np.round(w[:10],4))\n\"",
+   "scripts": [
+    {
+     "name": "d6.py",
+     "sha256": "1daa8cddf13f38e51625c4e52db16c406faede845064a7b98b6f73bf4e8bd2b1",
+     "lines": 74,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.optimize import brentq\nfrom scipy.sparse import csr_matrix, kron, identity, diags\nfrom scipy.sparse.linalg import eigsh\nms=[-2,-1,0,1,2]\n# spin-orbitals: index = 2*orb + s (s=0 up,1 down)\nso=[(m,s) for m in ms for s in (0,1)]\nn=len(so)\ngcache={}\ndef G(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in gcache: gcache[key]=float(gaunt(a,b,c,d,e,f))\n    return gcache[key]\ndef angular(mi,mj,mk,ml,K):\n    tot=0.0\n    for q in range(-K,K+1):\n        A1=(-1)**(mi+q)*G(2,2,K,-mi,mk,-q) if abs(-mi)<=2 and abs(mk)<=2 else 0\n        A2=(-1)**mj*G(2,2,K,-mj,ml,q) if abs(-mj)<=2 and abs(ml)<=2 else 0\n        tot+=A1*A2\n    return tot*4*np.pi/(2*K+1)\ndef Vint(F):  # F dict K->value\n    V=np.zeros((n,n,n,n))\n    for i,(mi,si) in enumerate(so):\n        for j,(mj,sj) in enumerate(so):\n            for k,(mk,sk) in enumerate(so):\n                for l,(ml,sl) in enumerate(so):\n                    if si!=sk or sj!=sl: continue\n                    v=0\n                    for K in (0,2,4):\n                        v+=F[K]*angular(mi,mj,mk,ml,K)\n                    V[i,j,k,l]=v\n    return V\n# Fock operators via Jordan-Wigner\nI2=identity(2,format='csr'); Z=diags([1,-1]).tocsr(); a=csr_matrix(np.array([[0,1],[0,0]]))\ndef cop(p):\n    ops=[Z]*p+[a]+[I2]*(n-p-1)\n    M=ops[0]\n    for o in ops[1:]: M=kron(M,o,format='csr')\n    return M\nc=[cop(p) for p in range(n)]\ncd=[x.T.conj().tocsr() for x in c]\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(441*B+5*F4)/9.0\n    F={0:0.0,2:F2,4:F4}\n    V=Vint(F)\n    dim=2**n\n    H=csr_matrix((dim,dim))\n    # one-electron: 10Dq P_eg  (eg = z2 (m=0) and (Y22+Y2-2)/sqrt2 )\n    # projector: P = |z><z| + |x><x| with |x>=(|2>+|-2>)/sqrt2 in orbital space\n    h=np.zeros((5,5))\n    iz=2  # m=0\n    h[iz,iz]=1\n    ix=[0,4]  # m=-2 index 0, m=+2 index 4\n    for p in ix:\n        for q in ix:\n            h[p,q]+=0.5\n    h=10*Dq*h  # 10Dq P_eg\n    for p,(mp,sp) in enumerate(so):\n        for q,(mq,sq) in enumerate(so):\n            if sp!=sq: continue\n            op=mp+2; oq=mq+2\n            if h[op,oq]!=0:\n                H=H+h[op,oq]*(cd[p]@c[q])\n    for i in range(n):\n        for j in range(n):\n            for k in range(n):\n                for l in range(n):\n                    if abs(V[i,j,k,l])>1e-12:\n                        H=H+0.5*V[i,j,k,l]*(cd[i]@cd[j]@c[l]@c[k])\n    # select N=6\n    Nop=sum(cd[p]@c[p] for p in range(n))\n    S2z=0.5*sum((cd[p]@c[p])*(1 if so[p][1]==0 else -1) for p in range(n))\n    return H.toarray(), Nop.toarray().diagonal(), S2z.toarray().diagonal()\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\n/bin/bash: line 85: /tmp/d6.py: Read-only file system\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    import d6,numpy as np\nModuleNotFoundError: No module named 'd6'",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d6.py",
+     "line": 23,
+     "method": "matrix",
+     "text": "V=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "d6.py",
+     "line": 35,
+     "method": "matrix",
+     "text": "I2=identity(2,format='csr'); Z=diags([1,-1]).tocsr(); a=csr_matrix(np.array([[0,1],[0,0]]))"
+    },
+    {
+     "script": "d6.py",
+     "line": 51,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5))"
+    },
+    {
+     "script": "d6.py",
+     "line": 53,
+     "method": "matrix",
+     "text": "h[iz,iz]=1"
+    },
+    {
+     "script": "d6.py",
+     "line": 57,
+     "method": "matrix",
+     "text": "h[p,q]+=0.5"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "Find a writable directory",
+   "command": "cd ~ && pwd && touch x_test && echo writable; ls -ld ~ /tmp",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-home-xehwqch9\ntouch: cannot touch 'x_test': Read-only file system\ndrwxrwxrwt 32 nobody nogroup 884736 Nov  4 11:48 /tmp\ndrwx------  6 <USER>  <USER>     4096 Nov  3 07:57 /tmp/tsbench-home-xehwqch9\nShell cwd was reset to /tmp/tsbench-run-mf4e1uw_",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "Create a writable working directory",
+   "command": "mkdir -p /tmp/tsbench-run-mf4e1uw_/w && cd /tmp/tsbench-run-mf4e1uw_/w && pwd && touch t && echo ok",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/tmp/tsbench-run-mf4e1uw_/w\nok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "Build d6 Hamiltonian and check Dq=0 spectrum",
+   "command": "cat << 'EOF' > d6.py\nimport numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.sparse import csr_matrix, kron, identity, diags\nms=[-2,-1,0,1,2]\nso=[(m,s) for m in ms for s in (0,1)]\nn=len(so)\ngcache={}\ndef G(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in gcache: gcache[key]=float(gaunt(a,b,c,d,e,f))\n    return gcache[key]\ndef angular(mi,mj,mk,ml,K):\n    tot=0.0\n    for q in range(-K,K+1):\n        A1=(-1)**((mi+q)%2)*G(2,2,K,-mi,mk,-q)\n        A2=(-1)**(mj%2)*G(2,2,K,-mj,ml,q)\n        tot+=A1*A2\n    return tot*4*np.pi/(2*K+1)\nVang={}\nfor K in (0,2,4):\n    Vang[K]=np.zeros((n,n,n,n))\nfor i,(mi,si) in enumerate(so):\n  for j,(mj,sj) in enumerate(so):\n    for k,(mk,sk) in enumerate(so):\n      for l,(ml,sl) in enumerate(so):\n        if si!=sk or sj!=sl: continue\n        for K in (0,2,4):\n            Vang[K][i,j,k,l]=angular(mi,mj,mk,ml,K)\nI2=identity(2,format='csr'); Z=diags([1.0,-1.0]).tocsr(); a=csr_matrix(np.array([[0.0,1.0],[0.0,0.0]]))\ndef cop(p):\n    ops=[Z]*p+[a]+[I2]*(n-p-1)\n    M=ops[0]\n    for o in ops[1:]: M=kron(M,o,format='csr')\n    return M\nc=[cop(p) for p in range(n)]\ncd=[x.T.conj().tocsr() for x in c]\nNop=sum(cd[p]@c[p] for p in range(n))\nSz2=sum((cd[p]@c[p])*(0.5 if so[p][1]==0 else -0.5) for p in range(n))\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(441*B+5*F4)/9.0\n    V=F2*Vang[2]+F4*Vang[4]\n    h=np.zeros((5,5))\n    h[2,2]=1\n    for p in (0,4):\n        for q in (0,4):\n            h[p,q]+=0.5\n    h=10*Dq*h\n    dim=2**n\n    H=csr_matrix((dim,dim))\n    for p,(mp,sp) in enumerate(so):\n        for q,(mq,sq) in enumerate(so):\n            if sp!=sq: continue\n            if h[mp+2,mq+2]!=0: H=H+h[mp+2,mq+2]*(cd[p]@c[q])\n    for i,j,k,l in zip(*np.nonzero(np.abs(V)>1e-12)):\n        H=H+0.5*V[i,j,k,l]*(cd[i]@cd[j]@c[l]@c[k])\n    return H\ndef spectrum(Dq,B,C):\n    H=build(Dq,B,C)\n    Nd=Nop.diagonal(); Sd=Sz2.diagonal()\n    idx=np.where((np.abs(Nd-6)<1e-9)&(np.abs(Sd)<1e-9))[0]\n    Hs=H.toarray()[np.ix_(idx,idx)] if False else (H[idx][:,idx]).toarray()\n    w=np.linalg.eigvalsh(Hs)\n    return w\nEOF\npython3 -c \"\nimport d6,numpy as np\nw=d6.spectrum(0.0,1.0,4.5)\nprint(len(w)); print(np.round(w-w[0],4)[:40])\n\"",
+   "scripts": [
+    {
+     "name": "d6.py",
+     "sha256": "ec4ba3f587e93ecd984aa9ec44f78bc47bc4a9ee78a096c00e2a50b454f82201",
+     "lines": 63,
+     "code": "import numpy as np, itertools\nfrom sympy.physics.wigner import gaunt\nfrom scipy.sparse import csr_matrix, kron, identity, diags\nms=[-2,-1,0,1,2]\nso=[(m,s) for m in ms for s in (0,1)]\nn=len(so)\ngcache={}\ndef G(a,b,c,d,e,f):\n    key=(a,b,c,d,e,f)\n    if key not in gcache: gcache[key]=float(gaunt(a,b,c,d,e,f))\n    return gcache[key]\ndef angular(mi,mj,mk,ml,K):\n    tot=0.0\n    for q in range(-K,K+1):\n        A1=(-1)**((mi+q)%2)*G(2,2,K,-mi,mk,-q)\n        A2=(-1)**(mj%2)*G(2,2,K,-mj,ml,q)\n        tot+=A1*A2\n    return tot*4*np.pi/(2*K+1)\nVang={}\nfor K in (0,2,4):\n    Vang[K]=np.zeros((n,n,n,n))\nfor i,(mi,si) in enumerate(so):\n  for j,(mj,sj) in enumerate(so):\n    for k,(mk,sk) in enumerate(so):\n      for l,(ml,sl) in enumerate(so):\n        if si!=sk or sj!=sl: continue\n        for K in (0,2,4):\n            Vang[K][i,j,k,l]=angular(mi,mj,mk,ml,K)\nI2=identity(2,format='csr'); Z=diags([1.0,-1.0]).tocsr(); a=csr_matrix(np.array([[0.0,1.0],[0.0,0.0]]))\ndef cop(p):\n    ops=[Z]*p+[a]+[I2]*(n-p-1)\n    M=ops[0]\n    for o in ops[1:]: M=kron(M,o,format='csr')\n    return M\nc=[cop(p) for p in range(n)]\ncd=[x.T.conj().tocsr() for x in c]\nNop=sum(cd[p]@c[p] for p in range(n))\nSz2=sum((cd[p]@c[p])*(0.5 if so[p][1]==0 else -0.5) for p in range(n))\ndef build(Dq,B,C):\n    F4=C*441/35.0; F2=(441*B+5*F4)/9.0\n    V=F2*Vang[2]+F4*Vang[4]\n    h=np.zeros((5,5))\n    h[2,2]=1\n    for p in (0,4):\n        for q in (0,4):\n            h[p,q]+=0.5\n    h=10*Dq*h\n    dim=2**n\n    H=csr_matrix((dim,dim))\n    for p,(mp,sp) in enumerate(so):\n        for q,(mq,sq) in enumerate(so):\n            if sp!=sq: continue\n            if h[mp+2,mq+2]!=0: H=H+h[mp+2,mq+2]*(cd[p]@c[q])\n    for i,j,k,l in zip(*np.nonzero(np.abs(V)>1e-12)):\n        H=H+0.5*V[i,j,k,l]*(cd[i]@cd[j]@c[l]@c[k])\n    return H\ndef spectrum(Dq,B,C):\n    H=build(Dq,B,C)\n    Nd=Nop.diagonal(); Sd=Sz2.diagonal()\n    idx=np.where((np.abs(Nd-6)<1e-9)&(np.abs(Sd)<1e-9))[0]\n    Hs=H.toarray()[np.ix_(idx,idx)] if False else (H[idx][:,idx]).toarray()\n    w=np.linalg.eigvalsh(Hs)\n    return w\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "100\n[ 0.      0.      0.      0.      0.     22.     22.     22.     22.\n 22.     22.     22.     22.     22.     22.     22.     25.0477 25.0477\n 25.0477 25.2884 25.2884 25.2884 25.2884 25.2884 25.2884 25.2884 27.\n 27.     27.     27.     27.     27.     27.     27.     27.     33.\n 33.     33.     33.     33.    ]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d6.py",
+     "line": 21,
+     "method": "matrix",
+     "text": "Vang[K]=np.zeros((n,n,n,n))"
+    },
+    {
+     "script": "d6.py",
+     "line": 29,
+     "method": "matrix",
+     "text": "I2=identity(2,format='csr'); Z=diags([1.0,-1.0]).tocsr(); a=csr_matrix(np.array([[0.0,1.0],[0.0,0.0]]))"
+    },
+    {
+     "script": "d6.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "h=np.zeros((5,5))"
+    },
+    {
+     "script": "d6.py",
+     "line": 43,
+     "method": "matrix",
+     "text": "h[2,2]=1"
+    },
+    {
+     "script": "d6.py",
+     "line": 46,
+     "method": "matrix",
+     "text": "h[p,q]+=0.5"
+    },
+    {
+     "script": "d6.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh(Hs)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "Restrict d6 spectrum to singlet states",
+   "command": "cat << 'EOF' >> d6.py\n\nSp=sum(cd[p]@c[p+1] for p in range(0,n,2))  # up(p) <- down(p+1): c_up^dag c_down\nS2=None\ndef spectrum_singlet(Dq,B,C):\n    H=build(Dq,B,C)\n    Nd=Nop.diagonal(); Sd=Sz2.diagonal()\n    idx=np.where((np.abs(Nd-6)<1e-9)&(np.abs(Sd)<1e-9))[0]\n    Hs=(H[idx][:,idx]).toarray()\n    # S+ S- matrix restricted\n    Spm=(Sp.T@Sp)  # S-S+ = (S+)^dag S+ ; S+ sends Sz->Sz+1 ; here use S^- S^+ ~ Sp^T Sp\n    Ssub=(Spm[idx][:,idx]).toarray()\n    # S^2 = S^- S^+ + Sz(Sz+1), Sz=0 here\n    S2m=Ssub\n    # null space of S2m\n    u,s,vt=np.linalg.svd(S2m)\n    null=vt[np.sum(s>1e-8):].T\n    Hsing=null.T@Hs@null\n    return np.linalg.eigvalsh(Hsing)\nEOF\npython3 -c \"\nimport d6,numpy as np\nw=d6.spectrum_singlet(0.0,1.0,4.5)\nprint(len(w)); print(np.round(w-w[0],4))\n\"",
+   "scripts": [
+    {
+     "name": "d6.py",
+     "sha256": "6d50680e3fa52873b89e920b8c18ed4f5b9bc8660415f254aeb15b6e29a4c1c4",
+     "lines": 18,
+     "code": "\nSp=sum(cd[p]@c[p+1] for p in range(0,n,2))  # up(p) <- down(p+1): c_up^dag c_down\nS2=None\ndef spectrum_singlet(Dq,B,C):\n    H=build(Dq,B,C)\n    Nd=Nop.diagonal(); Sd=Sz2.diagonal()\n    idx=np.where((np.abs(Nd-6)<1e-9)&(np.abs(Sd)<1e-9))[0]\n    Hs=(H[idx][:,idx]).toarray()\n    # S+ S- matrix restricted\n    Spm=(Sp.T@Sp)  # S-S+ = (S+)^dag S+ ; S+ sends Sz->Sz+1 ; here use S^- S^+ ~ Sp^T Sp\n    Ssub=(Spm[idx][:,idx]).toarray()\n    # S^2 = S^- S^+ + Sz(Sz+1), Sz=0 here\n    S2m=Ssub\n    # null space of S2m\n    u,s,vt=np.linalg.svd(S2m)\n    null=vt[np.sum(s>1e-8):].T\n    Hsing=null.T@Hs@null\n    return np.linalg.eigvalsh(Hsing)\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "50\n[ 0.      0.      0.      0.      0.      0.      0.      0.      0.\n  0.      0.      0.      0.      2.291   2.291   2.291   2.291   2.291\n  2.291   2.291   2.291   2.291   7.7864  9.5235  9.5235  9.5235  9.5235\n  9.5235 15.     15.     15.     15.     15.     15.     15.     31.209\n 31.209  31.209  31.209  31.209  31.209  31.209  31.209  31.209  51.9765\n 51.9765 51.9765 51.9765 51.9765 78.2136]",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "d6.py",
+     "line": 18,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh(Hsing)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "Print singlet level energies vs Dq/B",
+   "command": "cat << 'EOF' > run.py\nimport d6,numpy as np\ndef levels(x):\n    w=d6.spectrum_singlet(x,1.0,4.5)\n    w=w-w[0]\n    # group\n    groups=[]\n    for e in w:\n        if groups and abs(e-groups[-1][0])<1e-5: groups[-1][1]+=1\n        else: groups.append([e,1])\n    return groups\nfor x in [1.0,2.0,2.5,3.0]:\n    g=levels(x)\n    print(x,[(round(e,3),d) for e,d in g[:8]])\nEOF\npython3 run.py",
+   "scripts": [
+    {
+     "name": "run.py",
+     "sha256": "b118e698668c242fef44214ccb7419e15a2b5f022d0d1246c65711f8978f092e",
+     "lines": 13,
+     "code": "import d6,numpy as np\ndef levels(x):\n    w=d6.spectrum_singlet(x,1.0,4.5)\n    w=w-w[0]\n    # group\n    groups=[]\n    for e in w:\n        if groups and abs(e-groups[-1][0])<1e-5: groups[-1][1]+=1\n        else: groups.append([e,1])\n    return groups\nfor x in [1.0,2.0,2.5,3.0]:\n    g=levels(x)\n    print(x,[(round(e,3),d) for e,d in g[:8]])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "run.py",
+     "written_in_step": 6
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "1.0 [(np.float64(0.0), 1), (np.float64(8.033), 3), (np.float64(14.827), 3), (np.float64(18.18), 2), (np.float64(19.168), 1), (np.float64(19.964), 3), (np.float64(22.304), 3), (np.float64(22.62), 1)]\n2.0 [(np.float64(0.0), 1), (np.float64(17.481), 3), (np.float64(28.653), 3), (np.float64(37.254), 2), (np.float64(37.364), 3), (np.float64(38.402), 1), (np.float64(43.51), 3), (np.float64(44.48), 1)]\n2.5 [(np.float64(0.0), 1), (np.float64(22.296), 3), (np.float64(34.485), 3), (np.float64(46.691), 3), (np.float64(46.947), 2), (np.float64(48.133), 1), (np.float64(53.806), 3), (np.float64(54.791), 1)]\n3.0 [(np.float64(0.0), 1), (np.float64(27.145), 3), (np.float64(40.003), 3), (np.float64(56.232), 3), (np.float64(56.699), 2), (np.float64(57.913), 1), (np.float64(63.995), 3), (np.float64(64.934), 1)]",
+   "stdout_truncated": false,
+   "methods": [
+    "typed_table"
+   ],
+   "key_lines": [
+    {
+     "script": "run.py",
+     "line": 11,
+     "method": "typed_table",
+     "text": "for x in [1.0,2.0,2.5,3.0]:"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "Solve for Dq/B matching band ratio and get B",
+   "command": "cat << 'EOF' > solve.py\nimport d6,numpy as np\nfrom scipy.optimize import brentq\ndef trip(x):\n    w=d6.spectrum_singlet(x,1.0,4.5); w=w-w[0]\n    groups=[]\n    for e in w:\n        if groups and abs(e-groups[-1][0])<1e-5: groups[-1][1]+=1\n        else: groups.append([e,1])\n    t=[e for e,d in groups if d==3 and e>1e-6]\n    return t\nr2=22740/13960; r3=29700/13960\nf=lambda x: trip(x)[1]/trip(x)[0]-r2\nx=brentq(f,1.8,2.3,xtol=1e-10)\nt=trip(x)\nprint(\"x=Dq/B\",x,\"triplets/B\",t, \"ratio3\", t[2]/t[0])\nB=13960/t[0]\nprint(\"B=\",B,\"Dq=\",x*B,\"C=\",4.5*B)\nprint(\"pred nu2,nu3:\",t[1]*B,t[2]*B)\nEOF\npython3 solve.py",
+   "scripts": [
+    {
+     "name": "solve.py",
+     "sha256": "c8b244f5282e0bd76a10f4bbc6b4eb8e6eb1009a6b1b3aa057d82e47abc805dc",
+     "lines": 18,
+     "code": "import d6,numpy as np\nfrom scipy.optimize import brentq\ndef trip(x):\n    w=d6.spectrum_singlet(x,1.0,4.5); w=w-w[0]\n    groups=[]\n    for e in w:\n        if groups and abs(e-groups[-1][0])<1e-5: groups[-1][1]+=1\n        else: groups.append([e,1])\n    t=[e for e,d in groups if d==3 and e>1e-6]\n    return t\nr2=22740/13960; r3=29700/13960\nf=lambda x: trip(x)[1]/trip(x)[0]-r2\nx=brentq(f,1.8,2.3,xtol=1e-10)\nt=trip(x)\nprint(\"x=Dq/B\",x,\"triplets/B\",t, \"ratio3\", t[2]/t[0])\nB=13960/t[0]\nprint(\"B=\",B,\"Dq=\",x*B,\"C=\",4.5*B)\nprint(\"pred nu2,nu3:\",t[1]*B,t[2]*B)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "solve.py",
+     "written_in_step": 7
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "x=Dq/B 2.0499827233209817 triplets/B [np.float64(17.960609538065178), np.float64(29.256752213140363), np.float64(38.2819969655128), np.float64(44.54581368792472), np.float64(47.506235307873716), np.float64(56.94262697720068), np.float64(65.90247683369624), np.float64(67.67236726872447), np.float64(77.4200103610434), np.float64(84.92116423551298), np.float64(106.99740746461529)] ratio3 2.131441969404161\nB= 777.2564717479991 Dq= 1593.362338672821 C= 3497.6541228659958\npred nu2,nu3: 22739.99999999094 29754.929892882086",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": [
+    "Dq",
+    "B",
+    "C"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "path": "Dq",
+   "value": 1593.0,
+   "weak": false,
+   "steps": [
+    7
+   ],
+   "typed_in_steps": [],
+   "source_step": 7
+  },
+  {
+   "path": "B",
+   "value": 777.0,
+   "weak": false,
+   "steps": [
+    7
+   ],
+   "typed_in_steps": [],
+   "source_step": 7
+  },
+  {
+   "path": "C",
+   "value": 3498.0,
+   "weak": false,
+   "steps": [
+    7
+   ],
+   "typed_in_steps": [],
+   "source_step": 7
+  }
+ ],
+ "summary": {
+  "n_steps": 8,
+  "n_scripts": 5,
+  "n_failed_steps": 1,
+  "n_values": 3,
+  "n_linked": 3,
+  "n_weak": 0,
+  "source_steps": [
+   7
+  ],
+  "methods": [
+   "eigen_solver",
+   "typed_table"
+  ],
+  "edits_in_place": true
+ }
+}

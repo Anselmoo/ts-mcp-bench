@@ -1,0 +1,1 @@
+cd $TMPDIR; sed -i 's/ or orbs\[b\]\[0\]!=orbs\[a\]\[0\]//' d7.py; python3 d7.py

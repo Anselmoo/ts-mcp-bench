@@ -1,0 +1,1 @@
+cd <SANDBOX_TMP> && sed -i 's/\*5\*math.sqrt/*math.sqrt/' b.py && python3 b.py | tail -7

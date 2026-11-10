@@ -1,0 +1,1 @@
+cd /dev/shm; sed -i 's|Fk={0:0,2:F2/49,4:F4/441}|Fk={0:0,2:F2,4:F4}|' a.py; python3 a.py | sed 's/np.float64(\([^)]*\))/\1/g'

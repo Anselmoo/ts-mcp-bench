@@ -1,0 +1,1 @@
+echo 'Standard ligand field theory for octahedral d7: ground term is ⁴T₁g. Excited terms are ⁴T₂g, ⁴A₂g, ²Eg, ²T₂g, ²T₁g, ²A₁g. The correct energy expressions are:'

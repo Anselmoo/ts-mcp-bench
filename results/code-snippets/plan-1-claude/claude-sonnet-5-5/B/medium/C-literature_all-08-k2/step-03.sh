@@ -1,0 +1,1 @@
+cd /dev/shm; sed -i 's/if r2: one.append/if r2 and r2[0] in idx: one.append/; s/                    if not y: continue/                    if not y or y[0] not in idx: continue/' a.py; python3 a.py

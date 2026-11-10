@@ -1,0 +1,1 @@
+cd /tmp && python3 -c "import numpy, scipy; print(numpy.__version__, scipy.__version__)"

@@ -1,0 +1,1 @@
+cd /; python3 -c "import os;print(os.getcwd(), os.access('/tmp',os.W_OK))"; echo test | python3 -c "import sys;print(sys.stdin.read())"

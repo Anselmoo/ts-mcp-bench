@@ -1,0 +1,1 @@
+for d in "$PWD" "$HOME" /tmp /var/tmp /root /mnt /opt "$(python3 -c 'import tempfile;print(tempfile.gettempdir())')"; do (cd "$d" 2>/dev/null && touch .wtest 2>/dev/null && echo "OK $d" && rm -f .wtest) || echo "no $d"; done

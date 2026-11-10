@@ -29,17 +29,18 @@ def _cell(x: float, y: float, n: int, top: int, tip: str, size: float) -> str:
 
 
 def transition_matrix(tools: Sequence[str], counts: Mapping[tuple[str, str], int], *,
-                      width: float = base.FULL_W) -> str:
+                      width: float = base.FULL_W, top: int | None = None) -> str:
     """Matrix of `counts` `{(from, to): n}` over `tools` (rows = from, columns = to, in the given order).
 
-    Names in `counts` that are not in `tools` follow the tools in sorted order. Empty without tools or counts."""
+    Names in `counts` that are not in `tools` follow the tools in sorted order. Empty without tools or counts. `top` is
+    the count of the darkest cell (default the largest of `counts`): one `top` gives several panels one colour scale."""
     if not tools or not counts:
         return ""
     names = list(tools) + sorted({t for pair in counts for t in pair} - set(tools))
     size = len(names)
     out_total = {a: sum(n for (x, _), n in counts.items() if x == a) for a in names}
     in_total = {b: sum(n for (_, y), n in counts.items() if y == b) for b in names}
-    top_n = max(counts.values())
+    top_n = max(max(counts.values()), top or 0)
     sm = base.SMALL_PX
     longest = max(base.text_width(s, sm) for s in names)
     w = float(width)

@@ -1,0 +1,5 @@
+s=open('d7.py').read()
+s=s.replace("""                i=l.index(s_); sg*=(-1)**i; l.pop(i)
+                i=l.index(r_); sg*=(-1)**i; l.pop(i)""","""                i=l.index(r_); sg*=(-1)**i; l.pop(i)
+                i=l.index(s_); sg*=(-1)**i; l.pop(i)""")
+open('d7.py','w').write(s)

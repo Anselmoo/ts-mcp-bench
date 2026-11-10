@@ -1,0 +1,1 @@
+echo $HOME; pwd; ls -ld . $TMPDIR 2>&1

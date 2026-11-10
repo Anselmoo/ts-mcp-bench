@@ -1,0 +1,1 @@
+time python3 -c "from sympy.physics.wigner import wigner_3j; print(wigner_3j(2,2,2,0,0,0))"

@@ -1,0 +1,1 @@
+sed -i 's/for C in \[3500,4000,4100,4200\]/for C in [4096]/' cfit.py && (timeout 900 python3 cfit.py > out.txt 2>&1 &) ; sleep 100; cat out.txt

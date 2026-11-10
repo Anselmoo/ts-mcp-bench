@@ -1,0 +1,1 @@
+conda install -y -c conda-forge python=3.9 matplotlib numpy

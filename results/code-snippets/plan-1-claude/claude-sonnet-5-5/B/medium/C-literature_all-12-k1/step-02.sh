@@ -1,0 +1,1 @@
+cd ~ 2>/dev/null; pwd; touch t && echo ok; ls -ld /dev/shm; echo $TMPDIR

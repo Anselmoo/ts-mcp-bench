@@ -1,0 +1,1 @@
+python3 -c "import numpy, scipy, sympy, matplotlib; print(numpy.__version__, scipy.__version__, sympy.__version__, matplotlib.__version__)"

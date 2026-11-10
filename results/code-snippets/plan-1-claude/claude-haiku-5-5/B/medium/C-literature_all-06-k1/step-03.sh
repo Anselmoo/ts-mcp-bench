@@ -1,0 +1,1 @@
+for d in /dev/shm /var/tmp $HOME /root; do touch $d/x 2>/dev/null && echo "writable $d"; done; pwd; python3 -c "import numpy,scipy;print('np ok')"

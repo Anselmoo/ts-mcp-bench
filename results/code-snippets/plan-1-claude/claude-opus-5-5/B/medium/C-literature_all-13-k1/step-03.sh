@@ -1,0 +1,1 @@
+which python3; python3 -c "import numpy,scipy;print('ok')"; pip3 --version; python3 -m pip --version

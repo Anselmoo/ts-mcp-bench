@@ -1,0 +1,397 @@
+{
+ "format": "tsbench.solution_path/1",
+ "transcript": "claude-sonnet-5-5/B/medium/C-numerical_hard-04-k1.jsonl",
+ "transcript_sha256": "3d852c2438c1e8197f8e0e69f24188d28d5e60b32ef9dc2292be15e5a923f2a5",
+ "answer": {
+  "Dq": null,
+  "B": null,
+  "C": null,
+  "out_of_scope": true,
+  "reason": "Low-spin d5 doublet bands near 30 000 cm^-1 give a non-unique, imperfect fit (B about 680 vs 850 cm^-1) and likely overlap LMCT bands, so Dq and B are not reliably determinable."
+ },
+ "steps": [
+  {
+   "index": 0,
+   "tool": "Bash",
+   "description": "",
+   "command": "pip list 2>/dev/null | grep -i -E \"numpy|sympy|scipy\"",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(Bash completed with no output)",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 1,
+   "tool": "Bash",
+   "description": "",
+   "command": "python3 -c \"import numpy;print(numpy.__version__)\"; python3 -c \"import sympy\"; which python3",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "2.5.4\n<B_VENV>/bin/python3",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 2,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /tmp/a.py <<'E'\nimport numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0\n    if j3>j1+j2 or j3<abs(j1-j2) or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0\n    t=lambda x:f(int(round(x)))\n    pre=(-1)**int(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,40):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp):\n    return (-1)**m*5*w3j(2,k,2,0,0,0)*w3j(2,k,2,-m,m-mp,mp)\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]  # index\nN=10\ndets=[c for c in itertools.combinations(range(N),5) if sum(o%2 for o in c)==2]  # 3 up,2 down\nidx={d:i for i,d in enumerate(dets)}\ndef apply(op,d):\n    # op list of (type,orb) applied right to left; return sign,newdet\n    l=list(d);sg=1\n    for t,o in reversed(op):\n        if t=='a':\n            if o not in l: return 0,None\n            p=l.index(o);sg*=(-1)**p;l.pop(p)\n        else:\n            if o in l: return 0,None\n            p=sum(1 for x in l if x<o);sg*=(-1)**p;l.insert(p,o)\n    return sg,tuple(l)\ndef build(Dq,B,C):\n    F4=C/35;F2=B+5*F4;F={0:0,2:49*F2,4:441*F4}\n    # F0 irrelevant (constant for fixed N)\n    def g(m1,m2,m3,m4):\n        return sum(ck(k,m1,m3)*ck(k,m4,m2)*F[k] for k in (2,4))\n    H=np.zeros((len(dets),)*2)\n    # one-body\n    h=-4*Dq*np.eye(5)+10*Dq*np.zeros((5,5))\n    P=np.zeros((5,5));P[2,2]=1\n    e=np.zeros(5);e[0]=e[4]=1/sqrt(2);P+=np.outer(e,e)\n    h=-4*Dq*np.eye(5)+10*Dq*P\n    for j,d in enumerate(dets):\n        for a in range(5):\n            for b in range(5):\n                if h[a,b]==0: continue\n                for s in (0,1):\n                    sg,nd=apply([('c',2*a+s),('a',2*b+s)],d)\n                    if sg: H[idx[nd],j]+=sg*h[a,b]\n    G={}\n    for m1 in ms:\n     for m2 in ms:\n      for m3 in ms:\n       m4=m1+m2-m3\n       if abs(m4)>2: continue\n       G[(m1,m2,m3,m4)]=g(m1,m2,m3,m4)\n    for (m1,m2,m3,m4),v in G.items():\n        if abs(v)<1e-12: continue\n        for s1 in (0,1):\n         for s2 in (0,1):\n          op=[('c',2*(m1+2)+s1),('c',2*(m2+2)+s2),('a',2*(m4+2)+s2),('a',2*(m3+2)+s1)]\n          for j,d in enumerate(dets):\n            sg,nd=apply(op,d)\n            if sg: H[idx[nd],j]+=0.5*v*sg\n    return H\n# S^2\ndef S2():\n    n=len(dets);M=np.zeros((n,n))\n    Sz=0.5\n    # S- S+ + Sz^2+Sz\n    def sp(vec):\n        out=np.zeros(n)\n        for j,d in enumerate(dets):\n            pass\n    return None\nE\necho ok",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "ed0b0b751b53f88537e329f33c37467b1fe350bb222e53b2d8e53e0e67200e12",
+     "lines": 76,
+     "code": "import numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0\n    if j3>j1+j2 or j3<abs(j1-j2) or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0\n    t=lambda x:f(int(round(x)))\n    pre=(-1)**int(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,40):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp):\n    return (-1)**m*5*w3j(2,k,2,0,0,0)*w3j(2,k,2,-m,m-mp,mp)\nms=[-2,-1,0,1,2]\norbs=[(m,s) for m in ms for s in (0,1)]  # index\nN=10\ndets=[c for c in itertools.combinations(range(N),5) if sum(o%2 for o in c)==2]  # 3 up,2 down\nidx={d:i for i,d in enumerate(dets)}\ndef apply(op,d):\n    # op list of (type,orb) applied right to left; return sign,newdet\n    l=list(d);sg=1\n    for t,o in reversed(op):\n        if t=='a':\n            if o not in l: return 0,None\n            p=l.index(o);sg*=(-1)**p;l.pop(p)\n        else:\n            if o in l: return 0,None\n            p=sum(1 for x in l if x<o);sg*=(-1)**p;l.insert(p,o)\n    return sg,tuple(l)\ndef build(Dq,B,C):\n    F4=C/35;F2=B+5*F4;F={0:0,2:49*F2,4:441*F4}\n    # F0 irrelevant (constant for fixed N)\n    def g(m1,m2,m3,m4):\n        return sum(ck(k,m1,m3)*ck(k,m4,m2)*F[k] for k in (2,4))\n    H=np.zeros((len(dets),)*2)\n    # one-body\n    h=-4*Dq*np.eye(5)+10*Dq*np.zeros((5,5))\n    P=np.zeros((5,5));P[2,2]=1\n    e=np.zeros(5);e[0]=e[4]=1/sqrt(2);P+=np.outer(e,e)\n    h=-4*Dq*np.eye(5)+10*Dq*P\n    for j,d in enumerate(dets):\n        for a in range(5):\n            for b in range(5):\n                if h[a,b]==0: continue\n                for s in (0,1):\n                    sg,nd=apply([('c',2*a+s),('a',2*b+s)],d)\n                    if sg: H[idx[nd],j]+=sg*h[a,b]\n    G={}\n    for m1 in ms:\n     for m2 in ms:\n      for m3 in ms:\n       m4=m1+m2-m3\n       if abs(m4)>2: continue\n       G[(m1,m2,m3,m4)]=g(m1,m2,m3,m4)\n    for (m1,m2,m3,m4),v in G.items():\n        if abs(v)<1e-12: continue\n        for s1 in (0,1):\n         for s2 in (0,1):\n          op=[('c',2*(m1+2)+s1),('c',2*(m2+2)+s2),('a',2*(m4+2)+s2),('a',2*(m3+2)+s1)]\n          for j,d in enumerate(dets):\n            sg,nd=apply(op,d)\n            if sg: H[idx[nd],j]+=0.5*v*sg\n    return H\n# S^2\ndef S2():\n    n=len(dets);M=np.zeros((n,n))\n    Sz=0.5\n    # S- S+ + Sz^2+Sz\n    def sp(vec):\n        out=np.zeros(n)\n        for j,d in enumerate(dets):\n            pass\n    return None\n"
+    }
+   ],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/bin/bash: line 79: /tmp/a.py: Read-only file system\nok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 40,
+     "method": "matrix",
+     "text": "h=-4*Dq*np.eye(5)+10*Dq*np.zeros((5,5))"
+    },
+    {
+     "script": "a.py",
+     "line": 41,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5));P[2,2]=1"
+    },
+    {
+     "script": "a.py",
+     "line": 69,
+     "method": "matrix",
+     "text": "n=len(dets);M=np.zeros((n,n))"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 3,
+   "tool": "Bash",
+   "description": "",
+   "command": "mkdir -p ~/w && cd ~/w && cat > a.py <<'E'\nimport numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0\n    if j3>j1+j2 or j3<abs(j1-j2) or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0\n    t=lambda x:f(int(round(x)))\n    pre=(-1)**int(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,40):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp):\n    return (-1)**m*5*w3j(2,k,2,0,0,0)*w3j(2,k,2,-m,m-mp,mp)\nms=[-2,-1,0,1,2]\ndets=[c for c in itertools.combinations(range(10),5) if sum(o%2 for o in c)==2]\nidx={d:i for i,d in enumerate(dets)}\ndef apply(op,d):\n    l=list(d);sg=1\n    for t,o in reversed(op):\n        if t=='a':\n            if o not in l: return 0,None\n            p=l.index(o);sg*=(-1)**p;l.pop(p)\n        else:\n            if o in l: return 0,None\n            p=sum(1 for x in l if x<o);sg*=(-1)**p;l.insert(p,o)\n    return sg,tuple(l)\n# precompute operator lists\nP=np.zeros((5,5));P[2,2]=1\ne=np.zeros(5);e[0]=e[4]=1/sqrt(2);P+=np.outer(e,e)\nn=len(dets)\ndef mat(ops_coef):\n    M=np.zeros((n,n))\n    for coef,op in ops_coef:\n        for j,d in enumerate(dets):\n            sg,nd=apply(op,d)\n            if sg: M[idx[nd],j]+=coef*sg\n    return M\nHpe=mat([(1,[('c',2*a+s),('a',2*a+s)]) for a in range(5) for s in (0,1)])  # unused\nHn_t=np.zeros((n,n));Hn_P=np.zeros((n,n))\nHn_t=mat([(1,[('c',2*a+s),('a',2*a+s)]) for a in range(5) for s in (0,1)])\nHn_P=mat([(P[a,b],[('c',2*a+s),('a',2*b+s)]) for a in range(5) for b in range(5) for s in (0,1) if P[a,b]!=0])\n# Coulomb parts per k\nV={}\nfor k in (2,4):\n    ol=[]\n    for m1 in ms:\n     for m2 in ms:\n      for m3 in ms:\n       m4=m1+m2-m3\n       if abs(m4)>2: continue\n       v=ck(k,m1,m3)*ck(k,m4,m2)\n       if abs(v)<1e-12: continue\n       for s1 in (0,1):\n        for s2 in (0,1):\n         ol.append((0.5*v,[('c',2*(m1+2)+s1),('c',2*(m2+2)+s2),('a',2*(m4+2)+s2),('a',2*(m3+2)+s1)]))\n    V[k]=mat(ol)\n# S^2\nSp=lambda: None\ndef S2mat():\n    ol=[]\n    # S-S+ : sum a†(m',dn)a(m',up) a†(m,up)a(m,dn) ; up=1? orbital index 2m+s, s=1 up\n    ol=[(1,[('c',2*a+0),('a',2*a+1),('c',2*b+1),('a',2*b+0)]) for a in range(5) for b in range(5)]\n    M=mat(ol)\n    return M+ (0.5**2+0.5)*np.eye(n)\nS2=S2mat()\nnp.save('S2.npy',S2)\ndef levels(Dq,B,C):\n    F4=C/35;F2=B+5*F4\n    H=-4*Dq*Hn_t+10*Dq*Hn_P+49*F2*V[2]+441*F4*V[4]\n    H=H+1e5*(S2-0.75*np.eye(n))\n    w=np.linalg.eigvalsh((H+H.T)/2)\n    return w\ndef exc(Dq,B,C=None):\n    C=C or 4.4*B\n    w=levels(Dq,B,C); w=w[w<5e4]  # doublets only\n    w=w-w[0]\n    # group\n    gr=[];\n    for x in w:\n        if gr and abs(x-gr[-1][0])<1e-3: gr[-1][1]+=1\n        else: gr.append([x,1])\n    return gr\nif __name__==\"__main__\":\n    print(np.allclose(S2,S2.T), len(dets))\n    g=exc(3000,600)\n    print(g[:8])\nE\npython3 a.py",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "8b8db289684bfbc7f52d0e19ef6824d0b83ebd0c0cc817877ba260257ab00bd4",
+     "lines": 89,
+     "code": "import numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0\n    if j3>j1+j2 or j3<abs(j1-j2) or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0\n    t=lambda x:f(int(round(x)))\n    pre=(-1)**int(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,40):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp):\n    return (-1)**m*5*w3j(2,k,2,0,0,0)*w3j(2,k,2,-m,m-mp,mp)\nms=[-2,-1,0,1,2]\ndets=[c for c in itertools.combinations(range(10),5) if sum(o%2 for o in c)==2]\nidx={d:i for i,d in enumerate(dets)}\ndef apply(op,d):\n    l=list(d);sg=1\n    for t,o in reversed(op):\n        if t=='a':\n            if o not in l: return 0,None\n            p=l.index(o);sg*=(-1)**p;l.pop(p)\n        else:\n            if o in l: return 0,None\n            p=sum(1 for x in l if x<o);sg*=(-1)**p;l.insert(p,o)\n    return sg,tuple(l)\n# precompute operator lists\nP=np.zeros((5,5));P[2,2]=1\ne=np.zeros(5);e[0]=e[4]=1/sqrt(2);P+=np.outer(e,e)\nn=len(dets)\ndef mat(ops_coef):\n    M=np.zeros((n,n))\n    for coef,op in ops_coef:\n        for j,d in enumerate(dets):\n            sg,nd=apply(op,d)\n            if sg: M[idx[nd],j]+=coef*sg\n    return M\nHpe=mat([(1,[('c',2*a+s),('a',2*a+s)]) for a in range(5) for s in (0,1)])  # unused\nHn_t=np.zeros((n,n));Hn_P=np.zeros((n,n))\nHn_t=mat([(1,[('c',2*a+s),('a',2*a+s)]) for a in range(5) for s in (0,1)])\nHn_P=mat([(P[a,b],[('c',2*a+s),('a',2*b+s)]) for a in range(5) for b in range(5) for s in (0,1) if P[a,b]!=0])\n# Coulomb parts per k\nV={}\nfor k in (2,4):\n    ol=[]\n    for m1 in ms:\n     for m2 in ms:\n      for m3 in ms:\n       m4=m1+m2-m3\n       if abs(m4)>2: continue\n       v=ck(k,m1,m3)*ck(k,m4,m2)\n       if abs(v)<1e-12: continue\n       for s1 in (0,1):\n        for s2 in (0,1):\n         ol.append((0.5*v,[('c',2*(m1+2)+s1),('c',2*(m2+2)+s2),('a',2*(m4+2)+s2),('a',2*(m3+2)+s1)]))\n    V[k]=mat(ol)\n# S^2\nSp=lambda: None\ndef S2mat():\n    ol=[]\n    # S-S+ : sum a†(m',dn)a(m',up) a†(m,up)a(m,dn) ; up=1? orbital index 2m+s, s=1 up\n    ol=[(1,[('c',2*a+0),('a',2*a+1),('c',2*b+1),('a',2*b+0)]) for a in range(5) for b in range(5)]\n    M=mat(ol)\n    return M+ (0.5**2+0.5)*np.eye(n)\nS2=S2mat()\nnp.save('S2.npy',S2)\ndef levels(Dq,B,C):\n    F4=C/35;F2=B+5*F4\n    H=-4*Dq*Hn_t+10*Dq*Hn_P+49*F2*V[2]+441*F4*V[4]\n    H=H+1e5*(S2-0.75*np.eye(n))\n    w=np.linalg.eigvalsh((H+H.T)/2)\n    return w\ndef exc(Dq,B,C=None):\n    C=C or 4.4*B\n    w=levels(Dq,B,C); w=w[w<5e4]  # doublets only\n    w=w-w[0]\n    # group\n    gr=[];\n    for x in w:\n        if gr and abs(x-gr[-1][0])<1e-3: gr[-1][1]+=1\n        else: gr.append([x,1])\n    return gr\nif __name__==\"__main__\":\n    print(np.allclose(S2,S2.T), len(dets))\n    g=exc(3000,600)\n    print(g[:8])\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 3
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\nmkdir: cannot create directory ‘/tmp/tsbench-home-xehwqch9/w’: Read-only file system\npython3: can't open file '/tmp/tsbench-run-mzp1e4mc/a.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 31,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5));P[2,2]=1"
+    },
+    {
+     "script": "a.py",
+     "line": 35,
+     "method": "matrix",
+     "text": "M=np.zeros((n,n))"
+    },
+    {
+     "script": "a.py",
+     "line": 42,
+     "method": "matrix",
+     "text": "Hn_t=np.zeros((n,n));Hn_P=np.zeros((n,n))"
+    },
+    {
+     "script": "a.py",
+     "line": 74,
+     "method": "eigen_solver",
+     "text": "w=np.linalg.eigvalsh((H+H.T)/2)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 4,
+   "tool": "Bash",
+   "description": "",
+   "command": "for d in /dev/shm /var/tmp . ; do touch $d/x 2>/dev/null && echo $d ok; done",
+   "scripts": [],
+   "runs": [],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "/dev/shm ok\n. ok",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 5,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm && cat > a.py <<'E'\nimport numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0\n    if j3>j1+j2 or j3<abs(j1-j2) or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0\n    t=lambda x:f(int(round(x)))\n    pre=(-1)**int(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,40):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp):\n    return (-1)**m*5*w3j(2,k,2,0,0,0)*w3j(2,k,2,-m,m-mp,mp)\nms=[-2,-1,0,1,2]\ndets=[c for c in itertools.combinations(range(10),5) if sum(o%2 for o in c)==3]\nidx={d:i for i,d in enumerate(dets)}\ndef apply(op,d):\n    l=list(d);sg=1\n    for t,o in reversed(op):\n        if t=='a':\n            if o not in l: return 0,None\n            p=l.index(o);sg*=(-1)**p;l.pop(p)\n        else:\n            if o in l: return 0,None\n            p=sum(1 for x in l if x<o);sg*=(-1)**p;l.insert(p,o)\n    return sg,tuple(l)\nP=np.zeros((5,5));P[2,2]=1\ne=np.zeros(5);e[0]=e[4]=1/sqrt(2);P+=np.outer(e,e)\nn=len(dets)\ndef mat(ol):\n    M=np.zeros((n,n))\n    for coef,op in ol:\n        for j,d in enumerate(dets):\n            sg,nd=apply(op,d)\n            if sg: M[idx[nd],j]+=coef*sg\n    return M\nHn_t=mat([(1,[('c',2*a+s),('a',2*a+s)]) for a in range(5) for s in (0,1)])\nHn_P=mat([(P[a,b],[('c',2*a+s),('a',2*b+s)]) for a in range(5) for b in range(5) for s in (0,1) if P[a,b]!=0])\nV={}\nfor k in (2,4):\n    ol=[]\n    for m1 in ms:\n     for m2 in ms:\n      for m3 in ms:\n       m4=m1+m2-m3\n       if abs(m4)>2: continue\n       v=ck(k,m1,m3)*ck(k,m4,m2)\n       if abs(v)<1e-12: continue\n       for s1 in (0,1):\n        for s2 in (0,1):\n         ol.append((0.5*v,[('c',2*(m1+2)+s1),('c',2*(m2+2)+s2),('a',2*(m4+2)+s2),('a',2*(m3+2)+s1)]))\n    V[k]=mat(ol)\nol=[(1,[('c',2*(a)+0),('a',2*a+1),('c',2*b+1),('a',2*b+0)]) for a in range(5) for b in range(5)]\nS2=mat(ol)+0.75*np.eye(n)*0  \n# Sz=1/2 -> 3 up (s=1) 2 down: S2 = S-S+ + Sz^2+Sz\nS2=S2+(0.25+0.5)*np.eye(n)\ndef levels(Dq,B,C):\n    F4=C/35;F2=B+5*F4\n    H=-4*Dq*Hn_t+10*Dq*Hn_P+49*F2*V[2]+441*F4*V[4]\n    H=H+1e6*(S2-0.75*np.eye(n))\n    return np.linalg.eigvalsh((H+H.T)/2)\ndef exc(Dq,B,C=None):\n    C=C or 4.4*B\n    w=levels(Dq,B,C); w=w[w<5e5]; w=w-w[0]\n    gr=[]\n    for x in w:\n        if gr and abs(x-gr[-1][0])<1e-2: gr[-1][1]+=1\n        else: gr.append([round(x,1),1])\n    return gr\nif __name__==\"__main__\":\n    print(np.allclose(S2,S2.T))\n    print(exc(3000,600)[:8])\n    w=levels(3000,600,2640);print(sorted(np.round(w[:3]-w[0])))\nE\npython3 a.py",
+   "scripts": [
+    {
+     "name": "a.py",
+     "sha256": "4c6f3c64375de488dcb7d967b8fbf227b66c7c5df7de4733b7c506e96ba5052c",
+     "lines": 76,
+     "code": "import numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0\n    if j3>j1+j2 or j3<abs(j1-j2) or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0\n    t=lambda x:f(int(round(x)))\n    pre=(-1)**int(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,40):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp):\n    return (-1)**m*5*w3j(2,k,2,0,0,0)*w3j(2,k,2,-m,m-mp,mp)\nms=[-2,-1,0,1,2]\ndets=[c for c in itertools.combinations(range(10),5) if sum(o%2 for o in c)==3]\nidx={d:i for i,d in enumerate(dets)}\ndef apply(op,d):\n    l=list(d);sg=1\n    for t,o in reversed(op):\n        if t=='a':\n            if o not in l: return 0,None\n            p=l.index(o);sg*=(-1)**p;l.pop(p)\n        else:\n            if o in l: return 0,None\n            p=sum(1 for x in l if x<o);sg*=(-1)**p;l.insert(p,o)\n    return sg,tuple(l)\nP=np.zeros((5,5));P[2,2]=1\ne=np.zeros(5);e[0]=e[4]=1/sqrt(2);P+=np.outer(e,e)\nn=len(dets)\ndef mat(ol):\n    M=np.zeros((n,n))\n    for coef,op in ol:\n        for j,d in enumerate(dets):\n            sg,nd=apply(op,d)\n            if sg: M[idx[nd],j]+=coef*sg\n    return M\nHn_t=mat([(1,[('c',2*a+s),('a',2*a+s)]) for a in range(5) for s in (0,1)])\nHn_P=mat([(P[a,b],[('c',2*a+s),('a',2*b+s)]) for a in range(5) for b in range(5) for s in (0,1) if P[a,b]!=0])\nV={}\nfor k in (2,4):\n    ol=[]\n    for m1 in ms:\n     for m2 in ms:\n      for m3 in ms:\n       m4=m1+m2-m3\n       if abs(m4)>2: continue\n       v=ck(k,m1,m3)*ck(k,m4,m2)\n       if abs(v)<1e-12: continue\n       for s1 in (0,1):\n        for s2 in (0,1):\n         ol.append((0.5*v,[('c',2*(m1+2)+s1),('c',2*(m2+2)+s2),('a',2*(m4+2)+s2),('a',2*(m3+2)+s1)]))\n    V[k]=mat(ol)\nol=[(1,[('c',2*(a)+0),('a',2*a+1),('c',2*b+1),('a',2*b+0)]) for a in range(5) for b in range(5)]\nS2=mat(ol)+0.75*np.eye(n)*0  \n# Sz=1/2 -> 3 up (s=1) 2 down: S2 = S-S+ + Sz^2+Sz\nS2=S2+(0.25+0.5)*np.eye(n)\ndef levels(Dq,B,C):\n    F4=C/35;F2=B+5*F4\n    H=-4*Dq*Hn_t+10*Dq*Hn_P+49*F2*V[2]+441*F4*V[4]\n    H=H+1e6*(S2-0.75*np.eye(n))\n    return np.linalg.eigvalsh((H+H.T)/2)\ndef exc(Dq,B,C=None):\n    C=C or 4.4*B\n    w=levels(Dq,B,C); w=w[w<5e5]; w=w-w[0]\n    gr=[]\n    for x in w:\n        if gr and abs(x-gr[-1][0])<1e-2: gr[-1][1]+=1\n        else: gr.append([round(x,1),1])\n    return gr\nif __name__==\"__main__\":\n    print(np.allclose(S2,S2.T))\n    print(exc(3000,600)[:8])\n    w=levels(3000,600,2640);print(sorted(np.round(w[:3]-w[0])))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "a.py",
+     "written_in_step": 5
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "True\n[[np.float64(0.0), 3], [np.float64(26624.4), 1], [np.float64(26833.4), 1], [np.float64(26833.4), 1], [np.float64(26833.4), 1], [np.float64(28517.1), 3], [np.float64(29918.1), 1], [np.float64(29918.1), 1]]\n[np.float64(0.0), np.float64(0.0), np.float64(0.0)]\nShell cwd was reset to /tmp/tsbench-run-mzp1e4mc",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "a.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5));P[2,2]=1"
+    },
+    {
+     "script": "a.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "M=np.zeros((n,n))"
+    },
+    {
+     "script": "a.py",
+     "line": 64,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh((H+H.T)/2)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 6,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm && cat > b.py <<'E'\nfrom a import *\ndef lv(Dq,B):\n    w=levels(Dq,B,4.4*B); w=w[w<5e5]; w=w-w[0]\n    gr=[]\n    for x in w:\n        if gr and abs(x-gr[-1])<0.5: continue\n        gr.append(x)\n    return gr[1:4]\nt=np.array([29360,29620,31640])\nbest=[]\nfor Dq in range(1500,4001,100):\n    for B in range(200,1000,25):\n        l=np.array(lv(Dq,B));best.append((np.sum((l-t)**2),Dq,B,l))\nbest.sort(key=lambda x:x[0])\nfor b in best[:6]:print(b)\nE\npython3 b.py",
+   "scripts": [
+    {
+     "name": "b.py",
+     "sha256": "960dc8ade6dd55b70f9fc7923358eb57605f7add82c5b947bcf5bb2d0366dafb",
+     "lines": 15,
+     "code": "from a import *\ndef lv(Dq,B):\n    w=levels(Dq,B,4.4*B); w=w[w<5e5]; w=w-w[0]\n    gr=[]\n    for x in w:\n        if gr and abs(x-gr[-1])<0.5: continue\n        gr.append(x)\n    return gr[1:4]\nt=np.array([29360,29620,31640])\nbest=[]\nfor Dq in range(1500,4001,100):\n    for B in range(200,1000,25):\n        l=np.array(lv(Dq,B));best.append((np.sum((l-t)**2),Dq,B,l))\nbest.sort(key=lambda x:x[0])\nfor b in best[:6]:print(b)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "b.py",
+     "written_in_step": 6
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 1,
+   "is_error": true,
+   "stdout": "Exit code 1\nTraceback (most recent call last):\n  File \"/dev/shm/b.py\", line 1, in <module>\n    from a import *\nModuleNotFoundError: No module named 'a'",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 7,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm && PYTHONPATH=/dev/shm python3 b.py",
+   "scripts": [],
+   "runs": [
+    {
+     "name": "b.py",
+     "written_in_step": 6
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 2,
+   "is_error": true,
+   "stdout": "Exit code 2\npython3: can't open file '/dev/shm/b.py': [Errno 2] No such file or directory",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 8,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm && ls; cat > all.py <<'E'\nimport numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0\n    if j3>j1+j2 or j3<abs(j1-j2) or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0\n    t=lambda x:f(int(round(x)))\n    pre=(-1)**int(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,40):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp):\n    return (-1)**m*5*w3j(2,k,2,0,0,0)*w3j(2,k,2,-m,m-mp,mp)\nms=[-2,-1,0,1,2]\ndets=[c for c in itertools.combinations(range(10),5) if sum(o%2 for o in c)==3]\nidx={d:i for i,d in enumerate(dets)}\ndef apply(op,d):\n    l=list(d);sg=1\n    for t,o in reversed(op):\n        if t=='a':\n            if o not in l: return 0,None\n            p=l.index(o);sg*=(-1)**p;l.pop(p)\n        else:\n            if o in l: return 0,None\n            p=sum(1 for x in l if x<o);sg*=(-1)**p;l.insert(p,o)\n    return sg,tuple(l)\nP=np.zeros((5,5));P[2,2]=1\ne=np.zeros(5);e[0]=e[4]=1/sqrt(2);P+=np.outer(e,e)\nn=len(dets)\ndef mat(ol):\n    M=np.zeros((n,n))\n    for coef,op in ol:\n        for j,d in enumerate(dets):\n            sg,nd=apply(op,d)\n            if sg: M[idx[nd],j]+=coef*sg\n    return M\nHn_t=mat([(1,[('c',2*a+s),('a',2*a+s)]) for a in range(5) for s in (0,1)])\nHn_P=mat([(P[a,b],[('c',2*a+s),('a',2*b+s)]) for a in range(5) for b in range(5) for s in (0,1) if P[a,b]!=0])\nV={}\nfor k in (2,4):\n    ol=[]\n    for m1 in ms:\n     for m2 in ms:\n      for m3 in ms:\n       m4=m1+m2-m3\n       if abs(m4)>2: continue\n       v=ck(k,m1,m3)*ck(k,m4,m2)\n       if abs(v)<1e-12: continue\n       for s1 in (0,1):\n        for s2 in (0,1):\n         ol.append((0.5*v,[('c',2*(m1+2)+s1),('c',2*(m2+2)+s2),('a',2*(m4+2)+s2),('a',2*(m3+2)+s1)]))\n    V[k]=mat(ol)\nol=[(1,[('c',2*a),('a',2*a+1),('c',2*b+1),('a',2*b)]) for a in range(5) for b in range(5)]\nS2=mat(ol)+0.75*np.eye(n)\ndef levels(Dq,B,C):\n    F4=C/35;F2=B+5*F4\n    H=-4*Dq*Hn_t+10*Dq*Hn_P+49*F2*V[2]+441*F4*V[4]\n    H=H+1e6*(S2-0.75*np.eye(n))\n    return np.linalg.eigvalsh((H+H.T)/2)\ndef lv(Dq,B):\n    w=levels(Dq,B,4.4*B); w=w[w<5e5]; w=w-w[0]\n    gr=[]\n    for x in w:\n        if gr and abs(x-gr[-1])<0.5: continue\n        gr.append(x)\n    return gr[1:5]\nt=np.array([29360,29620,31640])\nbest=[]\nfor Dq in range(1500,4001,100):\n    for B in range(200,1000,25):\n        l=np.array(lv(Dq,B));best.append((np.sum((l[:3]-t)**2),Dq,B,l))\nbest.sort(key=lambda x:x[0])\nfor b in best[:6]:print(b)\nE\npython3 all.py",
+   "scripts": [
+    {
+     "name": "all.py",
+     "sha256": "28046f478c5005d3292c59158c79461fbb6e5e7b742dc18113d206d8a290132f",
+     "lines": 76,
+     "code": "import numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0\n    if j3>j1+j2 or j3<abs(j1-j2) or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0\n    t=lambda x:f(int(round(x)))\n    pre=(-1)**int(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,40):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp):\n    return (-1)**m*5*w3j(2,k,2,0,0,0)*w3j(2,k,2,-m,m-mp,mp)\nms=[-2,-1,0,1,2]\ndets=[c for c in itertools.combinations(range(10),5) if sum(o%2 for o in c)==3]\nidx={d:i for i,d in enumerate(dets)}\ndef apply(op,d):\n    l=list(d);sg=1\n    for t,o in reversed(op):\n        if t=='a':\n            if o not in l: return 0,None\n            p=l.index(o);sg*=(-1)**p;l.pop(p)\n        else:\n            if o in l: return 0,None\n            p=sum(1 for x in l if x<o);sg*=(-1)**p;l.insert(p,o)\n    return sg,tuple(l)\nP=np.zeros((5,5));P[2,2]=1\ne=np.zeros(5);e[0]=e[4]=1/sqrt(2);P+=np.outer(e,e)\nn=len(dets)\ndef mat(ol):\n    M=np.zeros((n,n))\n    for coef,op in ol:\n        for j,d in enumerate(dets):\n            sg,nd=apply(op,d)\n            if sg: M[idx[nd],j]+=coef*sg\n    return M\nHn_t=mat([(1,[('c',2*a+s),('a',2*a+s)]) for a in range(5) for s in (0,1)])\nHn_P=mat([(P[a,b],[('c',2*a+s),('a',2*b+s)]) for a in range(5) for b in range(5) for s in (0,1) if P[a,b]!=0])\nV={}\nfor k in (2,4):\n    ol=[]\n    for m1 in ms:\n     for m2 in ms:\n      for m3 in ms:\n       m4=m1+m2-m3\n       if abs(m4)>2: continue\n       v=ck(k,m1,m3)*ck(k,m4,m2)\n       if abs(v)<1e-12: continue\n       for s1 in (0,1):\n        for s2 in (0,1):\n         ol.append((0.5*v,[('c',2*(m1+2)+s1),('c',2*(m2+2)+s2),('a',2*(m4+2)+s2),('a',2*(m3+2)+s1)]))\n    V[k]=mat(ol)\nol=[(1,[('c',2*a),('a',2*a+1),('c',2*b+1),('a',2*b)]) for a in range(5) for b in range(5)]\nS2=mat(ol)+0.75*np.eye(n)\ndef levels(Dq,B,C):\n    F4=C/35;F2=B+5*F4\n    H=-4*Dq*Hn_t+10*Dq*Hn_P+49*F2*V[2]+441*F4*V[4]\n    H=H+1e6*(S2-0.75*np.eye(n))\n    return np.linalg.eigvalsh((H+H.T)/2)\ndef lv(Dq,B):\n    w=levels(Dq,B,4.4*B); w=w[w<5e5]; w=w-w[0]\n    gr=[]\n    for x in w:\n        if gr and abs(x-gr[-1])<0.5: continue\n        gr.append(x)\n    return gr[1:5]\nt=np.array([29360,29620,31640])\nbest=[]\nfor Dq in range(1500,4001,100):\n    for B in range(200,1000,25):\n        l=np.array(lv(Dq,B));best.append((np.sum((l[:3]-t)**2),Dq,B,l))\nbest.sort(key=lambda x:x[0])\nfor b in best[:6]:print(b)\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "all.py",
+     "written_in_step": 8
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(np.float64(49203.88938089962), 3300, 625, array([29443.6307673 , 29661.73270481, 31438.83299105, 32893.60762662]))\n(np.float64(67833.12553797648), 3300, 650, array([29331.33253659, 29557.83474763, 31388.70976247, 32905.16042569]))\n(np.float64(83300.98686498692), 3300, 600, array([29557.4796312 , 29767.17124288, 31489.52273462, 32882.64517738]))\n(np.float64(83718.63313980837), 3400, 900, array([29246.74042964, 29556.97232513, 31898.68593905, 34027.25592099]))\n(np.float64(94138.11635792766), 3400, 875, array([29347.71852256, 29649.65856007, 31945.13546415, 34012.62238744]))\n(np.float64(114574.49812964084), 3400, 925, array([29146.75653381, 29465.26507304, 31852.50605788, 34042.01770392]))\nShell cwd was reset to /tmp/tsbench-run-mzp1e4mc",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "all.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5));P[2,2]=1"
+    },
+    {
+     "script": "all.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "M=np.zeros((n,n))"
+    },
+    {
+     "script": "all.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh((H+H.T)/2)"
+    }
+   ],
+   "produces": []
+  },
+  {
+   "index": 9,
+   "tool": "Bash",
+   "description": "",
+   "command": "cd /dev/shm && cat >> all.py <<'E'\nprint(\"refine\")\ndef fit(Dq0,B0):\n    bestc=(1e18,)\n    for Dq in np.arange(Dq0-100,Dq0+101,10):\n        for B in np.arange(B0-50,B0+51,5):\n            l=np.array(lv(Dq,B));c=np.sum((l[:3]-t)**2)\n            if c<bestc[0]: bestc=(c,Dq,B,l)\n    return bestc\nprint(fit(3300,630)); print(fit(3400,900))\nE\npython3 all.py | sed -n '/refine/,$p'",
+   "scripts": [
+    {
+     "name": "all.py",
+     "sha256": "50a09ea52bdde5593737c97959b2ea9efdb664df44718bb4944cdab416a8ef00",
+     "lines": 9,
+     "code": "print(\"refine\")\ndef fit(Dq0,B0):\n    bestc=(1e18,)\n    for Dq in np.arange(Dq0-100,Dq0+101,10):\n        for B in np.arange(B0-50,B0+51,5):\n            l=np.array(lv(Dq,B));c=np.sum((l[:3]-t)**2)\n            if c<bestc[0]: bestc=(c,Dq,B,l)\n    return bestc\nprint(fit(3300,630)); print(fit(3400,900))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "all.py",
+     "written_in_step": 9
+    }
+   ],
+   "edits_in_place": true,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "Traceback (most recent call last):\n  File \"/dev/shm/all.py\", line 9, in <module>\n    print(fit(3300,630)); print(fit(3400,900))\n          ~~~^^^^^^^^^^\n  File \"/dev/shm/all.py\", line 4, in fit\n    for Dq in np.arange(Dq0-100,Dq0+101,10):\n              ^^\nNameError: name 'np' is not defined\nrefine\nShell cwd was reset to /tmp/tsbench-run-mzp1e4mc",
+   "stdout_truncated": false,
+   "methods": [],
+   "key_lines": [],
+   "produces": []
+  },
+  {
+   "index": 10,
+   "tool": "Bash",
+   "description": "",
+   "command": "cat > /dev/shm/all.py <<'E'\nimport numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0\n    if j3>j1+j2 or j3<abs(j1-j2) or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0\n    t=lambda x:f(int(round(x)))\n    pre=(-1)**int(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,40):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp):\n    return (-1)**m*5*w3j(2,k,2,0,0,0)*w3j(2,k,2,-m,m-mp,mp)\nms=[-2,-1,0,1,2]\ndets=[c for c in itertools.combinations(range(10),5) if sum(o%2 for o in c)==3]\nidx={d:i for i,d in enumerate(dets)}\ndef apply(op,d):\n    l=list(d);sg=1\n    for t,o in reversed(op):\n        if t=='a':\n            if o not in l: return 0,None\n            p=l.index(o);sg*=(-1)**p;l.pop(p)\n        else:\n            if o in l: return 0,None\n            p=sum(1 for x in l if x<o);sg*=(-1)**p;l.insert(p,o)\n    return sg,tuple(l)\nP=np.zeros((5,5));P[2,2]=1\ne=np.zeros(5);e[0]=e[4]=1/sqrt(2);P+=np.outer(e,e)\nn=len(dets)\ndef mat(ol):\n    M=np.zeros((n,n))\n    for coef,op in ol:\n        for j,d in enumerate(dets):\n            sg,nd=apply(op,d)\n            if sg: M[idx[nd],j]+=coef*sg\n    return M\nHn_t=mat([(1,[('c',2*a+s),('a',2*a+s)]) for a in range(5) for s in (0,1)])\nHn_P=mat([(P[a,b],[('c',2*a+s),('a',2*b+s)]) for a in range(5) for b in range(5) for s in (0,1) if P[a,b]!=0])\nV={}\nfor k in (2,4):\n    ol=[]\n    for m1 in ms:\n     for m2 in ms:\n      for m3 in ms:\n       m4=m1+m2-m3\n       if abs(m4)>2: continue\n       v=ck(k,m1,m3)*ck(k,m4,m2)\n       if abs(v)<1e-12: continue\n       for s1 in (0,1):\n        for s2 in (0,1):\n         ol.append((0.5*v,[('c',2*(m1+2)+s1),('c',2*(m2+2)+s2),('a',2*(m4+2)+s2),('a',2*(m3+2)+s1)]))\n    V[k]=mat(ol)\nol=[(1,[('c',2*a),('a',2*a+1),('c',2*b+1),('a',2*b)]) for a in range(5) for b in range(5)]\nS2=mat(ol)+0.75*np.eye(n)\ndef levels(Dq,B,C):\n    F4=C/35;F2=B+5*F4\n    H=-4*Dq*Hn_t+10*Dq*Hn_P+49*F2*V[2]+441*F4*V[4]\n    H=H+1e6*(S2-0.75*np.eye(n))\n    return np.linalg.eigvalsh((H+H.T)/2)\ndef lv(Dq,B):\n    w=levels(Dq,B,4.4*B); w=w[w<5e5]; w=w-w[0]\n    gr=[]\n    for x in w:\n        if gr and abs(x-gr[-1])<0.5: continue\n        gr.append(x)\n    return gr[1:5]\nt=np.array([29360,29620,31640])\ndef fit(Dq0,B0):\n    bestc=(1e18,)\n    for Dq in np.arange(Dq0-100,Dq0+101,10):\n        for B in np.arange(B0-50,B0+51,5):\n            l=np.array(lv(Dq,B));c=np.sum((l[:3]-t)**2)\n            if c<bestc[0]: bestc=(c,Dq,B,l)\n    return bestc\nprint(fit(3300,630)); print(fit(3400,900))\nE\ncd /dev/shm && python3 all.py",
+   "scripts": [
+    {
+     "name": "all.py",
+     "sha256": "645ae752a745e7da4a53139593d5d08f344c13ab70324ad121e258e2feb1390d",
+     "lines": 78,
+     "code": "import numpy as np, itertools\nfrom math import factorial as f, sqrt\ndef w3j(j1,j2,j3,m1,m2,m3):\n    if m1+m2+m3!=0: return 0\n    if j3>j1+j2 or j3<abs(j1-j2) or abs(m1)>j1 or abs(m2)>j2 or abs(m3)>j3: return 0\n    t=lambda x:f(int(round(x)))\n    pre=(-1)**int(j1-j2-m3)*sqrt(t(j1+j2-j3)*t(j1-j2+j3)*t(-j1+j2+j3)/t(j1+j2+j3+1))\n    pre*=sqrt(t(j1+m1)*t(j1-m1)*t(j2+m2)*t(j2-m2)*t(j3+m3)*t(j3-m3))\n    s=0\n    for k in range(0,40):\n        a=[k,j1+j2-j3-k,j1-m1-k,j2+m2-k,j3-j2+m1+k,j3-j1-m2+k]\n        if min(a)<0: continue\n        s+=(-1)**k/np.prod([t(x) for x in a])\n    return pre*s\ndef ck(k,m,mp):\n    return (-1)**m*5*w3j(2,k,2,0,0,0)*w3j(2,k,2,-m,m-mp,mp)\nms=[-2,-1,0,1,2]\ndets=[c for c in itertools.combinations(range(10),5) if sum(o%2 for o in c)==3]\nidx={d:i for i,d in enumerate(dets)}\ndef apply(op,d):\n    l=list(d);sg=1\n    for t,o in reversed(op):\n        if t=='a':\n            if o not in l: return 0,None\n            p=l.index(o);sg*=(-1)**p;l.pop(p)\n        else:\n            if o in l: return 0,None\n            p=sum(1 for x in l if x<o);sg*=(-1)**p;l.insert(p,o)\n    return sg,tuple(l)\nP=np.zeros((5,5));P[2,2]=1\ne=np.zeros(5);e[0]=e[4]=1/sqrt(2);P+=np.outer(e,e)\nn=len(dets)\ndef mat(ol):\n    M=np.zeros((n,n))\n    for coef,op in ol:\n        for j,d in enumerate(dets):\n            sg,nd=apply(op,d)\n            if sg: M[idx[nd],j]+=coef*sg\n    return M\nHn_t=mat([(1,[('c',2*a+s),('a',2*a+s)]) for a in range(5) for s in (0,1)])\nHn_P=mat([(P[a,b],[('c',2*a+s),('a',2*b+s)]) for a in range(5) for b in range(5) for s in (0,1) if P[a,b]!=0])\nV={}\nfor k in (2,4):\n    ol=[]\n    for m1 in ms:\n     for m2 in ms:\n      for m3 in ms:\n       m4=m1+m2-m3\n       if abs(m4)>2: continue\n       v=ck(k,m1,m3)*ck(k,m4,m2)\n       if abs(v)<1e-12: continue\n       for s1 in (0,1):\n        for s2 in (0,1):\n         ol.append((0.5*v,[('c',2*(m1+2)+s1),('c',2*(m2+2)+s2),('a',2*(m4+2)+s2),('a',2*(m3+2)+s1)]))\n    V[k]=mat(ol)\nol=[(1,[('c',2*a),('a',2*a+1),('c',2*b+1),('a',2*b)]) for a in range(5) for b in range(5)]\nS2=mat(ol)+0.75*np.eye(n)\ndef levels(Dq,B,C):\n    F4=C/35;F2=B+5*F4\n    H=-4*Dq*Hn_t+10*Dq*Hn_P+49*F2*V[2]+441*F4*V[4]\n    H=H+1e6*(S2-0.75*np.eye(n))\n    return np.linalg.eigvalsh((H+H.T)/2)\ndef lv(Dq,B):\n    w=levels(Dq,B,4.4*B); w=w[w<5e5]; w=w-w[0]\n    gr=[]\n    for x in w:\n        if gr and abs(x-gr[-1])<0.5: continue\n        gr.append(x)\n    return gr[1:5]\nt=np.array([29360,29620,31640])\ndef fit(Dq0,B0):\n    bestc=(1e18,)\n    for Dq in np.arange(Dq0-100,Dq0+101,10):\n        for B in np.arange(B0-50,B0+51,5):\n            l=np.array(lv(Dq,B));c=np.sum((l[:3]-t)**2)\n            if c<bestc[0]: bestc=(c,Dq,B,l)\n    return bestc\nprint(fit(3300,630)); print(fit(3400,900))\n"
+    }
+   ],
+   "runs": [
+    {
+     "name": "all.py",
+     "written_in_step": 10
+    }
+   ],
+   "edits_in_place": false,
+   "exit": 0,
+   "is_error": false,
+   "stdout": "(np.float64(13945.15392083056), np.int64(3320), np.int64(680), array([29393.61145102, 29630.23225349, 31527.25814766, 33117.19586166]))\n(np.float64(39586.69876098666), np.int64(3380), np.int64(850), array([29256.00992077, 29549.57881828, 31794.31662045, 33801.04302305]))\nShell cwd was reset to /tmp/tsbench-run-mzp1e4mc",
+   "stdout_truncated": false,
+   "methods": [
+    "eigen_solver"
+   ],
+   "key_lines": [
+    {
+     "script": "all.py",
+     "line": 30,
+     "method": "matrix",
+     "text": "P=np.zeros((5,5));P[2,2]=1"
+    },
+    {
+     "script": "all.py",
+     "line": 34,
+     "method": "matrix",
+     "text": "M=np.zeros((n,n))"
+    },
+    {
+     "script": "all.py",
+     "line": 62,
+     "method": "eigen_solver",
+     "text": "return np.linalg.eigvalsh((H+H.T)/2)"
+    }
+   ],
+   "produces": []
+  }
+ ],
+ "values": [],
+ "summary": {
+  "n_steps": 11,
+  "n_scripts": 7,
+  "n_failed_steps": 3,
+  "n_values": 0,
+  "n_linked": 0,
+  "n_weak": 0,
+  "source_steps": [],
+  "methods": [
+   "eigen_solver"
+  ],
+  "edits_in_place": true
+ }
+}

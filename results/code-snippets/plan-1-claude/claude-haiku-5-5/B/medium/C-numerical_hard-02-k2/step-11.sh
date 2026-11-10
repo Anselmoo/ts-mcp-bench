@@ -1,0 +1,1 @@
+mkdir -p /dev/shm/d4 && cd /dev/shm/d4 && ls; echo; ls /dev/shm/d4 >/dev/null 2>&1 || echo gone

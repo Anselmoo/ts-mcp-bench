@@ -1,0 +1,1 @@
+echo test; ls -ld ~ /tmp 2>&1; df -h . 2>&1 | tail -1

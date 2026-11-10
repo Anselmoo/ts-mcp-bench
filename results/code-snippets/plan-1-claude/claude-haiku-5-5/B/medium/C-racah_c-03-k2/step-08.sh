@@ -1,0 +1,1 @@
+pwd; touch ./t_test && echo writable_cwd; ls -la | head

@@ -1,0 +1,1 @@
+export MPLCONFIGDIR=<HOME>/.cache/tsbench/output && python3 -c "import numpy as np; import matplotlib.pyplot as plt; from scipy.linalg import eigvals; from scipy.optimize import minimize_scalar; import os; print('MPLCONFIGDIR set to:', os.environ.get('MPLCONFIGDIR'))"
